@@ -1,0 +1,42 @@
+# Anima Specific
+.anima/
+.anima*/
+pybackend/.anima/
+pybackend/.anima*/
+
+# Node.js
+node_modules/*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Electron / Build Output
+dist/
+out/
+build/
+release/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.env
+.pytest_cache/
+.mypy_cache/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+.settings/
+*.log
+
+# Temporary
+tmp/
+temp/
