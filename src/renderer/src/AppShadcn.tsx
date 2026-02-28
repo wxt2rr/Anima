@@ -10,7 +10,7 @@ import { MermaidBlock } from './components/markdown/MermaidBlock'
 import 'katex/dist/katex.min.css'
 import { DiffView } from './components/DiffView'
 import { TodoProgressCard } from './components/TodoProgressCard'
-import { resolveBackendBaseUrl, useStore, type Message, type ToolTrace, type TodoItem, type ProviderModel } from './store/useStore'
+import { resolveBackendBaseUrl, useStore, type Message, type ToolTrace, type TodoItem, type ProviderModel, type Artifact } from './store/useStore'
 import { THEMES } from './lib/themes'
 import { SettingsDialog, SettingsWindow } from './components/SettingsDialog'
 import { ChatHistoryPanel } from './components/ChatHistoryPanel'
@@ -90,6 +90,20 @@ function normalizeChatMarkdown(input: string): string {
   return s.replace(/(^|\n)([ \t]{0,3})\\```/g, '$1$2```')
 }
 
+function linkifyQuotedFileNames(input: string): string {
+  const s = String(input || '')
+  if (!s) return s
+  const parts = s.split(/(```[\s\S]*?```)/g)
+  const fileExt = '(?:ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)'
+  const quoted = new RegExp(`(['"“”‘’])([^\\n\\r]{1,260}\\.${fileExt})\\1`, 'gi')
+  return parts
+    .map((part) => {
+      if (part.startsWith('```')) return part
+      return part.replace(quoted, (_m, _q, file) => `[\`${file}\`](${file})`)
+    })
+    .join('')
+}
+
 async function fetchBackendJson<T>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController()
   const timer = window.setTimeout(() => controller.abort(), 15000)
@@ -154,8 +168,7 @@ function AppLoaded(): JSX.Element {
   const [isLoading, setIsLoading] = useState(false)
   const [skillsCache, setSkillsCache] = useState<SkillEntry[]>([])
   const [skillsStatus, setSkillsStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle')
-  const skillsContentCacheRef = useRef(new Map<string, { content: string; updatedAt?: number }>())
-  
+
   // Use a single state for mutually exclusive popovers
   const [popoverPanel, setPopoverPanel] = useState<'' | 'attachments' | 'workspace' | 'tools' | 'skills' | 'model'>('')
   
@@ -187,7 +200,8 @@ function AppLoaded(): JSX.Element {
     createChat,
     initApp,
     setActiveRightPanel,
-    setPreviewUrl
+    setPreviewUrl,
+    openFileInExplorer
   } = useStore()
   const settings = settings0!
   const providers = providers0!
@@ -203,6 +217,13 @@ function AppLoaded(): JSX.Element {
   const [rightWidth, setRightWidth] = useState(600)
   const [isResizingLeft, setIsResizingLeft] = useState(false)
   const [isResizingRight, setIsResizingRight] = useState(false)
+  const [backendBaseUrl, setBackendBaseUrl] = useState('')
+
+  useEffect(() => {
+    void resolveBackendBaseUrl()
+      .then((url) => setBackendBaseUrl(String(url || '').trim()))
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -346,6 +367,123 @@ function AppLoaded(): JSX.Element {
     setActiveRightPanel('preview')
   }
 
+  const openLinkTarget = (raw: string) => {
+    const rawText = String(raw || '').trim()
+    if (!rawText) return
+    const text = (() => {
+      let t = rawText
+      if (t.startsWith('<') && t.endsWith('>')) t = t.slice(1, -1)
+      t = t.replace(/^[`"'“”‘’]+/, '').replace(/[`"'“”‘’]+$/, '')
+      t = t.replace(/[)\].,;:，。；：]+$/, '')
+      return t.trim()
+    })()
+    if (!text) return
+    if (/^https?:\/\//i.test(text)) {
+      openPreviewUrl(text)
+      return
+    }
+    if (
+      text.startsWith('file://') ||
+      text.startsWith('/') ||
+      text.startsWith('\\') ||
+      text.startsWith('./') ||
+      text.startsWith('../') ||
+      text.startsWith('~/')
+    ) {
+      openFileInExplorer(text)
+      return
+    }
+    if (/\.(ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)$/i.test(text)) {
+      openFileInExplorer(text)
+      return
+    }
+    openPreviewUrl(text)
+  }
+
+  const renderArtifacts = (items: Artifact[], size: 'sm' | 'md' = 'md') => {
+    const arts = Array.isArray(items) ? items.filter((a) => a && typeof a.path === 'string' && a.path.trim()) : []
+    if (!arts.length) return null
+    const imgH = size === 'sm' ? 'h-16' : 'h-24'
+    const chip = size === 'sm' ? 'text-[11px] px-2 py-1' : 'text-[12px] px-2.5 py-1.5'
+    const gap = size === 'sm' ? 'gap-1.5' : 'gap-2'
+
+    return (
+      <div className={`flex flex-wrap ${gap}`}>
+        {arts.map((a, idx) => {
+          const p = String(a.path || '').trim()
+          const name = String(a.title || '').trim() || p.split('/').pop() || 'artifact'
+          const isImage = a.kind === 'image' || String(a.mime || '').toLowerCase().startsWith('image/')
+          const isVideo = a.kind === 'video' || String(a.mime || '').toLowerCase().startsWith('video/')
+          const src =
+            backendBaseUrl && settings?.workspaceDir
+              ? `${backendBaseUrl}/api/artifacts/file?path=${encodeURIComponent(p)}&workspaceDir=${encodeURIComponent(settings.workspaceDir)}`
+              : `file://${p}`
+          if (isImage) {
+            return (
+              <button
+                key={`${p}:${idx}`}
+                type="button"
+                className="rounded-md border border-border/60 bg-muted/10 hover:bg-muted/30 transition-colors overflow-hidden"
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  openLinkTarget(p)
+                }}
+                title={p}
+              >
+                <img src={src} alt={name} className={`${imgH} w-auto max-w-[320px] object-contain`} />
+              </button>
+            )
+          }
+          if (isVideo) {
+            return (
+              <div
+                key={`${p}:${idx}`}
+                className="rounded-md border border-border/60 bg-muted/10 overflow-hidden"
+                title={p}
+              >
+                <div className="flex items-center justify-end px-2 py-1 border-b border-border/40 bg-muted/10">
+                  <button
+                    type="button"
+                    className={`rounded border border-border/60 bg-background/40 hover:bg-background/60 transition-colors font-mono ${chip}`}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      openLinkTarget(p)
+                    }}
+                  >
+                    Open
+                  </button>
+                </div>
+                <video
+                  src={src}
+                  className={`${imgH} w-auto max-w-[320px] bg-black`}
+                  controls
+                  preload="metadata"
+                />
+              </div>
+            )
+          }
+          return (
+            <button
+              key={`${p}:${idx}`}
+              type="button"
+              className={`rounded-md border border-border/60 bg-muted/10 hover:bg-muted/30 transition-colors font-mono ${chip}`}
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                openLinkTarget(p)
+              }}
+              title={p}
+            >
+              {name}
+            </button>
+          )
+        })}
+      </div>
+    )
+  }
+
   const tokenStatus = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const m = messages[i]
@@ -413,7 +551,10 @@ function AppLoaded(): JSX.Element {
     return { used, total, percentage }
   }, [tokenStatus, effectiveProvider, effectiveModel])
 
-  const shouldShowAnalysis = effectiveProvider?.type === 'deepseek' && Boolean(effectiveProvider?.config?.thinkingEnabled)
+  const thinkingLevel = composer.thinkingLevel || 'default'
+  const shouldShowAnalysis = effectiveProvider?.type === 'deepseek' && (
+    thinkingLevel === 'default' ? Boolean(effectiveProvider?.config?.thinkingEnabled) : thinkingLevel !== 'off'
+  )
 
   const toggleAutoModel = () => {
     if (isAutoModel) {
@@ -463,12 +604,7 @@ function AppLoaded(): JSX.Element {
       { id: 'rg_search', name: 'ripgrep 搜索' },
       { id: 'WebSearch', name: 'WebSearch 搜索' },
       { id: 'WebFetch', name: 'WebFetch 抓取' },
-      { id: 'list_dir', name: '列目录' },
-      { id: 'mac_reminders_create', name: '创建提醒事项' },
-      { id: 'mac_reminders_list', name: '列出提醒事项' },
-      { id: 'mac_reminders_complete', name: '完成提醒事项' },
-      { id: 'mac_notes_create', name: '创建备忘录' },
-      { id: 'mac_notes_append', name: '追加备忘录' }
+      { id: 'list_dir', name: '列目录' }
     ]
   }, [])
 
@@ -542,7 +678,8 @@ function AppLoaded(): JSX.Element {
       modelOverride: composer.modelOverride || '',
       contextWindowOverride: composer.contextWindowOverride || selectedModelConfig?.config?.contextWindow || 0,
       maxOutputTokens: selectedModelConfig?.config?.maxOutputTokens,
-      jsonConfig: selectedModelConfig?.config?.jsonConfig
+      jsonConfig: selectedModelConfig?.config?.jsonConfig,
+      thinkingLevel
     }
   }
 
@@ -605,133 +742,6 @@ function AppLoaded(): JSX.Element {
     }
   }
 
-  const buildRequestMessages = async (userMessage: string) => {
-    const activeSystemPrompt =
-      settings.systemPrompts.find((p) => p.id === settings.selectedSystemPromptId)?.content ||
-      settings.systemPrompts[0]?.content ||
-      ''
-
-
-    const tokenizeForMemory = (text: string) => {
-      const s = (text || '').toLowerCase().trim()
-      if (!s) return []
-      const cleaned = s.replace(/[^\w\s\u4e00-\u9fff]+/g, ' ')
-      if (/\s/.test(cleaned)) {
-        return cleaned.split(/\s+/).filter(Boolean)
-      }
-      const compact = cleaned.replace(/\s+/g, '')
-      return Array.from(compact).filter((ch) => /[\w\u4e00-\u9fff]/.test(ch))
-    }
-
-    const memorySimilarity = (a: string, b: string) => {
-      const A = new Set(tokenizeForMemory(a))
-      const B = new Set(tokenizeForMemory(b))
-      if (A.size === 0 || B.size === 0) return 0
-      let inter = 0
-      for (const x of A) if (B.has(x)) inter += 1
-      const union = A.size + B.size - inter
-      return union <= 0 ? 0 : inter / union
-    }
-
-    const enabledMemories = settings.memories.filter((m) => m.isEnabled && m.content.trim())
-
-    const memoryBlock = (() => {
-      if (!settings.memoryEnabled) return Promise.resolve('')
-      if (enabledMemories.length === 0) return Promise.resolve('')
-
-      const topK = Math.max(0, Number(settings.memoryMaxRetrieveCount || 0))
-      if (!settings.memoryRetrievalEnabled) {
-        return Promise.resolve(`User memory:\n${enabledMemories.map((m) => `- ${m.content.trim()}`).join('\n')}`)
-      }
-      if (topK === 0) return Promise.resolve('')
-
-      const threshold = Math.min(1, Math.max(0, Number(settings.memorySimilarityThreshold || 0)))
-
-      const scored = enabledMemories
-        .map((m) => ({ m, score: memorySimilarity(userMessage, m.content) }))
-        .filter((x) => x.score >= threshold)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, topK || undefined)
-        .map((x) => x.m)
-      if (scored.length === 0) return Promise.resolve('')
-      return Promise.resolve(`User memory:\n${scored.map((m) => `- ${m.content.trim()}`).join('\n')}`)
-    })()
-
-    const pluginsBlock = settings.plugins.some((p) => p.isEnabled && p.systemPromptAddon.trim())
-      ? settings.plugins
-          .filter((p) => p.isEnabled && p.systemPromptAddon.trim())
-          .map((p) => p.systemPromptAddon.trim())
-          .join('\n\n')
-      : ''
-
-    const skillsMode = composer.skillMode || settings.defaultSkillMode
-    const enabledSkillIds = composer.enabledSkillIds.length ? composer.enabledSkillIds : settings.skillsEnabledIds
-
-    const skillsBlock = (async () => {
-      const mode = skillsMode
-      if (mode === 'disabled') return ''
-      try {
-        let ids: string[] = []
-        if (mode === 'all') {
-          const indexRes = await fetchBackendJson<{ ok: boolean; skills?: SkillEntry[] }>('/skills/list', { method: 'GET' })
-          if (!indexRes?.ok) return ''
-          const allSkills = Array.isArray(indexRes.skills) ? indexRes.skills : []
-          ids = allSkills.map((s) => s.id).filter(Boolean)
-        } else {
-          ids = enabledSkillIds
-        }
-        if (ids.length === 0) return ''
-
-        const contentRes = await fetchBackendJson<{ ok: boolean; skills?: SkillEntry[] }>('/skills/content', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids })
-        })
-        if (!contentRes?.ok) return ''
-        const fetched = Array.isArray(contentRes.skills) ? contentRes.skills : []
-        const cached = skillsContentCacheRef.current
-        for (const s of fetched) {
-          const content = String(s.content || '')
-          if (!content.trim()) continue
-          cached.set(s.id, { content, updatedAt: s.updatedAt })
-        }
-        const selected = fetched.filter((s) => String(s.content || '').trim() && s.isValid !== false)
-        if (selected.length === 0) return ''
-
-        const body = selected
-          .map((s) => {
-            const header = `${s.name || s.id} (${s.id})`
-            const content = String(s.content || '').trim()
-            return `${header}\n${content}`
-          })
-          .join('\n\n')
-
-        return `Skills:\nThe following skill definitions are available. Apply them when relevant.\n\n${body}`
-      } catch {
-        return ''
-      }
-    })()
-
-    const systemPrompt = [activeSystemPrompt, await memoryBlock, await skillsBlock, pluginsBlock]
-      .filter(Boolean)
-      .join('\n\n')
-
-    const maxContextMessages = Math.max(0, settings.maxContextMessages || 0)
-    const shouldCompress =
-      settings.enableAutoCompression && messages.length > Math.max(0, settings.compressionThreshold || 0)
-    const compressedWindow = Math.max(0, settings.keepRecentMessages || 0) || maxContextMessages
-    const baseWindow = shouldCompress ? Math.min(maxContextMessages, compressedWindow) : maxContextMessages
-    const override = Math.max(0, composer.contextWindowOverride || 0)
-    const contextWindow = override > 0 ? override : baseWindow
-    const contextMessages = messages.slice(-contextWindow)
-
-    return [
-      { role: 'system' as const, content: systemPrompt },
-      ...contextMessages.map((m) => ({ role: m.role, content: m.content })),
-      { role: 'user' as const, content: userMessage }
-    ]
-  }
-
   const t = (() => {
     const dict = {
       en: {
@@ -766,6 +776,12 @@ function AppLoaded(): JSX.Element {
           modelOverride: 'Override model',
           useProviderDefault: 'Use provider default',
           contextWindow: 'Context window (messages)',
+          thinking: 'Thinking',
+          thinkingDefault: 'Default',
+          thinkingOff: 'Off',
+          thinkingLow: 'Low',
+          thinkingMedium: 'Medium',
+          thinkingHigh: 'High',
           preview: 'Preview',
           prepare: 'Prepare'
         },
@@ -820,6 +836,12 @@ function AppLoaded(): JSX.Element {
           modelOverride: '临时覆盖模型',
           useProviderDefault: '使用提供商默认',
           contextWindow: '上下文窗口（消息数）',
+          thinking: '思考',
+          thinkingDefault: '默认',
+          thinkingOff: '关闭',
+          thinkingLow: '低',
+          thinkingMedium: '中',
+          thinkingHigh: '高',
           preview: '预览',
           prepare: '准备'
         },
@@ -874,6 +896,12 @@ function AppLoaded(): JSX.Element {
           modelOverride: 'モデル上書き',
           useProviderDefault: '既定モデルを使用',
           contextWindow: 'コンテキスト（メッセージ数）',
+          thinking: 'Thinking',
+          thinkingDefault: 'Default',
+          thinkingOff: 'Off',
+          thinkingLow: 'Low',
+          thinkingMedium: 'Medium',
+          thinkingHigh: 'High',
           preview: 'プレビュー',
           prepare: '準備'
         },
@@ -1025,8 +1053,9 @@ function AppLoaded(): JSX.Element {
           meta: shouldShowAnalysis ? { reasoningStatus: 'pending', reasoningText: '' } : undefined
         } as any)
 
-        const requestMessages = await buildRequestMessages(userMessage)
+        const runMessages = [{ role: 'user' as const, content: userMessage }]
         const composerPayload = buildComposerPayload()
+        const threadId = activeChatId || turnId
 
       if (settings.enableStreamingResponse) {
         let fullContent = ''
@@ -1084,7 +1113,7 @@ function AppLoaded(): JSX.Element {
              updateMessageById(activeChatId || '', msgId, {
                meta: nextMeta
              })
-             if (activeChatId) {
+             if (activeChatId && trace.status !== 'running') {
                void persistMessageById(activeChatId, msgId, existing?.content || '', nextMeta)
              }
           } else {
@@ -1165,15 +1194,17 @@ function AppLoaded(): JSX.Element {
         }
 
         const baseUrl = await resolveBackendBaseUrl()
-        const res = await fetch(`${baseUrl}/chat?stream=1`, {
+        const res = await fetch(`${baseUrl}/api/runs?stream=1`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  messages: requestMessages,
+                  messages: runMessages,
                   composer: composerPayload,
                   temperature: settings.temperature,
                   maxTokens: settings.maxTokens,
-                  turnId
+                  runId: turnId,
+                  threadId,
+                  useThreadMessages: true
                 }),
                 signal: controller.signal
               })
@@ -1214,15 +1245,23 @@ function AppLoaded(): JSX.Element {
               const evt = JSON.parse(jsonText) as {
                 type?: string
                 content?: string
+                stage?: string
+                step?: number
                 reasoning?: string
                 usage?: BackendUsage
                 rateLimit?: BackendRateLimit
                 traces?: ToolTrace[]
+                artifacts?: Artifact[]
                 trace?: ToolTrace
               }
               if (evt.type === 'delta' && typeof evt.content === 'string' && evt.content) {
                 pendingContent += evt.content
                 startTyping()
+              } else if (evt.type === 'run') {
+                continue
+              } else if (evt.type === 'stage' && typeof evt.stage === 'string' && evt.stage) {
+                assistantMeta = { ...assistantMeta, stage: evt.stage }
+                updateLastMessage(fullContent, assistantMeta)
               } else if (evt.type === 'reasoning_delta' && typeof evt.content === 'string' && evt.content) {
                 reasoningText += evt.content
                 assistantMeta = { ...assistantMeta, reasoningText, reasoningStatus: 'streaming' }
@@ -1238,6 +1277,9 @@ function AppLoaded(): JSX.Element {
                 if (evt.rateLimit && Object.keys(evt.rateLimit).length) {
                   assistantMeta = { ...assistantMeta, rateLimit: evt.rateLimit }
                 }
+                if (Array.isArray(evt.artifacts)) {
+                  assistantMeta = { ...assistantMeta, artifacts: evt.artifacts }
+                }
                 if (Array.isArray(evt.traces)) {
                   traces = evt.traces
                   assistantMeta = {
@@ -1252,6 +1294,7 @@ function AppLoaded(): JSX.Element {
                 if (shouldShowAnalysis || reasoningText.trim()) {
                   assistantMeta = { ...assistantMeta, reasoningStatus: 'done' }
                 }
+                assistantMeta = { ...assistantMeta, stage: undefined }
                 gotDone = true
                 scanning = false
                 reading = false
@@ -1292,15 +1335,17 @@ function AppLoaded(): JSX.Element {
         await persistLastMessage()
       } else {
         const baseUrl = await resolveBackendBaseUrl()
-        const res = await fetch(`${baseUrl}/chat`, {
+        const res = await fetch(`${baseUrl}/api/runs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            messages: requestMessages,
+            messages: runMessages,
             composer: composerPayload,
             temperature: settings.temperature,
             maxTokens: settings.maxTokens,
-            turnId
+            runId: turnId,
+            threadId,
+            useThreadMessages: true
           }),
           signal: controller.signal
         })
@@ -1312,12 +1357,13 @@ function AppLoaded(): JSX.Element {
           throw new Error(String(msg))
         }
 
-        const data = await res.json() as { ok: boolean; content?: string; usage?: BackendUsage; rateLimit?: BackendRateLimit; traces?: ToolTrace[]; reasoning?: string }
+        const data = await res.json() as { ok: boolean; content?: string; usage?: BackendUsage; rateLimit?: BackendRateLimit; traces?: ToolTrace[]; artifacts?: Artifact[]; reasoning?: string }
         
         const content = typeof data.content === 'string' ? data.content : ''
         const usage = data.usage
         const rateLimit = data.rateLimit
         const traces = Array.isArray(data.traces) ? data.traces : []
+        const artifacts = Array.isArray(data.artifacts) ? data.artifacts : []
         
         let todoSnapshot: TodoItem[] | undefined
         let todosUpdated = false
@@ -1374,7 +1420,7 @@ function AppLoaded(): JSX.Element {
 
         const reasoning = typeof data.reasoning === 'string' && data.reasoning.trim() ? data.reasoning : undefined
         const assistantMeta: Message['meta'] | undefined =
-          usage || (rateLimit && Object.keys(rateLimit).length) || Boolean(reasoning) || shouldShowAnalysis || todoSnapshot
+          usage || (rateLimit && Object.keys(rateLimit).length) || Boolean(reasoning) || shouldShowAnalysis || todoSnapshot || artifacts.length > 0
             ? {
                 promptTokens: usage ? usage?.prompt_tokens ?? 0 : undefined,
                 completionTokens: usage ? usage?.completion_tokens ?? 0 : undefined,
@@ -1383,7 +1429,8 @@ function AppLoaded(): JSX.Element {
                 reasoningSummary: deriveReasoningSummaryFromTraces(traces),
                 reasoningText: reasoning,
                 reasoningStatus: shouldShowAnalysis ? 'done' : reasoning ? 'done' : undefined,
-                todoSnapshot
+                todoSnapshot,
+                artifacts: artifacts.length ? artifacts : undefined
               }
             : undefined
         updateLastMessage(content, assistantMeta)
@@ -1664,6 +1711,13 @@ function AppLoaded(): JSX.Element {
                                       entity = normalizeValue(entity)
                                     }
 
+                                    const canOpenEntityInFiles =
+                                      (tr.name === 'read_file' ||
+                                        tr.name === 'write_file' ||
+                                        tr.name === 'replace_file' ||
+                                        tr.name === 'edit_file') &&
+                                      Boolean(entity)
+
                                     if (tr.name === 'WebSearch' && Array.isArray(resultItems)) {
                                       const circled = [
                                         '',
@@ -1723,7 +1777,7 @@ function AppLoaded(): JSX.Element {
                                       detailMarkdown = resultObj.diffs
                                         .map((d: any) => String(d?.path || ''))
                                         .filter(Boolean)
-                                        .map((p: string) => `- ${p}`)
+                                        .map((p: string) => `- [${p}](${p})`)
                                         .join('\n')
                                     } else if (resultObj?.meta?.path) {
                                       detailMarkdown = `- 已读取：${String(resultObj.meta.path)}`
@@ -1734,6 +1788,7 @@ function AppLoaded(): JSX.Element {
 
                                     const hasDetail =
                                       Boolean(detailMarkdown) ||
+                                      (Array.isArray((tr as any).artifacts) && (tr as any).artifacts.length > 0) ||
                                       (Array.isArray(tr.diffs) && tr.diffs.length > 0) ||
                                       (tr.status === 'failed' && Boolean(tr.error?.message))
 
@@ -1764,9 +1819,24 @@ function AppLoaded(): JSX.Element {
                                           
                                           <div className="min-w-0 flex-1 flex items-center gap-2">
                                             <span className="font-mono text-[12px] text-foreground hover:text-foreground/80 cursor-pointer">{tr.name}</span>
-                                            <span className="inline-block max-w-full text-[12px] font-mono text-muted-foreground bg-muted/30 px-1.5 py-0.5 rounded-md truncate align-middle border border-transparent hover:border-border/50 transition-colors">
-                                              {entity}
-                                            </span>
+                                            {canOpenEntityInFiles ? (
+                                              <button
+                                                type="button"
+                                                className="inline-block max-w-full text-[12px] font-mono text-muted-foreground bg-muted/30 px-1.5 py-0.5 rounded-md truncate align-middle border border-transparent hover:border-border/50 transition-colors hover:underline cursor-pointer"
+                                                onMouseDown={(e) => e.stopPropagation()}
+                                                onClick={(e) => {
+                                                  e.stopPropagation()
+                                                  openFileInExplorer(entity)
+                                                }}
+                                                title={entity}
+                                              >
+                                                {entity}
+                                              </button>
+                                            ) : (
+                                              <span className="inline-block max-w-full text-[12px] font-mono text-muted-foreground bg-muted/30 px-1.5 py-0.5 rounded-md truncate align-middle border border-transparent hover:border-border/50 transition-colors">
+                                                {entity}
+                                              </span>
+                                            )}
                                             {resultSummary && (
                                               <span className="inline-block max-w-full text-[12px] font-mono text-muted-foreground bg-muted/10 px-1.5 py-0.5 rounded-md truncate align-middle border border-border/30">
                                                 {resultSummary}
@@ -1780,6 +1850,12 @@ function AppLoaded(): JSX.Element {
 
                                         {detailOpen && hasDetail && (
                                           <div className={tr.name === 'WebSearch' ? 'mt-2 space-y-2 pb-1' : 'mt-2 ml-3 space-y-2 pb-1 border-l-2 border-muted pl-2'}>
+                                            {Array.isArray((tr as any).artifacts) && (tr as any).artifacts.length > 0 && (
+                                              <div className="space-y-1">
+                                                <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Artifacts</div>
+                                                {renderArtifacts((tr as any).artifacts as Artifact[], 'sm')}
+                                              </div>
+                                            )}
                                             {detailMarkdown ? (
                                               <ReactMarkdown
                                                 remarkPlugins={[remarkGfm, remarkMath]}
@@ -1787,8 +1863,36 @@ function AppLoaded(): JSX.Element {
                                                 className="prose prose-sm dark:prose-invert max-w-none text-[11px] text-foreground/80 prose-ul:pl-3 prose-ol:pl-3"
                                                 components={{
                                                   pre: ({ children }) => <>{children}</>,
-                                                  code({ children, ...props }: any) {
-                                                    return <code {...props}>{children}</code>
+                                                  code({ inline, className, children, ...props }: any) {
+                                                    const value = String(children).replace(/\n$/, '')
+                                                    const trimmed = value.trim()
+                                                    const isFileToken =
+                                                      Boolean(inline) &&
+                                                      !/^https?:\/\//i.test(trimmed) &&
+                                                      (trimmed.startsWith('file://') ||
+                                                        trimmed.startsWith('/') ||
+                                                        trimmed.startsWith('\\') ||
+                                                        trimmed.startsWith('./') ||
+                                                        trimmed.startsWith('../') ||
+                                                        trimmed.startsWith('~/') ||
+                                                        /\.(ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)$/i.test(trimmed))
+                                                    if (isFileToken) {
+                                                      return (
+                                                        <button
+                                                          type="button"
+                                                          className="rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground hover:underline cursor-pointer"
+                                                          onClick={(e) => {
+                                                            e.preventDefault()
+                                                            e.stopPropagation()
+                                                            openLinkTarget(trimmed)
+                                                          }}
+                                                          title={trimmed}
+                                                        >
+                                                          {trimmed}
+                                                        </button>
+                                                      )
+                                                    }
+                                                    return <code className={className} {...props}>{children}</code>
                                                   },
                                                   a({ href, children, ...props }: any) {
                                                     const target = String(href || '').trim()
@@ -1799,7 +1903,7 @@ function AppLoaded(): JSX.Element {
                                                         onClick={(e) => {
                                                           if (!target) return
                                                           e.preventDefault()
-                                                          openPreviewUrl(target)
+                                                          openLinkTarget(target)
                                                         }}
                                                       >
                                                         {children}
@@ -1808,7 +1912,7 @@ function AppLoaded(): JSX.Element {
                                                   }
                                                 }}
                                               >
-                                                {detailMarkdown}
+                                                {linkifyQuotedFileNames(detailMarkdown)}
                                               </ReactMarkdown>
                                             ) : null}
 
@@ -1874,6 +1978,15 @@ function AppLoaded(): JSX.Element {
                                       const lang = match ? match[1] : 'text'
                                       const value = String(children).replace(/\n$/, '')
                                       const trimmed = value.trim()
+                                      const isFileToken =
+                                        !/^https?:\/\//i.test(trimmed) &&
+                                        (trimmed.startsWith('file://') ||
+                                          trimmed.startsWith('/') ||
+                                          trimmed.startsWith('\\') ||
+                                          trimmed.startsWith('./') ||
+                                          trimmed.startsWith('../') ||
+                                          trimmed.startsWith('~/') ||
+                                          /\.(ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)$/i.test(trimmed))
                                       const isShortFence = !inline && !match && trimmed && !trimmed.includes('\n') && trimmed.length <= 80
                                       if (isShortFence) {
                                         return (
@@ -1891,15 +2004,57 @@ function AppLoaded(): JSX.Element {
                                       if (!inline) {
                                         return <CodeBlock language={lang} value={value} className={className} {...props} />
                                       }
+                                      if (isFileToken) {
+                                        return (
+                                          <button
+                                            type="button"
+                                            className="rounded bg-muted px-1.5 py-0.5 font-mono text-[12px] text-foreground hover:underline cursor-pointer"
+                                            onClick={(e) => {
+                                              e.preventDefault()
+                                              e.stopPropagation()
+                                              openLinkTarget(trimmed)
+                                            }}
+                                            title={trimmed}
+                                          >
+                                            {trimmed}
+                                          </button>
+                                        )
+                                      }
                                       return <code className={className} {...props}>{children}</code>
+                                    },
+                                    a({ href, children, ...props }: any) {
+                                      const target = String(href || '').trim()
+                                      return (
+                                        <a
+                                          {...props}
+                                          href={target}
+                                          onClick={(e) => {
+                                            if (!target) return
+                                            e.preventDefault()
+                                            openLinkTarget(target)
+                                          }}
+                                        >
+                                          {children}
+                                        </a>
+                                      )
                                     }
                                   }}
                                 >
-                                  {normalizeChatMarkdown(msg.content || '')}
+                                  {linkifyQuotedFileNames(normalizeChatMarkdown(msg.content || ''))}
                                 </ReactMarkdown>
                               </div>
                             ) : (
                               <p className="whitespace-pre-wrap pl-6 text-foreground/90">{msg.content || ''}</p>
+                            )}
+                            {typeof (msg.meta as any)?.stage === 'string' && String((msg.meta as any).stage || '').trim() && (
+                              <div className="text-[11px] text-muted-foreground pl-6 pt-1">
+                                {String((msg.meta as any).stage)}
+                              </div>
+                            )}
+                            {Array.isArray(msg.meta?.artifacts) && msg.meta?.artifacts.length > 0 && (
+                              <div className="pl-6 pt-1">
+                                {renderArtifacts(msg.meta.artifacts, 'md')}
+                              </div>
                             )}
                             {settings.showTokenUsage && msg.meta?.totalTokens != null && (
                               <div className="text-[11px] text-muted-foreground pl-6">
@@ -2188,6 +2343,21 @@ function AppLoaded(): JSX.Element {
                            </div>
                         </PopoverContent>
                       </Popover>
+
+                      {effectiveProvider?.type === 'deepseek' ? (
+                        <select
+                          className="h-8 rounded-full border bg-background px-2 text-[11px] text-foreground"
+                          value={thinkingLevel}
+                          onChange={(e) => updateComposer({ thinkingLevel: e.target.value as any })}
+                          title={t.composer.thinking}
+                        >
+                          <option value="default">{t.composer.thinkingDefault}</option>
+                          <option value="off">{t.composer.thinkingOff}</option>
+                          <option value="low">{t.composer.thinkingLow}</option>
+                          <option value="medium">{t.composer.thinkingMedium}</option>
+                          <option value="high">{t.composer.thinkingHigh}</option>
+                        </select>
+                      ) : null}
 
                        {/* Context Usage */}
                        <TooltipProvider>

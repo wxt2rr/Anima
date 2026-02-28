@@ -3,3 +3,5 @@ transformers>=4.40.0
 accelerate
 soundfile
 numpy
+langgraph
+langgraph-checkpoint-sqlite

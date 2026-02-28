@@ -36,7 +36,26 @@ export interface Message {
     collapsedAnalysis?: boolean
     todoSnapshot?: TodoItem[]
     todoPlan?: TodoItem[]
+    artifacts?: Artifact[]
+    stage?: string
   }
+}
+
+export interface ArtifactSource {
+  toolName?: string
+  toolCallId?: string
+  traceId?: string
+}
+
+export interface Artifact {
+  id?: string
+  kind: 'image' | 'video' | 'file'
+  path: string
+  mime?: string
+  sizeBytes?: number
+  title?: string
+  caption?: string
+  source?: ArtifactSource
 }
 
 export type ToolTraceStatus = 'running' | 'succeeded' | 'failed'
@@ -64,6 +83,7 @@ export interface ToolTrace {
   resultPreview?: ToolPreview
   diffs?: ToolDiff[]
   error?: { message?: string }
+  artifacts?: Artifact[]
 }
 
 export interface ChatThread {
@@ -215,6 +235,12 @@ export interface Settings {
   memoryToolModelId: string
   memoryEmbeddingModelId: string
 
+  openclaw?: {
+    enabled?: boolean
+    heartbeatEnabled?: boolean
+    heartbeatTelegramChatId?: string
+  }
+
   voice?: {
     enabled: boolean
     model: string
@@ -223,8 +249,29 @@ export interface Settings {
     localModels?: Array<{ id: string; name: string; path: string }>
   }
 
+  im?: {
+    provider?: 'telegram'
+    telegram?: {
+      enabled?: boolean
+      botToken?: string
+      allowedUserIds?: string[]
+      allowGroups?: boolean
+      pollingIntervalMs?: number
+    }
+  }
+
   plugins: Plugin[]
   mcpServers: McpServer[]
+
+  media?: {
+    imageEnabled: boolean
+    videoEnabled: boolean
+    imageProviderId?: string
+    videoProviderId?: string
+    defaultImageModel: string
+    defaultImageSize: string
+    defaultVideoModel: string
+  }
 }
 
 interface AppState {
@@ -240,6 +287,7 @@ interface AppState {
     rightSidebarOpen: boolean
     activeRightPanel: 'files' | 'git' | 'terminal' | 'preview' | null
     previewUrl: string
+    fileExplorerRequest: { path: string; nonce: number }
     composer: {
       attachments: ComposerAttachment[]
       workspaceDir: string
@@ -251,6 +299,7 @@ interface AppState {
       providerOverrideId: string
       modelOverride: string
       contextWindowOverride: number
+      thinkingLevel: 'default' | 'off' | 'low' | 'medium' | 'high'
     }
   }
   settings: Settings | null
@@ -263,7 +312,7 @@ interface AppState {
   initApp: () => Promise<void>
 
   // Actions
-  addMessage: (message: Omit<Message, 'id' | 'timestamp'> & { id?: string }) => void
+  addMessage: (message: Omit<Message, 'id' | 'timestamp'> & { id?: string }, options?: { persist?: boolean }) => void
   insertMessageBefore: (targetId: string, message: Omit<Message, 'id' | 'timestamp'> & { id?: string }) => void
   updateMessageById: (chatId: string, messageId: string, updates: Partial<Omit<Message, 'id' | 'timestamp'>>) => void
   persistMessageById: (chatId: string, messageId: string, content: string, meta?: Message['meta']) => Promise<void>
@@ -282,6 +331,7 @@ interface AppState {
   setRightSidebarOpen: (isOpen: boolean) => void
   setActiveRightPanel: (panel: 'files' | 'git' | 'terminal' | 'preview' | null) => void
   setPreviewUrl: (url: string) => void
+  openFileInExplorer: (path: string) => void
   updateComposer: (patch: Partial<AppState['ui']['composer']>) => void
   resetComposer: () => void
   
@@ -299,11 +349,6 @@ interface AppState {
   updateProvider: (id: string, updates: Partial<Provider> | Partial<Provider['config']>) => void
   toggleProvider: (id: string, isEnabled: boolean) => void
   getActiveProvider: () => Provider | undefined
-
-  createSystemPrompt: (name: string) => void
-  updateSystemPrompt: (id: string, updates: Partial<SystemPromptPreset>) => void
-  deleteSystemPrompt: (id: string) => void
-  selectSystemPrompt: (id: string) => void
 
   addMemory: (content: string) => void
   updateMemory: (id: string, updates: Partial<MemoryItem>) => void
@@ -387,7 +432,8 @@ const createDefaultComposer = (): AppState['ui']['composer'] => ({
   enabledSkillIds: [],
   providerOverrideId: '',
   modelOverride: '',
-  contextWindowOverride: 0
+  contextWindowOverride: 0,
+  thinkingLevel: 'default'
 })
 
 const createDefaultUi = (): AppState['ui'] => ({
@@ -397,6 +443,7 @@ const createDefaultUi = (): AppState['ui'] => ({
   rightSidebarOpen: false,
   activeRightPanel: null,
   previewUrl: '',
+  fileExplorerRequest: { path: '', nonce: 0 },
   composer: createDefaultComposer()
 })
 
@@ -614,6 +661,21 @@ export const useStore = create<AppState>()(
           }
         })),
 
+      openFileInExplorer: (rawPath) =>
+        set((state) => {
+          const text = String(rawPath || '').trim()
+          if (!text) return {}
+          const nextNonce = (state.ui.fileExplorerRequest?.nonce || 0) + 1
+          return {
+            ui: {
+              ...state.ui,
+              rightSidebarOpen: true,
+              activeRightPanel: 'files',
+              fileExplorerRequest: { path: text, nonce: nextNonce }
+            }
+          }
+        }),
+
       updateComposer: (patch) =>
         set((state) => ({
           ui: {
@@ -630,20 +692,22 @@ export const useStore = create<AppState>()(
           }
         })),
 
-      addMessage: (msg) =>
+      addMessage: (msg, options) =>
         set((state) => {
           const now = Date.now()
           const created = { id: nanoid(), ...msg, timestamp: now }
 
           const activeChatId = state.activeChatId || state.chats[0]?.id || ''
-          
+          const shouldPersist = options?.persist !== false
           if (activeChatId) {
-             api.addMessage(activeChatId, created).catch(console.error)
-             const chat = state.chats.find(c => c.id === activeChatId)
-             if (chat && chat.title === 'New Chat' && created.role === 'user' && state.messages.length === 0) {
-                 const newTitle = created.content.trim().slice(0, 32) || 'New Chat'
-                 api.updateChat(activeChatId, { title: newTitle }).catch(console.error)
-             }
+            if (shouldPersist) {
+              api.addMessage(activeChatId, created).catch(console.error)
+            }
+            const chat = state.chats.find(c => c.id === activeChatId)
+            if (chat && chat.title === 'New Chat' && created.role === 'user' && state.messages.length === 0) {
+              const newTitle = created.content.trim().slice(0, 32) || 'New Chat'
+              api.updateChat(activeChatId, { title: newTitle }).catch(console.error)
+            }
           }
 
           if (!activeChatId) {
@@ -828,6 +892,20 @@ export const useStore = create<AppState>()(
               }
               rawSettings.voice.model = legacyMap[v] || v
             }
+          }
+          if (rawSettings && !rawSettings.media) {
+            rawSettings.media = {
+              imageEnabled: false,
+              videoEnabled: false,
+              imageProviderId: '',
+              videoProviderId: '',
+              defaultImageModel: '',
+              defaultImageSize: '1024x1024',
+              defaultVideoModel: ''
+            }
+          } else if (rawSettings?.media && typeof rawSettings.media === 'object') {
+            if (!('imageProviderId' in rawSettings.media)) rawSettings.media.imageProviderId = ''
+            if (!('videoProviderId' in rawSettings.media)) rawSettings.media.videoProviderId = ''
           }
           if (!rawSettings || typeof rawSettings !== 'object') throw new Error('Invalid settings payload')
           if (!Array.isArray(rawProviders)) throw new Error('Invalid providers payload')
@@ -1104,36 +1182,6 @@ export const useStore = create<AppState>()(
 
       getActiveProvider: () => {
         return (get().providers || []).find((p) => p.isEnabled)
-      },
-
-      createSystemPrompt: (name) => {
-        const cur = get().settings
-        if (!cur) return
-        const id = nanoid()
-        const nextSystemPrompts = [...cur.systemPrompts, { id, name: name.trim() || 'Untitled', content: '' }]
-        get().updateSettings({ systemPrompts: nextSystemPrompts, selectedSystemPromptId: id })
-      },
-
-      updateSystemPrompt: (id, updates) => {
-        const cur = get().settings
-        if (!cur) return
-        const nextSystemPrompts = cur.systemPrompts.map((p) => (p.id === id ? { ...p, ...updates } : p))
-        get().updateSettings({ systemPrompts: nextSystemPrompts })
-      },
-
-      deleteSystemPrompt: (id) => {
-        if (!id) return
-        const cur = get().settings
-        if (!cur) return
-        const next = cur.systemPrompts.filter((p) => p.id !== id)
-        const selected = cur.selectedSystemPromptId === id ? (next[0]?.id || '') : cur.selectedSystemPromptId
-        get().updateSettings({ systemPrompts: next, selectedSystemPromptId: selected })
-      },
-
-      selectSystemPrompt: (id) => {
-        const cur = get().settings
-        if (!cur) return
-        get().updateSettings({ selectedSystemPromptId: id })
       },
 
       addMemory: (content) => {

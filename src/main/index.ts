@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, globalShortcut, type OpenDialogOptions } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, globalShortcut, nativeImage, type OpenDialogOptions } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
@@ -117,6 +117,26 @@ function toggleDevTools(): void {
   }
 }
 
+function trySetDockIcon(): void {
+  if (process.platform !== 'darwin') return
+  const dock = (app as any).dock
+  if (!dock || typeof dock.setIcon !== 'function') return
+  const preferred = join(process.cwd(), 'images', 'logo_padded.png')
+  const fallback = join(process.cwd(), 'images', 'logo.png')
+  const p = existsSync(preferred) ? preferred : fallback
+  if (!existsSync(p)) return
+  const img = nativeImage.createFromPath(p)
+  if (img.isEmpty()) return
+  dock.setIcon(img)
+}
+
+function getDevIconPath(): string | undefined {
+  const preferred = join(process.cwd(), 'images', 'logo_padded.png')
+  const fallback = join(process.cwd(), 'images', 'logo.png')
+  const p = existsSync(preferred) ? preferred : fallback
+  return is.dev && existsSync(p) ? p : undefined
+}
+
 function registerIpcHandlers(): void {
   registerFileService()
   registerGitService()
@@ -158,18 +178,20 @@ function registerIpcHandlers(): void {
         sandbox: false,
         contextIsolation: true,
         webviewTag: true
-      }
+      },
+      icon: getDevIconPath()
     })
+    const win = settingsWindow
 
     settingsWindow.on('ready-to-show', () => {
-      settingsWindow?.show()
+      if (!win.isDestroyed()) win.show()
     })
 
     settingsWindow.on('closed', () => {
-      settingsWindow = null
+      if (settingsWindow === win) settingsWindow = null
     })
 
-    settingsWindow.webContents.setWindowOpenHandler((details) => {
+    win.webContents.setWindowOpenHandler((details) => {
       shell.openExternal(details.url)
       return { action: 'deny' }
     })
@@ -178,15 +200,26 @@ function registerIpcHandlers(): void {
       const devUrl =
         process.env['ELECTRON_RENDERER_URL'] || process.env['VITE_DEV_SERVER_URL'] || 'http://localhost:5173/'
       try {
-        await settingsWindow.loadURL(`${devUrl}#/settings`)
+        const base = devUrl.endsWith('/') ? devUrl : `${devUrl}/`
+        await win.loadURL(`${base}#/settings`)
       } catch (error) {
         console.error('[settingsWindow loadURL failed]', error)
-        await settingsWindow.loadURL(
-          `data:text/html,${encodeURIComponent('<pre>Failed to load renderer dev server. Check main-process console.</pre>')}`
-        )
+        if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+          try {
+            await win.loadURL(
+              `data:text/html,${encodeURIComponent(
+                '<pre>Failed to load renderer dev server. Is "npm run dev" running?</pre>'
+              )}`
+            )
+          } catch {
+            // ignore
+          }
+        }
       }
     } else {
-      await settingsWindow.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/settings' })
+      if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+        await win.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/settings' })
+      }
     }
 
     return { ok: true }
@@ -256,7 +289,8 @@ async function createWindow(): Promise<void> {
       sandbox: false,
       contextIsolation: true,
       webviewTag: true
-    }
+    },
+    icon: getDevIconPath()
   })
   
   // We want native traffic lights, so do NOT hide them
@@ -301,6 +335,7 @@ async function createWindow(): Promise<void> {
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.anima.app')
   registerIpcHandlers()
+  trySetDockIcon()
 
   backendPort = await findAvailableBackendPort()
   backendBaseUrl = `http://${BACKEND_HOST}:${backendPort}`

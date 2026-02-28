@@ -6,7 +6,7 @@
   "author": "Anima Team",
   "license": "MIT",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "ANIMA_PYTHON=/Applications/Xcode.app/Contents/Developer/usr/bin/python3 electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "dist": "npm run build && electron-builder",
@@ -28,6 +28,10 @@
       {
         "from": "pybackend",
         "to": "pybackend"
+      },
+      {
+        "from": "skills",
+        "to": "skills"
       }
     ],
     "asar": true,
@@ -36,6 +40,7 @@
         "dmg",
         "zip"
       ],
+      "icon": "build/icon.icns",
       "identity": null
     }
   },

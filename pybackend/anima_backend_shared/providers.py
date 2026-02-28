@@ -43,6 +43,7 @@ def normalize_base_url(base_url: str) -> str:
         return trimmed
     return trimmed + "/v1"
 
+
 def _auth_header_value(api_key: str) -> str:
     s = str(api_key or "").strip()
     if not s:
@@ -51,6 +52,7 @@ def _auth_header_value(api_key: str) -> str:
     if lower.startswith("bearer ") or lower.startswith("basic ") or lower.startswith("token "):
         return s
     return f"Bearer {s}"
+
 
 def _parse_int(value: Any) -> Optional[int]:
     try:
@@ -174,9 +176,8 @@ def _extract_rate_limit(headers: Any) -> Optional[Dict[str, Any]]:
         _parse_int(_header_get(headers, "x-ratelimit-remaining-tokens"))
         or _parse_int(_header_get(headers, "anthropic-ratelimit-remaining-tokens"))
     )
-    limit = (
-        _parse_int(_header_get(headers, "x-ratelimit-limit-tokens"))
-        or _parse_int(_header_get(headers, "anthropic-ratelimit-limit-tokens"))
+    limit = _parse_int(_header_get(headers, "x-ratelimit-limit-tokens")) or _parse_int(
+        _header_get(headers, "anthropic-ratelimit-limit-tokens")
     )
     reset_ms = (
         _parse_duration_to_ms(_header_get(headers, "x-ratelimit-reset-tokens"))
@@ -211,7 +212,7 @@ class OpenAIChatProvider:
         endpoint = "/chat/completions"
         if self._spec.api_format == "responses":
             endpoint = "/responses"
-        
+
         url = normalize_base_url(self._spec.base_url) + endpoint
         headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
         if self._spec.api_key:
@@ -332,6 +333,7 @@ class OpenAIChatProvider:
         except Exception as e:
             raise RuntimeError(str(e))
 
+
 def _provider_spec_from_obj(settings_obj: Dict[str, Any], provider_obj: Dict[str, Any]) -> Optional[ProviderSpec]:
     cfg = provider_obj.get("config") or {}
     if not isinstance(cfg, dict):
@@ -426,11 +428,7 @@ class AnthropicChatProvider(OpenAIChatProvider):
     ) -> Iterator[Dict[str, Any]]:
         # Handle Anthropic Messages API
         url = normalize_base_url(self._spec.base_url) + "/messages"
-        headers = {
-            "Content-Type": "application/json", 
-            "Accept": "text/event-stream",
-            "anthropic-version": "2023-06-01"
-        }
+        headers = {"Content-Type": "application/json", "Accept": "text/event-stream", "anthropic-version": "2023-06-01"}
         if self._spec.api_key:
             headers["x-api-key"] = self._spec.api_key
 
@@ -452,15 +450,15 @@ class AnthropicChatProvider(OpenAIChatProvider):
             "messages": anthropic_messages,
             "max_tokens": max_tokens if (max_tokens and max_tokens > 0) else 4096,
             "stream": True,
-            "temperature": temperature
+            "temperature": temperature,
         }
-        
+
         if system_prompt:
             payload["system"] = system_prompt
-            
+
         if extra_body:
             payload.update(extra_body)
-            
+
         # Add tool support if needed (simplified mapping for now)
         if tools:
             payload["tools"] = tools
@@ -493,21 +491,11 @@ class AnthropicChatProvider(OpenAIChatProvider):
                         evt = json.loads(data_text)
                         # Convert Anthropic stream event to OpenAI format
                         if evt.get("type") == "content_block_delta" and "delta" in evt:
-                             delta = evt["delta"]
-                             if delta.get("type") == "text_delta":
-                                 yield {
-                                     "choices": [{
-                                         "delta": {"content": delta.get("text")},
-                                         "finish_reason": None
-                                     }]
-                                 }
+                            delta = evt["delta"]
+                            if delta.get("type") == "text_delta":
+                                yield {"choices": [{"delta": {"content": delta.get("text")}, "finish_reason": None}]}
                         elif evt.get("type") == "message_stop":
-                             yield {
-                                 "choices": [{
-                                     "delta": {},
-                                     "finish_reason": "stop"
-                                 }]
-                             }
+                            yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
                     except Exception:
                         continue
         except Exception as e:
@@ -525,10 +513,7 @@ class AnthropicChatProvider(OpenAIChatProvider):
     ) -> Dict[str, Any]:
         # Handle Anthropic Messages API (Non-streaming)
         url = normalize_base_url(self._spec.base_url) + "/messages"
-        headers = {
-            "Content-Type": "application/json", 
-            "anthropic-version": "2023-06-01"
-        }
+        headers = {"Content-Type": "application/json", "anthropic-version": "2023-06-01"}
         if self._spec.api_key:
             headers["x-api-key"] = self._spec.api_key
 
@@ -548,7 +533,7 @@ class AnthropicChatProvider(OpenAIChatProvider):
             "model": actual_model,
             "messages": anthropic_messages,
             "max_tokens": max_tokens if (max_tokens and max_tokens > 0) else 4096,
-            "temperature": temperature
+            "temperature": temperature,
         }
         if system_prompt:
             payload["system"] = system_prompt
@@ -556,7 +541,7 @@ class AnthropicChatProvider(OpenAIChatProvider):
             payload.update(extra_body)
 
         data = json.dumps(payload).encode("utf-8")
-        
+
         handlers: List[urllib.request.BaseHandler] = []
         if self._spec.proxy_url:
             handlers.append(urllib.request.ProxyHandler({"http": self._spec.proxy_url, "https": self._spec.proxy_url}))
@@ -572,19 +557,13 @@ class AnthropicChatProvider(OpenAIChatProvider):
                 for block in data.get("content", []):
                     if block.get("type") == "text":
                         content += block.get("text", "")
-                
+
                 return {
-                    "choices": [{
-                        "message": {
-                            "role": "assistant",
-                            "content": content
-                        },
-                        "finish_reason": data.get("stop_reason")
-                    }],
+                    "choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": data.get("stop_reason")}],
                     "usage": {
                         "prompt_tokens": data.get("usage", {}).get("input_tokens", 0),
-                        "completion_tokens": data.get("usage", {}).get("output_tokens", 0)
-                    }
+                        "completion_tokens": data.get("usage", {}).get("output_tokens", 0),
+                    },
                 }
         except Exception as e:
             raise RuntimeError(f"Anthropic request error: {str(e)}")
@@ -617,7 +596,10 @@ class DeepSeekChatProvider(OpenAIChatProvider):
         payload: Dict[str, Any] = {"model": actual_model, "messages": messages, "temperature": temperature, "stream": True}
         if extra_body:
             payload.update(extra_body)
-        if self._spec.thinking_enabled:
+        thinking = payload.get("thinking")
+        if isinstance(thinking, dict) and str(thinking.get("type") or "").strip().lower() == "disabled":
+            payload.pop("thinking", None)
+        elif thinking is None and self._spec.thinking_enabled:
             payload["thinking"] = {"type": "enabled"}
         if max_tokens and max_tokens > 0:
             if self._spec.use_max_completion_tokens:
@@ -689,7 +671,10 @@ class DeepSeekChatProvider(OpenAIChatProvider):
         payload: Dict[str, Any] = {"model": actual_model, "messages": messages, "temperature": temperature}
         if extra_body:
             payload.update(extra_body)
-        if self._spec.thinking_enabled:
+        thinking = payload.get("thinking")
+        if isinstance(thinking, dict) and str(thinking.get("type") or "").strip().lower() == "disabled":
+            payload.pop("thinking", None)
+        elif thinking is None and self._spec.thinking_enabled:
             payload["thinking"] = {"type": "enabled"}
         if max_tokens and max_tokens > 0:
             if self._spec.use_max_completion_tokens:

@@ -15,6 +15,8 @@ _DB_INITIALIZED = False
 _CONFIG_ROOT: Optional[Path] = None
 _CONFIG_ROOT_LOCK = threading.Lock()
 _DB_LOCAL = threading.local()
+_LG_DB_INITIALIZED = False
+_LG_DB_LOCAL = threading.local()
 
 SQLITE_BUSY_TIMEOUT_MS = 5000
 
@@ -76,6 +78,13 @@ def db_path() -> Path:
     return config_root() / "chats.db"
 
 
+def langgraph_db_path() -> Path:
+    root = config_root()
+    lg_dir = root / "langgraph"
+    lg_dir.mkdir(parents=True, exist_ok=True)
+    return lg_dir / "checkpoints.db"
+
+
 def init_db() -> None:
     path = db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -85,8 +94,8 @@ def init_db() -> None:
     conn.execute("PRAGMA synchronous = NORMAL")
     c = conn.cursor()
 
-    # Chats table
-    c.execute("""
+    c.execute(
+        """
         CREATE TABLE IF NOT EXISTS chats (
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL,
@@ -94,15 +103,16 @@ def init_db() -> None:
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL
         )
-    """)
+    """
+    )
 
     try:
         c.execute("ALTER TABLE chats ADD COLUMN meta TEXT")
     except sqlite3.OperationalError:
         pass
 
-    # Messages table
-    c.execute("""
+    c.execute(
+        """
         CREATE TABLE IF NOT EXISTS messages (
             id TEXT PRIMARY KEY,
             chat_id TEXT NOT NULL,
@@ -112,19 +122,48 @@ def init_db() -> None:
             created_at INTEGER NOT NULL,
             FOREIGN KEY (chat_id) REFERENCES chats (id) ON DELETE CASCADE
         )
-    """)
+    """
+    )
 
-    c.execute("""
+    c.execute(
+        """
         CREATE TABLE IF NOT EXISTS app_settings (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             data TEXT NOT NULL,
             updated_at INTEGER NOT NULL
         )
-    """)
+    """
+    )
 
     c.execute("CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages (chat_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_chats_updated_at ON chats (updated_at DESC)")
 
+    conn.commit()
+    conn.close()
+
+
+def init_langgraph_db() -> None:
+    path = langgraph_db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path, timeout=max(1.0, SQLITE_BUSY_TIMEOUT_MS / 1000.0))
+    conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    c = conn.cursor()
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS runs (
+            id TEXT PRIMARY KEY,
+            thread_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            input TEXT,
+            output TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )
+    """
+    )
+    c.execute("CREATE INDEX IF NOT EXISTS idx_runs_updated_at ON runs (updated_at DESC)")
     conn.commit()
     conn.close()
 
@@ -135,6 +174,14 @@ def _ensure_db_initialized() -> None:
         return
     init_db()
     _DB_INITIALIZED = True
+
+
+def _ensure_langgraph_db_initialized() -> None:
+    global _LG_DB_INITIALIZED
+    if _LG_DB_INITIALIZED:
+        return
+    init_langgraph_db()
+    _LG_DB_INITIALIZED = True
 
 
 def _ensure_app_settings_table(conn: sqlite3.Connection) -> None:
@@ -220,6 +267,16 @@ def close_db_connection() -> None:
         _DB_LOCAL.conn = None
 
 
+def close_langgraph_db_connection() -> None:
+    conn = getattr(_LG_DB_LOCAL, "conn", None)
+    if conn is None:
+        return
+    try:
+        conn.close()
+    finally:
+        _LG_DB_LOCAL.conn = None
+
+
 def get_db_connection() -> sqlite3.Connection:
     _ensure_db_initialized()
     cached = getattr(_DB_LOCAL, "conn", None)
@@ -233,6 +290,72 @@ def get_db_connection() -> sqlite3.Connection:
     return conn
 
 
+def get_langgraph_db_connection() -> sqlite3.Connection:
+    _ensure_langgraph_db_initialized()
+    cached = getattr(_LG_DB_LOCAL, "conn", None)
+    if cached is not None:
+        return cached
+
+    dp = langgraph_db_path()
+    conn = sqlite3.connect(dp, timeout=max(1.0, SQLITE_BUSY_TIMEOUT_MS / 1000.0))
+    _configure_connection(conn)
+    _LG_DB_LOCAL.conn = conn
+    return conn
+
+
+def create_run(run_id: str, thread_id: str, input_obj: Dict[str, Any]) -> None:
+    conn = get_langgraph_db_connection()
+    now = int(time.time() * 1000)
+    payload = json.dumps(input_obj, ensure_ascii=False)
+    conn.execute(
+        "INSERT INTO runs (id, thread_id, status, input, output, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (run_id, thread_id, "running", payload, None, now, now),
+    )
+    conn.commit()
+
+
+def update_run(run_id: str, status: str, output_obj: Optional[Dict[str, Any]] = None) -> None:
+    conn = get_langgraph_db_connection()
+    now = int(time.time() * 1000)
+    payload = json.dumps(output_obj, ensure_ascii=False) if isinstance(output_obj, dict) else None
+    conn.execute(
+        "UPDATE runs SET status = ?, output = ?, updated_at = ? WHERE id = ?",
+        (status, payload, now, run_id),
+    )
+    conn.commit()
+
+
+def get_run(run_id: str) -> Optional[Dict[str, Any]]:
+    conn = get_langgraph_db_connection()
+    row = conn.execute(
+        "SELECT id, thread_id, status, input, output, created_at, updated_at FROM runs WHERE id = ?",
+        (run_id,),
+    ).fetchone()
+    if not row:
+        return None
+    input_obj = None
+    output_obj = None
+    if row["input"]:
+        try:
+            input_obj = json.loads(row["input"])
+        except Exception:
+            input_obj = None
+    if row["output"]:
+        try:
+            output_obj = json.loads(row["output"])
+        except Exception:
+            output_obj = None
+    return {
+        "id": row["id"],
+        "threadId": row["thread_id"],
+        "status": row["status"],
+        "input": input_obj,
+        "output": output_obj,
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+    }
+
+
 def get_chats() -> List[Dict[str, Any]]:
     conn = get_db_connection()
     chats = conn.execute("SELECT * FROM chats ORDER BY updated_at DESC").fetchall()
@@ -243,12 +366,12 @@ def get_chats() -> List[Dict[str, Any]]:
             "id": c["id"],
             "title": c["title"],
             "createdAt": c["created_at"],
-            "updatedAt": c["updated_at"]
+            "updatedAt": c["updated_at"],
         }
         if c["meta"]:
             try:
                 d["meta"] = json.loads(c["meta"])
-            except:
+            except Exception:
                 d["meta"] = None
         res.append(d)
     return res
@@ -262,30 +385,20 @@ def get_chat(chat_id: str) -> Optional[Dict[str, Any]]:
 
     messages = conn.execute("SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC", (chat_id,)).fetchall()
 
-    res = {
-        "id": chat["id"],
-        "title": chat["title"],
-        "createdAt": chat["created_at"],
-        "updatedAt": chat["updated_at"]
-    }
+    res = {"id": chat["id"], "title": chat["title"], "createdAt": chat["created_at"], "updatedAt": chat["updated_at"]}
     if chat["meta"]:
         try:
             res["meta"] = json.loads(chat["meta"])
-        except:
+        except Exception:
             res["meta"] = None
 
     msgs = []
     for m in messages:
-        d = {
-            "id": m["id"],
-            "role": m["role"],
-            "content": m["content"],
-            "timestamp": m["created_at"]
-        }
+        d = {"id": m["id"], "role": m["role"], "content": m["content"], "timestamp": m["created_at"]}
         if m["meta"]:
             try:
                 d["meta"] = json.loads(m["meta"])
-            except:
+            except Exception:
                 d["meta"] = None
         msgs.append(d)
     res["messages"] = msgs
@@ -296,8 +409,7 @@ def create_chat(title: str = "New Chat") -> Dict[str, Any]:
     conn = get_db_connection()
     now = int(time.time() * 1000)
     chat_id = str(uuid4())
-    conn.execute("INSERT INTO chats (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
-                 (chat_id, title, now, now))
+    conn.execute("INSERT INTO chats (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)", (chat_id, title, now, now))
     conn.commit()
     return {"id": chat_id, "title": title, "createdAt": now, "updatedAt": now, "messages": []}
 
@@ -336,13 +448,9 @@ def add_message(chat_id: str, message: Dict[str, Any]) -> Dict[str, Any]:
     conn = get_db_connection()
     now = int(time.time() * 1000)
 
-    # Ensure chat exists
     chat = conn.execute("SELECT id FROM chats WHERE id = ?", (chat_id,)).fetchone()
     if not chat:
-        conn.execute(
-            "INSERT INTO chats (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            (chat_id, "New Chat", now, now)
-        )
+        conn.execute("INSERT INTO chats (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)", (chat_id, "New Chat", now, now))
 
     msg_id = message.get("id") or str(uuid4())
     role = message.get("role") or "user"
@@ -352,24 +460,16 @@ def add_message(chat_id: str, message: Dict[str, Any]) -> Dict[str, Any]:
 
     conn.execute(
         "INSERT INTO messages (id, chat_id, role, content, meta, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (msg_id, chat_id, role, content, meta, timestamp)
+        (msg_id, chat_id, role, content, meta, timestamp),
     )
     conn.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now, chat_id))
     conn.commit()
 
-    return {
-        "id": msg_id,
-        "role": role,
-        "content": content,
-        "meta": message.get("meta"),
-        "timestamp": timestamp
-    }
+    return {"id": msg_id, "role": role, "content": content, "meta": message.get("meta"), "timestamp": timestamp}
 
 
 def update_message(chat_id: str, msg_id: str, updates: Dict[str, Any]) -> None:
     conn = get_db_connection()
-    now = int(time.time() * 1000)
-
     fields = []
     values = []
     if "content" in updates:
@@ -386,9 +486,6 @@ def update_message(chat_id: str, msg_id: str, updates: Dict[str, Any]) -> None:
     if not fields:
         return
 
-    # Don't update chat updated_at for message content updates, or maybe we should?
-    # Usually editing a message might not bump the chat to top, but let's stick to simple logic for now.
-
     values.append(chat_id)
     values.append(msg_id)
 
@@ -401,9 +498,9 @@ def import_chats(chats: List[Dict[str, Any]]) -> None:
 
     for chat in chats:
         chat_id = chat.get("id")
-        if not chat_id: continue
+        if not chat_id:
+            continue
 
-        # Check exists
         curr = conn.execute("SELECT id FROM chats WHERE id = ?", (chat_id,)).fetchone()
         if curr:
             continue
@@ -413,10 +510,7 @@ def import_chats(chats: List[Dict[str, Any]]) -> None:
         updated_at = chat.get("updatedAt") or created_at
         meta = json.dumps(chat.get("meta")) if chat.get("meta") else None
 
-        conn.execute(
-            "INSERT INTO chats (id, title, meta, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-            (chat_id, title, meta, created_at, updated_at)
-        )
+        conn.execute("INSERT INTO chats (id, title, meta, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", (chat_id, title, meta, created_at, updated_at))
 
         messages = chat.get("messages") or []
         for msg in messages:
@@ -428,7 +522,7 @@ def import_chats(chats: List[Dict[str, Any]]) -> None:
 
             conn.execute(
                 "INSERT INTO messages (id, chat_id, role, content, meta, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (msg_id, chat_id, role, content, meta, msg_created)
+                (msg_id, chat_id, role, content, meta, msg_created),
             )
 
     conn.commit()
@@ -456,13 +550,7 @@ def export_snapshot() -> Dict[str, Any]:
             except Exception:
                 meta_val = None
         by_chat_id.setdefault(m["chat_id"], []).append(
-            {
-                "id": m["id"],
-                "role": m["role"],
-                "content": m["content"],
-                "timestamp": m["created_at"],
-                "meta": meta_val,
-            }
+            {"id": m["id"], "role": m["role"], "content": m["content"], "timestamp": m["created_at"], "meta": meta_val}
         )
 
     exported_chats: List[Dict[str, Any]] = []
@@ -499,13 +587,15 @@ def export_snapshot() -> Dict[str, Any]:
                 cfg = p.get("config")
                 if isinstance(cfg, dict):
                     cfg["apiKey"] = ""
+        s = app_settings.get("settings")
+        if isinstance(s, dict):
+            im = s.get("im")
+            if isinstance(im, dict):
+                tg = im.get("telegram")
+                if isinstance(tg, dict):
+                    tg["botToken"] = ""
 
-    return {
-        "version": 4,
-        "exportedAt": int(time.time() * 1000),
-        "appSettings": app_settings,
-        "chats": exported_chats,
-    }
+    return {"version": 4, "exportedAt": int(time.time() * 1000), "appSettings": app_settings, "chats": exported_chats}
 
 
 def import_snapshot(data: Dict[str, Any]) -> None:
@@ -516,11 +606,7 @@ def import_snapshot(data: Dict[str, Any]) -> None:
         set_app_settings(data["appSettings"])
     elif isinstance(data.get("settings"), dict) and isinstance(data.get("providers"), list):
         set_app_settings(
-            {
-                "schemaVersion": int(data.get("schemaVersion") or 0),
-                "settings": data.get("settings"),
-                "providers": data.get("providers"),
-            }
+            {"schemaVersion": int(data.get("schemaVersion") or 0), "settings": data.get("settings"), "providers": data.get("providers")}
         )
 
     if isinstance(data.get("chats"), list):
@@ -529,10 +615,7 @@ def import_snapshot(data: Dict[str, Any]) -> None:
         chat_id = str(uuid4())
         now = int(time.time() * 1000)
         conn = get_db_connection()
-        conn.execute(
-            "INSERT INTO chats (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            (chat_id, "Imported Chat", now, now),
-        )
+        conn.execute("INSERT INTO chats (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)", (chat_id, "Imported Chat", now, now))
         for msg in data["messages"]:
             if not isinstance(msg, dict):
                 continue

@@ -74,6 +74,15 @@ def skills_dir() -> Path:
     return config_root() / "skills"
 
 
+def project_skills_dir() -> Path:
+    here = Path(__file__).resolve()
+    try:
+        root = here.parents[2]
+    except IndexError:
+        return skills_dir()
+    return root / "skills"
+
+
 def load_settings() -> Dict[str, Any]:
     existing = get_app_settings()
     if not isinstance(existing, dict):
@@ -128,22 +137,27 @@ def list_skills() -> Tuple[str, List[Dict[str, Any]]]:
     dir_path = skills_dir()
     dir_path.mkdir(parents=True, exist_ok=True)
     skills: List[Dict[str, Any]] = []
-    for entry in dir_path.iterdir():
-        if not entry.is_dir():
-            continue
-        skill_file = entry / "SKILL.md"
-        if not skill_file.exists():
-            continue
-        try:
-            content = skill_file.read_text(encoding="utf-8")
-            meta, body = parse_skill_frontmatter(content)
-            name = str(meta.get("name") or "").strip() or extract_first_heading(body) or entry.name
-            description = str(meta.get("description") or "").strip() or extract_description(body)
-            errors = validate_skill_meta(entry.name, meta)
-            is_valid = len(errors) == 0
-            stat = skill_file.stat()
-            skills.append(
-                {
+    roots = [dir_path]
+    proj_dir = project_skills_dir()
+    if proj_dir != dir_path and proj_dir.exists():
+        roots.append(proj_dir)
+    seen: Dict[str, Dict[str, Any]] = {}
+    for base in roots:
+        for entry in base.iterdir():
+            if not entry.is_dir():
+                continue
+            skill_file = entry / "SKILL.md"
+            if not skill_file.exists():
+                continue
+            try:
+                content = skill_file.read_text(encoding="utf-8")
+                meta, body = parse_skill_frontmatter(content)
+                name = str(meta.get("name") or "").strip() or extract_first_heading(body) or entry.name
+                description = str(meta.get("description") or "").strip() or extract_description(body)
+                errors = validate_skill_meta(entry.name, meta)
+                is_valid = len(errors) == 0
+                stat = skill_file.stat()
+                item = {
                     "id": entry.name,
                     "name": name,
                     "description": description,
@@ -153,9 +167,12 @@ def list_skills() -> Tuple[str, List[Dict[str, Any]]]:
                     "errors": errors,
                     "updatedAt": int(stat.st_mtime * 1000),
                 }
-            )
-        except Exception:
-            continue
+                prev = seen.get(entry.name)
+                if not prev or int(item["updatedAt"]) >= int(prev.get("updatedAt") or 0):
+                    seen[entry.name] = item
+            except Exception:
+                continue
+    skills = list(seen.values())
     skills.sort(key=lambda x: x.get("updatedAt", 0), reverse=True)
     return str(dir_path), skills
 
@@ -165,24 +182,29 @@ def get_skills_content(ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     dir_path.mkdir(parents=True, exist_ok=True)
     wanted = set([str(x).strip() for x in (ids or []) if str(x).strip()])
     skills: List[Dict[str, Any]] = []
-    for entry in dir_path.iterdir():
-        if not entry.is_dir():
-            continue
-        if wanted and entry.name not in wanted:
-            continue
-        skill_file = entry / "SKILL.md"
-        if not skill_file.exists():
-            continue
-        try:
-            content = skill_file.read_text(encoding="utf-8")
-            meta, body = parse_skill_frontmatter(content)
-            name = str(meta.get("name") or "").strip() or extract_first_heading(body) or entry.name
-            description = str(meta.get("description") or "").strip() or extract_description(body)
-            errors = validate_skill_meta(entry.name, meta)
-            is_valid = len(errors) == 0
-            stat = skill_file.stat()
-            skills.append(
-                {
+    roots = [dir_path]
+    proj_dir = project_skills_dir()
+    if proj_dir != dir_path and proj_dir.exists():
+        roots.append(proj_dir)
+    seen: Dict[str, Dict[str, Any]] = {}
+    for base in roots:
+        for entry in base.iterdir():
+            if not entry.is_dir():
+                continue
+            if wanted and entry.name not in wanted:
+                continue
+            skill_file = entry / "SKILL.md"
+            if not skill_file.exists():
+                continue
+            try:
+                content = skill_file.read_text(encoding="utf-8")
+                meta, body = parse_skill_frontmatter(content)
+                name = str(meta.get("name") or "").strip() or extract_first_heading(body) or entry.name
+                description = str(meta.get("description") or "").strip() or extract_description(body)
+                errors = validate_skill_meta(entry.name, meta)
+                is_valid = len(errors) == 0
+                stat = skill_file.stat()
+                item = {
                     "id": entry.name,
                     "name": name,
                     "description": description,
@@ -194,9 +216,12 @@ def get_skills_content(ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
                     "errors": errors,
                     "updatedAt": int(stat.st_mtime * 1000),
                 }
-            )
-        except Exception:
-            continue
+                prev = seen.get(entry.name)
+                if not prev or int(item["updatedAt"]) >= int(prev.get("updatedAt") or 0):
+                    seen[entry.name] = item
+            except Exception:
+                continue
+    skills = list(seen.values())
     skills.sort(key=lambda x: x.get("updatedAt", 0), reverse=True)
     return skills
 
@@ -218,7 +243,7 @@ def parse_skill_frontmatter(content: str) -> Tuple[Dict[str, Any], str]:
     if end_idx is None:
         return {}, s
     fm_lines = lines[1:end_idx]
-    body = "\n".join(lines[end_idx + 1:])
+    body = "\n".join(lines[end_idx + 1 :])
     meta = _parse_frontmatter_yaml_minimal(fm_lines)
     return meta, body
 
@@ -297,8 +322,6 @@ def validate_skill_meta(dir_name: str, meta: Dict[str, Any]) -> List[str]:
             errors.append("invalid_name_length")
         if not re.match(r"^[a-z0-9]+(?:-[a-z0-9]+)*$", name):
             errors.append("invalid_name_format")
-        # if name != dir_name:
-        #     errors.append("name_dir_mismatch")
 
     if not desc:
         errors.append("missing_frontmatter_description")

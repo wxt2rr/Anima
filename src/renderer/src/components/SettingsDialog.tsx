@@ -629,6 +629,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           general: 'General',
           providers: 'Providers',
           chat: 'Chat',
+          im: 'IM',
           memory: 'Memory',
           skills: 'Skills',
           network: 'Network',
@@ -729,6 +730,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           general: '通用',
           providers: '提供商',
           chat: '聊天',
+          im: 'IM',
           memory: '记忆',
           skills: '技能',
           network: '网络',
@@ -829,6 +831,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           general: '一般',
           providers: 'プロバイダー',
           chat: 'チャット',
+          im: 'IM',
           memory: 'メモリー',
           skills: 'スキル',
           network: 'ネットワーク',
@@ -929,6 +932,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
     { id: 'general', label: t.tabs.general, icon: Settings },
     { id: 'providers', label: t.tabs.providers, icon: Cpu },
     { id: 'chat', label: t.tabs.chat, icon: MessageSquare },
+    { id: 'im', label: t.tabs.im, icon: ExternalLink },
     { id: 'skills', label: t.tabs.skills, icon: Wand2 },
     { id: 'network', label: t.tabs.network, icon: Globe },
     { id: 'data', label: t.tabs.data, icon: Database },
@@ -984,6 +988,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
             {activeTab === 'providers' && <ProvidersSettings />}
             {activeTab === 'general' && <GeneralSettings />}
             {activeTab === 'chat' && <ChatSettings />}
+            {activeTab === 'im' && <ImSettings />}
             {activeTab === 'skills' && <SkillsSettings />}
             {activeTab === 'network' && <NetworkSettings />}
             {activeTab === 'data' && <DataSettings />}
@@ -1025,6 +1030,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           general: 'General',
           providers: 'Providers',
           chat: 'Chat',
+          im: 'IM',
           memory: 'Memory',
           skills: 'Skills',
           network: 'Network',
@@ -1053,6 +1059,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           general: '通用',
           providers: '提供商',
           chat: '聊天',
+          im: 'IM',
           memory: '记忆',
           skills: '技能',
           network: '网络',
@@ -1081,6 +1088,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           general: '一般',
           providers: 'プロバイダー',
           chat: 'チャット',
+          im: 'IM',
           memory: 'メモリー',
           skills: 'スキル',
           network: 'ネットワーク',
@@ -1113,6 +1121,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
     { id: 'providers', label: t.tabs.providers, icon: Cpu },
     { id: 'chat', label: t.tabs.chat, icon: MessageSquare },
     { id: 'memory', label: t.tabs.memory, icon: Search },
+    { id: 'im', label: t.tabs.im, icon: ExternalLink },
     { id: 'skills', label: t.tabs.skills, icon: Wand2 },
     { id: 'network', label: t.tabs.network, icon: Globe },
     { id: 'data', label: t.tabs.data, icon: Database },
@@ -1162,6 +1171,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           {activeTab === 'general' && <GeneralSettings />}
           {activeTab === 'chat' && <ChatSettings />}
           {activeTab === 'memory' && <MemorySettings />}
+          {activeTab === 'im' && <ImSettings />}
           {activeTab === 'skills' && <SkillsSettings />}
           {activeTab === 'network' && <NetworkSettings />}
           {activeTab === 'data' && <DataSettings />}
@@ -1998,13 +2008,33 @@ function NetworkSettings() {
 function ChatSettings() {
   const {
     settings: settings0,
+    providers: providers0,
     updateSettings,
-    createSystemPrompt,
-    updateSystemPrompt,
-    deleteSystemPrompt,
-    selectSystemPrompt,
   } = useStore()
   const settings = settings0!
+  const providers = providers0 ?? EMPTY_PROVIDERS
+  const media = ((settings as any).media || {
+    imageEnabled: false,
+    videoEnabled: false,
+    imageProviderId: '',
+    videoProviderId: '',
+    defaultImageModel: '',
+    defaultImageSize: '1024x1024',
+    defaultVideoModel: ''
+  }) as {
+    imageEnabled: boolean
+    videoEnabled: boolean
+    imageProviderId: string
+    videoProviderId: string
+    defaultImageModel: string
+    defaultImageSize: string
+    defaultVideoModel: string
+  }
+  const updateMedia = (updates: Partial<typeof media>) => updateSettings({ media: { ...media, ...updates } })
+  const [cleanupStatus, setCleanupStatus] = useState<{ type: 'idle' | 'loading' | 'ok' | 'error'; text: string }>({
+    type: 'idle',
+    text: ''
+  })
   const t = (() => {
     const dict = {
       en: {
@@ -2041,6 +2071,20 @@ function ChatSettings() {
         keepRecentMessages: 'Keep Recent Messages',
         keepRecentMessagesHint: 'Number of recent messages to keep uncompressed (2-20).',
         name: 'Name',
+        mediaSettings: 'Media Generation',
+        imageGenEnabled: 'Enable Image Generation',
+        imageGenProvider: 'Image Provider',
+        videoGenEnabled: 'Enable Video Generation',
+        videoGenProvider: 'Video Provider',
+        defaultImageModel: 'Default Image Model',
+        defaultImageSize: 'Default Image Size',
+        defaultVideoModel: 'Default Video Model',
+        useChatProvider: 'Use Chat Provider',
+        artifactsCleanup: 'Artifacts Cleanup',
+        cleanupArtifacts: 'Clean Up Artifacts',
+        cleanupArtifactsHint: 'Deletes old artifacts under workspace/.anima/artifacts.',
+        cleanupDone: 'Cleanup done.',
+        cleanupFailed: 'Cleanup failed.',
       },
       zh: {
         systemPrompts: '系统提示词',
@@ -2076,6 +2120,20 @@ function ChatSettings() {
         keepRecentMessages: '保留最近消息数',
         keepRecentMessagesHint: '始终保留的最近消息数量，这些消息不会被压缩到摘要中 (2-20)。',
         name: '名称',
+        mediaSettings: '媒体生成',
+        imageGenEnabled: '启用生图',
+        imageGenProvider: '生图 Provider',
+        videoGenEnabled: '启用生视频',
+        videoGenProvider: '生视频 Provider',
+        defaultImageModel: '默认生图模型',
+        defaultImageSize: '默认图片尺寸',
+        defaultVideoModel: '默认生视频模型',
+        useChatProvider: '使用聊天 Provider',
+        artifactsCleanup: '产物清理',
+        cleanupArtifacts: '清理产物',
+        cleanupArtifactsHint: '清理 workspace/.anima/artifacts 下的旧产物。',
+        cleanupDone: '清理完成。',
+        cleanupFailed: '清理失败。',
       },
       ja: {
         systemPrompts: 'システムプロンプト',
@@ -2097,6 +2155,20 @@ function ChatSettings() {
         showTokenUsageHint: 'チャットごとのトークン消費統計を表示します。',
         markdown: 'Markdown レンダリングを有効化',
         markdownHint: '応答内の Markdown コンテンツを自動的にレンダリングします。',
+        mediaSettings: 'メディア生成',
+        imageGenEnabled: '画像生成を有効化',
+        imageGenProvider: '画像 Provider',
+        videoGenEnabled: '動画生成を有効化',
+        videoGenProvider: '動画 Provider',
+        defaultImageModel: '既定の画像モデル',
+        defaultImageSize: '既定の画像サイズ',
+        defaultVideoModel: '既定の動画モデル',
+        useChatProvider: 'チャット Provider を使用',
+        artifactsCleanup: '成果物のクリーンアップ',
+        cleanupArtifacts: '成果物を削除',
+        cleanupArtifactsHint: 'workspace/.anima/artifacts の古い成果物を削除します。',
+        cleanupDone: 'クリーンアップ完了。',
+        cleanupFailed: 'クリーンアップ失敗。',
         singleDollarMath: '単一ドル記号の数式をレンダリング',
         singleDollarMathHint: '単一ドル記号によるインライン数式 ($x = y$など) を有効にします。',
         infoCard: '情報カードの可視化を有効化',
@@ -2115,83 +2187,11 @@ function ChatSettings() {
     } as const
     return dict[settings.language as keyof typeof dict] || dict.en
   })()
-
-  const selectedPrompt = useMemo(() => {
-    return settings.systemPrompts.find((p) => p.id === settings.selectedSystemPromptId) || settings.systemPrompts[0]
-  }, [settings.selectedSystemPromptId, settings.systemPrompts])
-
-  const [newPromptName, setNewPromptName] = useState('New Prompt')
+  const imageProviderSelectValue = media.imageProviderId ? media.imageProviderId : '__chat__'
+  const videoProviderSelectValue = media.videoProviderId ? media.videoProviderId : '__chat__'
 
   return (
     <div className="p-6 space-y-6 h-full overflow-y-auto">
-      {/* System Prompts */}
-      <Card className="p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">{t.systemPrompts}</h3>
-          <div className="flex items-center gap-2">
-            <Input
-              className="w-40 h-8 text-xs"
-              value={newPromptName}
-              onChange={(e) => setNewPromptName(e.target.value)}
-              placeholder={t.name}
-            />
-            <Button
-              size="sm"
-              onClick={() => createSystemPrompt(newPromptName)}
-              className="gap-2 h-8"
-            >
-              <Plus className="w-4 h-4" />
-              {t.new}
-            </Button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-3 gap-4">
-          <div className="col-span-1 space-y-2">
-            <Select
-              value={settings.selectedSystemPromptId}
-              onValueChange={(val) => selectSystemPrompt(val)}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {settings.systemPrompts.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button
-              variant="outline"
-              onClick={() => deleteSystemPrompt(settings.selectedSystemPromptId)}
-              className="w-full gap-2 text-destructive hover:text-destructive"
-            >
-              <Trash2 className="w-4 h-4" />
-              {t.delete}
-            </Button>
-          </div>
-
-          <div className="col-span-2 space-y-2">
-            <Input
-              value={selectedPrompt?.name || ''}
-              onChange={(e) => selectedPrompt && updateSystemPrompt(selectedPrompt.id, { name: e.target.value })}
-              placeholder={t.name}
-            />
-            <Textarea
-              className="min-h-[140px]"
-              value={selectedPrompt?.content || ''}
-              onChange={(e) => selectedPrompt && updateSystemPrompt(selectedPrompt.id, { content: e.target.value })}
-              placeholder="Define the assistant behavior..."
-            />
-            <p className="text-xs text-muted-foreground">
-              {t.selectedHint}
-            </p>
-          </div>
-        </div>
-      </Card>
-
       {/* Chat Parameters */}
       <Card className="p-5 space-y-6">
         <div className="flex items-center gap-2">
@@ -2294,7 +2294,131 @@ function ChatSettings() {
          </div>
       </Card>
 
-      {/* Auto Compression */}
+      {/* Media */}
+      <Card className="p-5 space-y-4">
+        <h3 className="text-sm font-semibold">{t.mediaSettings}</h3>
+        <div className="space-y-4">
+          <div className="flex items-start gap-3">
+            <Checkbox
+              id="imageGenEnabled"
+              checked={media.imageEnabled}
+              onCheckedChange={(c) => updateMedia({ imageEnabled: c as boolean })}
+            />
+            <div className="grid gap-1.5 leading-none">
+              <label htmlFor="imageGenEnabled" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">
+                {t.imageGenEnabled}
+              </label>
+            </div>
+          </div>
+
+          <div className="space-y-2 pl-7">
+            <Label>{t.imageGenProvider}</Label>
+            <Select
+              value={imageProviderSelectValue}
+              onValueChange={(val) => updateMedia({ imageProviderId: val === '__chat__' ? '' : val })}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__chat__">{t.useChatProvider}</SelectItem>
+                {providers.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2 pl-7">
+            <Label>{t.defaultImageModel}</Label>
+            <Input value={media.defaultImageModel} onChange={(e) => updateMedia({ defaultImageModel: e.target.value })} />
+          </div>
+
+          <div className="space-y-2 pl-7">
+            <Label>{t.defaultImageSize}</Label>
+            <Input value={media.defaultImageSize} onChange={(e) => updateMedia({ defaultImageSize: e.target.value })} />
+          </div>
+
+          <div className="flex items-start gap-3">
+            <Checkbox
+              id="videoGenEnabled"
+              checked={media.videoEnabled}
+              onCheckedChange={(c) => updateMedia({ videoEnabled: c as boolean })}
+            />
+            <div className="grid gap-1.5 leading-none">
+              <label htmlFor="videoGenEnabled" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">
+                {t.videoGenEnabled}
+              </label>
+            </div>
+          </div>
+
+          <div className="space-y-2 pl-7">
+            <Label>{t.videoGenProvider}</Label>
+            <Select
+              value={videoProviderSelectValue}
+              onValueChange={(val) => updateMedia({ videoProviderId: val === '__chat__' ? '' : val })}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__chat__">{t.useChatProvider}</SelectItem>
+                {providers.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2 pl-7">
+            <Label>{t.defaultVideoModel}</Label>
+            <Input value={media.defaultVideoModel} onChange={(e) => updateMedia({ defaultVideoModel: e.target.value })} />
+          </div>
+        </div>
+      </Card>
+
+      <Card className="p-5 space-y-4">
+        <h3 className="text-sm font-semibold">{t.artifactsCleanup}</h3>
+        <p className="text-xs text-muted-foreground">{t.cleanupArtifactsHint}</p>
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            disabled={cleanupStatus.type === 'loading'}
+            onClick={async () => {
+              try {
+                setCleanupStatus({ type: 'loading', text: '' })
+                const res = await fetchBackendJson<{ ok: boolean; deletedCount?: number; freedBytes?: number }>('/api/artifacts/cleanup', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    workspaceDir: settings.workspaceDir,
+                    maxAgeDays: 14,
+                    maxTotalBytes: 1024 * 1024 * 1024
+                  })
+                })
+                if (res?.ok) {
+                  const deleted = Number(res.deletedCount || 0)
+                  const freed = Number(res.freedBytes || 0)
+                  setCleanupStatus({ type: 'ok', text: `${t.cleanupDone} deleted=${deleted} freedBytes=${freed}` })
+                } else {
+                  setCleanupStatus({ type: 'error', text: t.cleanupFailed })
+                }
+              } catch (e) {
+                setCleanupStatus({ type: 'error', text: (e instanceof Error ? e.message : t.cleanupFailed) })
+              }
+            }}
+          >
+            {t.cleanupArtifacts}
+          </Button>
+          {cleanupStatus.type === 'ok' && <span className="text-xs text-green-500">{cleanupStatus.text}</span>}
+          {cleanupStatus.type === 'error' && <span className="text-xs text-destructive">{cleanupStatus.text}</span>}
+        </div>
+      </Card>
+
       <Card className="p-5 space-y-6">
          <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-primary" />
@@ -2341,6 +2465,260 @@ function ChatSettings() {
                <p className="text-xs text-muted-foreground">{t.keepRecentMessagesHint}</p>
             </div>
          </div>
+      </Card>
+    </div>
+  )
+}
+
+function ImSettings() {
+  const { settings: settings0, updateSettings } = useStore()
+  const settings = settings0!
+  const [showToken, setShowToken] = useState(false)
+
+  const t = (() => {
+    const dict = {
+      en: {
+        provider: 'IM Provider',
+        telegram: 'Telegram',
+        enableTelegram: 'Enable Telegram',
+        botToken: 'Bot Token',
+        botTokenHint: 'Telegram Bot token, e.g. 123:ABC...',
+        allowedUserIds: 'Allowed User IDs',
+        allowedUserIdsHint: 'Comma or newline separated. At least one is required.',
+        allowGroups: 'Allow Groups',
+        allowGroupsHint: 'Default off for safety.',
+        pollingIntervalMs: 'Polling Interval (ms)',
+        pollingIntervalHint: 'Lower is more responsive but uses more requests.',
+        openclaw: 'OpenClaw',
+        enableOpenclaw: 'Enable OpenClaw',
+        enableHeartbeat: 'Enable Heartbeat',
+        heartbeatChatId: 'Heartbeat Chat ID',
+        heartbeatChatIdHint: 'Telegram chat ID to receive heartbeat messages.',
+        workspaceDir: 'Workspace Directory',
+        workspaceDirHint: 'Used by OpenClaw and workspace-based tools.',
+        selectFolder: 'Select Folder'
+      },
+      zh: {
+        provider: 'IM 服务商',
+        telegram: 'Telegram',
+        enableTelegram: '启用 Telegram',
+        botToken: 'Bot Token',
+        botTokenHint: 'Telegram 机器人 Token，例如 123:ABC...',
+        allowedUserIds: '允许的用户 ID',
+        allowedUserIdsHint: '用逗号或换行分隔，至少填写 1 个。',
+        allowGroups: '允许群聊',
+        allowGroupsHint: '默认关闭以保证安全。',
+        pollingIntervalMs: '轮询间隔（毫秒）',
+        pollingIntervalHint: '越小越及时，但请求次数更多。',
+        openclaw: 'OpenClaw',
+        enableOpenclaw: '启用 OpenClaw',
+        enableHeartbeat: '启用 Heartbeat',
+        heartbeatChatId: 'Heartbeat Chat ID',
+        heartbeatChatIdHint: '用于接收心跳消息的 Telegram chat id。',
+        workspaceDir: '工作区目录',
+        workspaceDirHint: '供 OpenClaw 与工作区相关工具使用。',
+        selectFolder: '选择文件夹'
+      },
+      ja: {
+        provider: 'IM プロバイダー',
+        telegram: 'Telegram',
+        enableTelegram: 'Telegram を有効化',
+        botToken: 'Bot Token',
+        botTokenHint: 'Telegram Bot token（例: 123:ABC...）',
+        allowedUserIds: '許可ユーザーID',
+        allowedUserIdsHint: 'カンマ/改行区切り。最低1つ必要です。',
+        allowGroups: 'グループを許可',
+        allowGroupsHint: '安全のため既定はオフ。',
+        pollingIntervalMs: 'ポーリング間隔（ms）',
+        pollingIntervalHint: '小さいほど応答が速いが、リクエストが増えます。',
+        openclaw: 'OpenClaw',
+        enableOpenclaw: 'OpenClaw を有効化',
+        enableHeartbeat: 'Heartbeat を有効化',
+        heartbeatChatId: 'Heartbeat Chat ID',
+        heartbeatChatIdHint: 'Heartbeat メッセージを受信する Telegram chat id。',
+        workspaceDir: 'ワークスペースディレクトリ',
+        workspaceDirHint: 'OpenClaw とワークスペース系ツールで使用します。',
+        selectFolder: 'フォルダーを選択'
+      }
+    } as const
+    return dict[settings.language as keyof typeof dict] || dict.en
+  })()
+
+  const provider = (settings.im?.provider || 'telegram') as 'telegram'
+  const tg = settings.im?.telegram || {}
+  const enabled = Boolean(tg.enabled)
+  const botToken = String(tg.botToken || '')
+  const allowedUserIds = Array.isArray(tg.allowedUserIds) ? tg.allowedUserIds.map(String) : []
+  const allowGroups = Boolean(tg.allowGroups)
+  const pollingIntervalMs = Number.isFinite(tg.pollingIntervalMs as any) ? Number(tg.pollingIntervalMs) : 1500
+
+  const openclaw = settings.openclaw || {}
+  const openclawEnabled = Boolean(openclaw.enabled)
+  const heartbeatEnabled = Boolean(openclaw.heartbeatEnabled)
+  const heartbeatTelegramChatId = String(openclaw.heartbeatTelegramChatId || '')
+  const workspaceDir = String(settings.workspaceDir || '')
+
+  const allowedText = allowedUserIds.join('\n')
+
+  const updateTelegram = (updates: Partial<NonNullable<typeof settings.im>['telegram']>) => {
+    updateSettings({
+      im: {
+        provider: 'telegram',
+        telegram: { ...tg, ...updates }
+      }
+    } as any)
+  }
+
+  const updateOpenclaw = (updates: Partial<NonNullable<typeof settings.openclaw>>) => {
+    updateSettings({ openclaw: { ...openclaw, ...updates } })
+  }
+
+  const handlePickWorkspaceDir = async () => {
+    const res = await window.anima?.window?.pickDirectory?.()
+    if (!res?.ok || res.canceled) return
+    const dir = String(res.path || '').trim()
+    if (!dir) return
+    updateSettings({ workspaceDir: dir })
+  }
+
+  const parseAllowed = (raw: string) => {
+    const items = raw
+      .split(/[\n,]/g)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    return Array.from(new Set(items))
+  }
+
+  return (
+    <div className="p-6 space-y-6 h-full overflow-y-auto">
+      <Card className="p-5 space-y-4">
+        <div className="space-y-2">
+          <Label>{t.provider}</Label>
+          <Select
+            value={provider}
+            onValueChange={(val) => updateSettings({ im: { provider: val, telegram: tg } } as any)}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="telegram">{t.telegram}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex items-start gap-3">
+          <Switch checked={enabled} onCheckedChange={(c) => updateTelegram({ enabled: c as boolean })} />
+          <div className="grid gap-1.5 leading-none">
+            <div className="text-sm font-medium leading-none">{t.enableTelegram}</div>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="p-5 space-y-4">
+        <div className="space-y-2">
+          <Label>{t.botToken}</Label>
+          <div className="relative">
+            <Input
+              type={showToken ? 'text' : 'password'}
+              value={botToken}
+              onChange={(e) => updateTelegram({ botToken: e.target.value })}
+              placeholder={t.botTokenHint}
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button
+              type="button"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              onClick={() => setShowToken((v) => !v)}
+              aria-label={showToken ? 'Hide' : 'Show'}
+            >
+              {showToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+          <div className="text-xs text-muted-foreground">{t.botTokenHint}</div>
+        </div>
+
+        <div className="space-y-2">
+          <Label>{t.allowedUserIds}</Label>
+          <Textarea
+            value={allowedText}
+            onChange={(e) => updateTelegram({ allowedUserIds: parseAllowed(e.target.value) })}
+            placeholder="123456789"
+            className="min-h-[120px]"
+          />
+          <div className="text-xs text-muted-foreground">{t.allowedUserIdsHint}</div>
+        </div>
+
+        <div className="flex items-start gap-3">
+          <Switch checked={allowGroups} onCheckedChange={(c) => updateTelegram({ allowGroups: c as boolean })} />
+          <div className="grid gap-1.5 leading-none">
+            <div className="text-sm font-medium leading-none">{t.allowGroups}</div>
+            <div className="text-xs text-muted-foreground">{t.allowGroupsHint}</div>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label>{t.pollingIntervalMs}</Label>
+          <Input
+            className="w-40"
+            type="number"
+            min={200}
+            max={10000}
+            value={pollingIntervalMs}
+            onChange={(e) => updateTelegram({ pollingIntervalMs: Number(e.target.value) })}
+          />
+          <div className="text-xs text-muted-foreground">{t.pollingIntervalHint}</div>
+        </div>
+      </Card>
+
+      <Card className="p-5 space-y-4">
+        <div className="text-sm font-semibold">{t.openclaw}</div>
+
+        <div className="flex items-start gap-3">
+          <Switch checked={openclawEnabled} onCheckedChange={(c) => updateOpenclaw({ enabled: c as boolean })} />
+          <div className="grid gap-1.5 leading-none">
+            <div className="text-sm font-medium leading-none">{t.enableOpenclaw}</div>
+          </div>
+        </div>
+
+        <div className="flex items-start gap-3">
+          <Switch checked={heartbeatEnabled} onCheckedChange={(c) => updateOpenclaw({ heartbeatEnabled: c as boolean })} />
+          <div className="grid gap-1.5 leading-none">
+            <div className="text-sm font-medium leading-none">{t.enableHeartbeat}</div>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label>{t.heartbeatChatId}</Label>
+          <Input
+            value={heartbeatTelegramChatId}
+            onChange={(e) => updateOpenclaw({ heartbeatTelegramChatId: e.target.value })}
+            placeholder="123456789"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <div className="text-xs text-muted-foreground">{t.heartbeatChatIdHint}</div>
+        </div>
+      </Card>
+
+      <Card className="p-5 space-y-4">
+        <div className="text-sm font-semibold">{t.workspaceDir}</div>
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <Input
+              value={workspaceDir}
+              onChange={(e) => updateSettings({ workspaceDir: e.target.value })}
+              placeholder="/path/to/workspace"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <Button variant="outline" size="sm" onClick={() => void handlePickWorkspaceDir()}>
+              {t.selectFolder}
+            </Button>
+          </div>
+          <div className="text-xs text-muted-foreground">{t.workspaceDirHint}</div>
+        </div>
       </Card>
     </div>
   )

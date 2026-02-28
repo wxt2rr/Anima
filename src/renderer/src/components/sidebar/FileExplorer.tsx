@@ -104,7 +104,7 @@ const getLanguage = (filename: string) => {
 };
 
 export const FileExplorer: React.FC = () => {
-  const { settings, updateSettings } = useStore();
+  const { settings, updateSettings, ui } = useStore();
   const [rootPath, setRootPath] = useState<string>('');
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
@@ -191,25 +191,28 @@ export const FileExplorer: React.FC = () => {
     setRefreshKey(k => k + 1);
   };
 
-  const handleFileSelect = async (file: FileNode) => {
-    if (file.isDirectory) return;
-    
+  const openFilePath = async (filePath: string) => {
+    const normalized = String(filePath || '')
+      .trim()
+      .replace(/[?#].*$/, '');
+    if (!normalized) return;
+    const name = normalized.split('/').pop() || normalized;
     setLoadingFile(true);
-    const type = getFileType(file.name);
+    const type = getFileType(name);
     
     if (type === 'text') {
-      const res = await window.anima.fs.readFile(file.path);
+      const res = await window.anima.fs.readFile(normalized);
       if (res.ok) {
         setSelectedFile({
-          path: file.path,
-          name: file.name,
+          path: normalized,
+          name,
           type,
           content: res.content
         });
       } else {
         setSelectedFile({
-          path: file.path,
-          name: file.name,
+          path: normalized,
+          name,
           type,
           error: res.error
         });
@@ -217,13 +220,38 @@ export const FileExplorer: React.FC = () => {
     } else {
       // For images/pdf, we just use the path
       setSelectedFile({
-        path: file.path,
-        name: file.name,
+        path: normalized,
+        name,
         type
       });
     }
     setLoadingFile(false);
   };
+
+  const handleFileSelect = async (file: FileNode) => {
+    if (file.isDirectory) return;
+    await openFilePath(file.path);
+  };
+
+  useEffect(() => {
+    const req = ui.fileExplorerRequest;
+    if (!req?.nonce) return;
+    const raw = String(req.path || '').trim();
+    if (!raw) return;
+    const withoutScheme = raw.startsWith('file://') ? raw.slice('file://'.length) : raw;
+    const withoutFragment = withoutScheme.replace(/[?#].*$/, '');
+    const base = rootPath || settings?.workspaceDir || '';
+    const fullPath = withoutFragment.startsWith('/')
+      ? withoutFragment
+      : (base ? `${base.replace(/\/$/, '')}/${withoutFragment.replace(/^\//, '')}` : withoutFragment);
+    const dir = fullPath.split('/').slice(0, -1).join('/');
+    if (dir && settings?.workspaceDir !== dir && !fullPath.startsWith((settings?.workspaceDir || '').replace(/\/$/, '') + '/')) {
+      updateSettings({ workspaceDir: dir });
+      setRootPath(dir);
+      setRefreshKey((k) => k + 1);
+    }
+    void openFilePath(fullPath);
+  }, [rootPath, settings?.workspaceDir, ui.fileExplorerRequest, updateSettings]);
 
   if (!rootPath) {
     return (
@@ -302,19 +330,36 @@ const FileTreeItem: React.FC<{
   const [children, setChildren] = useState<FileNode[]>([]);
   const [loaded, setLoaded] = useState(false);
 
+  useEffect(() => {
+    if (!isDirectory) return;
+    const target = String(selectedPath || '').trim();
+    if (!target) return;
+    const prefix = path.endsWith('/') ? path : `${path}/`;
+    if (target.startsWith(prefix) && !expanded) {
+      setExpanded(true);
+    }
+  }, [expanded, isDirectory, path, selectedPath]);
+
+  useEffect(() => {
+    if (!isDirectory || !expanded || loaded) return;
+    let cancelled = false;
+    window.anima.fs.readDir(path).then((res) => {
+      if (cancelled) return;
+      if (res.ok && res.files) {
+        setChildren(res.files);
+        setLoaded(true);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, loaded, isDirectory, path]);
+
   const toggleExpand = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!isDirectory) {
       onSelect({ name, isDirectory, path });
       return;
-    }
-    
-    if (!expanded && !loaded) {
-      const res = await window.anima.fs.readDir(path);
-      if (res.ok && res.files) {
-        setChildren(res.files);
-        setLoaded(true);
-      }
     }
     setExpanded(!expanded);
   };

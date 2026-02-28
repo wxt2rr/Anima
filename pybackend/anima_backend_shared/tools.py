@@ -3,6 +3,9 @@ import os
 import re
 import subprocess
 import sys
+import base64
+import mimetypes
+import time
 from datetime import datetime, timezone
 import html
 import ipaddress
@@ -16,6 +19,54 @@ import urllib.request
 
 from .constants import MAX_FILE_BYTES_TOOL
 from .util import is_within, norm_abs, read_text_file, safe_env
+
+
+def _auth_header_value(api_key: str) -> str:
+    s = str(api_key or "").strip()
+    if not s:
+        return ""
+    lower = s.lower()
+    if lower.startswith("bearer ") or lower.startswith("basic ") or lower.startswith("token "):
+        return s
+    return f"Bearer {s}"
+
+
+def _http_post_json(*, url: str, payload: Dict[str, Any], headers: Dict[str, str], proxy_url: str, timeout_s: int) -> Dict[str, Any]:
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    handlers: List[urllib.request.BaseHandler] = []
+    p = str(proxy_url or "").strip()
+    if p:
+        handlers.append(urllib.request.ProxyHandler({"http": p, "https": p}))
+    opener = urllib.request.build_opener(*handlers)
+    try:
+        with opener.open(req, timeout=max(1, int(timeout_s or 60))) as resp:
+            raw = resp.read()
+        obj = json.loads(raw.decode("utf-8"))
+        return obj if isinstance(obj, dict) else {"ok": False, "error": "Invalid response"}
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8", errors="ignore")
+        except Exception:
+            body = ""
+        raise RuntimeError(f"Upstream HTTP {e.code}: {body[:4000]}")
+    except Exception as e:
+        raise RuntimeError(str(e))
+
+
+def _download_public_url_bytes(*, url: str, timeout_s: int, max_bytes: int) -> Tuple[bytes, str]:
+    safe_url = _safe_public_http_url(url)
+    req = urllib.request.Request(safe_url, headers={"Accept": "*/*"}, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=max(1, int(timeout_s or 60))) as resp:
+            ct = str(resp.headers.get("Content-Type") or "").strip()
+            raw = resp.read(int(max_bytes) + 1)
+        if len(raw) > int(max_bytes):
+            raise RuntimeError("Downloaded file too large")
+        return raw, ct
+    except Exception as e:
+        raise RuntimeError(str(e))
 
 
 def _safe_public_http_url(raw_url: str) -> str:
@@ -153,12 +204,71 @@ def builtin_tools() -> List[Dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "load_skill",
+                "description": "Load full instructions for a skill by id (progressive disclosure).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"id": {"type": "string", "description": "Skill id (folder name)"}},
+                    "required": ["id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "bash",
                 "description": "Run a safe bash command on this Mac and return stdout/stderr.",
                 "parameters": {
                     "type": "object",
                     "properties": {"command": {"type": "string"}, "cwd": {"type": "string"}, "timeoutMs": {"type": "integer"}},
                     "required": ["command"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "screenshot",
+                "description": "Capture a screenshot and save it under the workspace. Returns an image artifact.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "mode": {"type": "string", "enum": ["screen"], "description": "Screenshot mode"},
+                        "path": {"type": "string", "description": "Optional output path relative to workspace"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "generate_image",
+                "description": "Generate an image using the configured image provider and save it under the workspace. Returns an image artifact.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string", "description": "Image prompt"},
+                        "model": {"type": "string", "description": "Optional image model id"},
+                        "size": {"type": "string", "description": "Optional image size, e.g. 1024x1024"},
+                        "path": {"type": "string", "description": "Optional output path relative to workspace"},
+                    },
+                    "required": ["prompt"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "generate_video",
+                "description": "Generate a short video using the configured video provider and save it under the workspace. Returns a video artifact.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string", "description": "Video prompt"},
+                        "model": {"type": "string", "description": "Optional video model id"},
+                        "path": {"type": "string", "description": "Optional output path relative to workspace"},
+                    },
+                    "required": ["prompt"],
                 },
             },
         },
@@ -188,53 +298,6 @@ def builtin_tools() -> List[Dict[str, Any]]:
                 "name": "list_dir",
                 "description": "List entries under a workspace directory.",
                 "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "maxEntries": {"type": "integer"}}, "required": ["path"]},
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "mac_reminders_create",
-                "description": "Create a reminder in the macOS Reminders app.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"title": {"type": "string"}, "notes": {"type": "string"}, "listName": {"type": "string"}, "dueAt": {"type": "string"}},
-                    "required": ["title"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "mac_reminders_list",
-                "description": "List reminders in the macOS Reminders app.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"listName": {"type": "string"}, "status": {"type": "string", "enum": ["open", "completed", "all"]}, "limit": {"type": "integer"}},
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "mac_reminders_complete",
-                "description": "Mark a reminder as completed in the macOS Reminders app.",
-                "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "title": {"type": "string"}, "listName": {"type": "string"}}},
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "mac_notes_create",
-                "description": "Create a note in the macOS Notes app.",
-                "parameters": {"type": "object", "properties": {"title": {"type": "string"}, "body": {"type": "string"}, "folderName": {"type": "string"}}, "required": ["title", "body"]},
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "mac_notes_append",
-                "description": "Append text to a note in the macOS Notes app (matched by title).",
-                "parameters": {"type": "object", "properties": {"title": {"type": "string"}, "appendText": {"type": "string"}, "folderName": {"type": "string"}}, "required": ["title", "appendText"]},
             },
         },
         {
@@ -271,7 +334,7 @@ def builtin_tools() -> List[Dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
-                    "required": ["path", "content"]
+                    "required": ["path", "content"],
                 },
             },
         },
@@ -302,6 +365,42 @@ def builtin_tools() -> List[Dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "cron_list",
+                "description": "List cron jobs managed by the local backend.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "cron_upsert",
+                "description": "Create or update a cron job in the local backend.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"job": {"type": "object"}},
+                    "required": ["job"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "cron_delete",
+                "description": "Delete a cron job by id in the local backend.",
+                "parameters": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "cron_run",
+                "description": "Trigger a cron job to run immediately by id.",
+                "parameters": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "update_app_state",
                 "description": "Update application configuration and UI state based on user needs, emotion, or workflow context. Handles both persistent settings (Config) and transient UI state (UI).",
                 "parameters": {
@@ -315,16 +414,16 @@ def builtin_tools() -> List[Dict[str, Any]]:
                                 "themeColor": {
                                     "type": "string",
                                     "enum": ["zinc", "red", "rose", "orange", "green", "blue", "yellow", "violet"],
-                                    "description": "Color theme. Use orange/rose for sadness, green for anxiety, blue/zinc for focus."
+                                    "description": "Color theme. Use orange/rose for sadness, green for anxiety, blue/zinc for focus.",
                                 },
                                 "language": {"type": "string"},
                                 "density": {
                                     "type": "string",
                                     "enum": ["comfortable", "compact"],
-                                    "description": "Layout density. Use comfortable for relaxation, compact for focus."
+                                    "description": "Layout density. Use comfortable for relaxation, compact for focus.",
                                 },
-                                "sidebarCollapsed": {"type": "boolean"}
-                            }
+                                "sidebarCollapsed": {"type": "boolean"},
+                            },
                         },
                         "ui": {
                             "type": "object",
@@ -332,16 +431,16 @@ def builtin_tools() -> List[Dict[str, Any]]:
                             "properties": {
                                 "rightSidebarOpen": {
                                     "type": "boolean",
-                                    "description": "Open/close right sidebar. Open for previewing generated content."
+                                    "description": "Open/close right sidebar. Open for previewing generated content.",
                                 },
                                 "activeRightPanel": {
                                     "type": "string",
                                     "enum": ["files", "git", "terminal", "preview"],
-                                    "description": "Active panel in right sidebar. Use 'preview' for content, 'files' for exploring."
-                                }
-                            }
-                        }
-                    }
+                                    "description": "Active panel in right sidebar. Use 'preview' for content, 'files' for exploring.",
+                                },
+                            },
+                        },
+                    },
                 },
             },
         },
@@ -361,18 +460,18 @@ def builtin_tools() -> List[Dict[str, Any]]:
                                     "id": {"type": "string", "description": "Unique identifier for the todo item"},
                                     "content": {"type": "string", "description": "Description of the todo item"},
                                     "status": {"type": "string", "enum": ["pending", "in_progress", "completed"], "description": "Current status"},
-                                    "priority": {"type": "string", "enum": ["high", "medium", "low"], "description": "Priority level"}
+                                    "priority": {"type": "string", "enum": ["high", "medium", "low"], "description": "Priority level"},
                                 },
-                                "required": ["id", "content", "status", "priority"]
+                                "required": ["id", "content", "status", "priority"],
                             },
-                            "description": "Array of todo items"
+                            "description": "Array of todo items",
                         },
                         "merge": {
                             "type": "boolean",
-                            "description": "Whether to merge with existing todos based on id. If false, replaces the list."
-                        }
+                            "description": "Whether to merge with existing todos based on id. If false, replaces the list.",
+                        },
                     },
-                    "required": ["todos", "merge"]
+                    "required": ["todos", "merge"],
                 },
             },
         },
@@ -434,6 +533,33 @@ def mcp_tools(settings_obj: Dict[str, Any], composer: Dict[str, Any]) -> Tuple[L
 
 
 def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) -> str:
+    if name == "load_skill":
+        skill_id = str(args.get("id") or "").strip()
+        if not skill_id:
+            raise RuntimeError("id is required")
+        if not re.match(r"^[a-z0-9]+(?:-[a-z0-9]+)*$", skill_id):
+            raise RuntimeError("Invalid skill id format")
+        from .settings import get_skills_content
+
+        items = get_skills_content([skill_id])
+        if not items:
+            raise RuntimeError("Skill not found")
+        s = items[0]
+        return json.dumps(
+            {
+                "ok": True,
+                "skill": {
+                    "id": s.get("id"),
+                    "name": s.get("name"),
+                    "description": s.get("description"),
+                    "content": s.get("content"),
+                    "meta": s.get("meta"),
+                    "updatedAt": s.get("updatedAt"),
+                },
+            },
+            ensure_ascii=False,
+        )
+
     if name == "WebSearch":
         query = str(args.get("query") or "").strip()
         if not query:
@@ -480,6 +606,267 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         paths = [str(p) for p in Path(workspace_dir).glob(pattern) if p.is_file()]
         rel = [str(Path(p).resolve().relative_to(Path(workspace_dir).resolve())) for p in paths[:200]]
         return json.dumps({"paths": rel}, ensure_ascii=False)
+
+    if name == "screenshot":
+        if not workspace_dir:
+            raise RuntimeError("No workspace directory selected")
+        mode = str(args.get("mode") or "screen").strip() or "screen"
+        if mode != "screen":
+            raise RuntimeError("Unsupported screenshot mode")
+
+        rel_path = str(args.get("path") or "").strip()
+        if rel_path:
+            target = norm_abs(str(Path(workspace_dir) / rel_path))
+            if not is_within(workspace_dir, target):
+                raise RuntimeError("Path outside workspace")
+            if not str(target).lower().endswith(".png"):
+                target = target + ".png"
+        else:
+            out_dir = Path(workspace_dir) / ".anima" / "artifacts"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            target = norm_abs(str(out_dir / f"screenshot_{ts}.png"))
+
+        p = subprocess.run(
+            ["screencapture", "-x", "-t", "png", target],
+            cwd=workspace_dir,
+            capture_output=True,
+            text=True,
+            env=safe_env(),
+            timeout=20,
+        )
+        if int(p.returncode) != 0:
+            raise RuntimeError((p.stderr or p.stdout or "screencapture failed").strip()[:4000])
+        if not os.path.isfile(target):
+            raise RuntimeError("Screenshot file not created")
+
+        rel = str(Path(target).resolve().relative_to(Path(workspace_dir).resolve()))
+        return json.dumps(
+            {
+                "ok": True,
+                "artifacts": [{"kind": "image", "path": rel, "mime": "image/png", "title": str(Path(rel).name)}],
+            },
+            ensure_ascii=False,
+        )
+
+    if name == "generate_image":
+        if not workspace_dir:
+            raise RuntimeError("No workspace directory selected")
+        prompt = str(args.get("prompt") or "").strip()
+        if not prompt:
+            raise RuntimeError("prompt is required")
+
+        from .providers import get_active_provider_spec, get_provider_spec, normalize_base_url
+        from .settings import load_settings
+
+        settings_obj = load_settings()
+        image_provider_id = ""
+        try:
+            s = settings_obj.get("settings")
+            if isinstance(s, dict):
+                media = s.get("media")
+                if isinstance(media, dict):
+                    if media.get("imageEnabled") is False:
+                        raise RuntimeError("Image generation disabled")
+                    image_provider_id = str(media.get("imageProviderId") or "").strip()
+        except Exception as e:
+            if isinstance(e, RuntimeError):
+                raise
+        if image_provider_id:
+            spec = get_provider_spec(settings_obj, image_provider_id)
+            if spec is None:
+                raise RuntimeError("No image provider configured. Please configure an image provider in Settings.")
+        else:
+            spec = get_active_provider_spec(settings_obj)
+            if spec is None:
+                raise RuntimeError("No active provider configured")
+
+        default_model = ""
+        default_size = ""
+        try:
+            s = settings_obj.get("settings")
+            if isinstance(s, dict):
+                media = s.get("media")
+                if isinstance(media, dict):
+                    default_model = str(media.get("defaultImageModel") or "").strip()
+                    default_size = str(media.get("defaultImageSize") or "").strip()
+        except Exception:
+            pass
+
+        actual_model = str(args.get("model") or "").strip() or default_model or str(spec.model or "").strip()
+        if not actual_model:
+            raise RuntimeError("No model selected. Please configure a model in Settings.")
+
+        url = normalize_base_url(spec.base_url) + "/images/generations"
+        payload: Dict[str, Any] = {"model": actual_model, "prompt": prompt, "response_format": "b64_json"}
+        size = str(args.get("size") or "").strip() or default_size
+        if size:
+            payload["size"] = size
+
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if str(spec.api_key or "").strip():
+            headers["Authorization"] = _auth_header_value(spec.api_key)
+
+        res = _http_post_json(url=url, payload=payload, headers=headers, proxy_url=spec.proxy_url, timeout_s=120)
+        data = res.get("data")
+        item = data[0] if isinstance(data, list) and data else None
+        if not isinstance(item, dict):
+            raise RuntimeError("Image generation returned no data")
+
+        raw_bytes: bytes = b""
+        mime = "image/png"
+        if isinstance(item.get("b64_json"), str) and item.get("b64_json").strip():
+            try:
+                raw_bytes = base64.b64decode(item.get("b64_json"), validate=False)
+            except Exception:
+                raise RuntimeError("Failed to decode image bytes")
+        elif isinstance(item.get("url"), str) and item.get("url").strip():
+            raw_bytes, ct = _download_public_url_bytes(url=str(item.get("url")), timeout_s=120, max_bytes=25 * 1024 * 1024)
+            if ct:
+                mime = ct
+        else:
+            raise RuntimeError("Image generation returned no bytes")
+
+        if len(raw_bytes) > (25 * 1024 * 1024):
+            raise RuntimeError("Image too large")
+
+        rel_path = str(args.get("path") or "").strip()
+        if rel_path:
+            target = norm_abs(str(Path(workspace_dir) / rel_path))
+            if not is_within(workspace_dir, target):
+                raise RuntimeError("Path outside workspace")
+            if not str(target).lower().endswith(".png"):
+                target = target + ".png"
+        else:
+            out_dir = Path(workspace_dir) / ".anima" / "artifacts"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            target = norm_abs(str(out_dir / f"image_{ts}.png"))
+
+        with open(target, "wb") as f:
+            f.write(raw_bytes)
+        if not os.path.isfile(target):
+            raise RuntimeError("Image file not created")
+
+        rel = str(Path(target).resolve().relative_to(Path(workspace_dir).resolve()))
+        return json.dumps(
+            {"ok": True, "artifacts": [{"kind": "image", "path": rel, "mime": mime, "title": str(Path(rel).name)}]},
+            ensure_ascii=False,
+        )
+
+    if name == "generate_video":
+        if not workspace_dir:
+            raise RuntimeError("No workspace directory selected")
+        prompt = str(args.get("prompt") or "").strip()
+        if not prompt:
+            raise RuntimeError("prompt is required")
+
+        from .providers import get_active_provider_spec, get_provider_spec, normalize_base_url
+        from .settings import load_settings
+
+        settings_obj = load_settings()
+        video_provider_id = ""
+        try:
+            s = settings_obj.get("settings")
+            if isinstance(s, dict):
+                media = s.get("media")
+                if isinstance(media, dict):
+                    if media.get("videoEnabled") is False:
+                        raise RuntimeError("Video generation disabled")
+                    video_provider_id = str(media.get("videoProviderId") or "").strip()
+        except Exception as e:
+            if isinstance(e, RuntimeError):
+                raise
+        if video_provider_id:
+            spec = get_provider_spec(settings_obj, video_provider_id)
+            if spec is None:
+                raise RuntimeError("No video provider configured. Please configure a video provider in Settings.")
+        else:
+            spec = get_active_provider_spec(settings_obj)
+            if spec is None:
+                raise RuntimeError("No active provider configured")
+
+        default_model = ""
+        try:
+            s = settings_obj.get("settings")
+            if isinstance(s, dict):
+                media = s.get("media")
+                if isinstance(media, dict):
+                    default_model = str(media.get("defaultVideoModel") or "").strip()
+        except Exception:
+            pass
+
+        actual_model = str(args.get("model") or "").strip() or default_model or str(spec.model or "").strip()
+        if not actual_model:
+            raise RuntimeError("No model selected. Please configure a model in Settings.")
+
+        base = normalize_base_url(spec.base_url)
+        candidates = [base + "/videos/generations", base + "/video/generations"]
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if str(spec.api_key or "").strip():
+            headers["Authorization"] = _auth_header_value(spec.api_key)
+
+        last_err: Optional[Exception] = None
+        res: Optional[Dict[str, Any]] = None
+        for u in candidates:
+            try:
+                payload: Dict[str, Any] = {"model": actual_model, "prompt": prompt, "response_format": "b64_json"}
+                res = _http_post_json(url=u, payload=payload, headers=headers, proxy_url=spec.proxy_url, timeout_s=300)
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                continue
+        if res is None:
+            raise RuntimeError(str(last_err) if last_err else "Video generation failed")
+
+        data = res.get("data")
+        item = data[0] if isinstance(data, list) and data else None
+        if not isinstance(item, dict):
+            raise RuntimeError("Video generation returned no data")
+
+        raw_bytes: bytes = b""
+        mime = "video/mp4"
+        if isinstance(item.get("b64_json"), str) and item.get("b64_json").strip():
+            try:
+                raw_bytes = base64.b64decode(item.get("b64_json"), validate=False)
+            except Exception:
+                raise RuntimeError("Failed to decode video bytes")
+        elif isinstance(item.get("url"), str) and item.get("url").strip():
+            raw_bytes, ct = _download_public_url_bytes(url=str(item.get("url")), timeout_s=300, max_bytes=200 * 1024 * 1024)
+            if ct:
+                mime = ct
+        else:
+            raise RuntimeError("Video generation returned no bytes")
+
+        if len(raw_bytes) > (200 * 1024 * 1024):
+            raise RuntimeError("Video too large")
+
+        rel_path = str(args.get("path") or "").strip()
+        if rel_path:
+            target = norm_abs(str(Path(workspace_dir) / rel_path))
+            if not is_within(workspace_dir, target):
+                raise RuntimeError("Path outside workspace")
+            if not re.search(r"\.(mp4|webm|mov)$", str(target).lower()):
+                target = target + ".mp4"
+        else:
+            out_dir = Path(workspace_dir) / ".anima" / "artifacts"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            target = norm_abs(str(out_dir / f"video_{ts}.mp4"))
+
+        with open(target, "wb") as f:
+            f.write(raw_bytes)
+        if not os.path.isfile(target):
+            raise RuntimeError("Video file not created")
+
+        rel = str(Path(target).resolve().relative_to(Path(workspace_dir).resolve()))
+        if not mime:
+            mime = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+        return json.dumps(
+            {"ok": True, "artifacts": [{"kind": "video", "path": rel, "mime": mime, "title": str(Path(rel).name)}]},
+            ensure_ascii=False,
+        )
 
     if name == "bash":
         cmd = str(args.get("command") or "").strip()
@@ -645,26 +1032,19 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         target = norm_abs(str(Path(workspace_dir) / path))
         if not is_within(workspace_dir, target):
             raise RuntimeError("Path outside workspace")
-        
+
         old_content = ""
         try:
             if Path(target).exists() and Path(target).is_file():
-                 old_content, _ = read_text_file(target, max_bytes=MAX_FILE_BYTES_TOOL)
+                old_content, _ = read_text_file(target, max_bytes=MAX_FILE_BYTES_TOOL)
         except Exception:
             pass
-        
+
         Path(target).parent.mkdir(parents=True, exist_ok=True)
         with open(target, "w", encoding="utf-8") as f:
             f.write(content)
-            
-        return json.dumps({
-            "ok": True,
-            "diffs": [{
-                "path": path,
-                "oldContent": old_content,
-                "newContent": content
-            }]
-        }, ensure_ascii=False)
+
+        return json.dumps({"ok": True, "diffs": [{"path": path, "oldContent": old_content, "newContent": content}]}, ensure_ascii=False)
 
     if name == "rg_search":
         if not workspace_dir:
@@ -716,262 +1096,56 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
                             return json.dumps({"matches": matches}, ensure_ascii=False)
             return json.dumps({"matches": matches}, ensure_ascii=False)
 
+    if name in ("cron_list", "cron_upsert", "cron_delete", "cron_run"):
+        from .settings import load_settings
+
+        settings_obj = load_settings()
+        s = settings_obj.get("settings")
+        if not isinstance(s, dict):
+            s = {}
+        cron = s.get("cron")
+        if not isinstance(cron, dict):
+            cron = {}
+        if not bool(cron.get("allowAgentManage")):
+            raise RuntimeError("cron tools disabled")
+
+        from anima_backend_lg import cron as cron_mod
+
+        if name == "cron_list":
+            store = cron_mod.cron_list_store()
+            return json.dumps({"ok": True, "store": store}, ensure_ascii=False)
+
+        if name == "cron_upsert":
+            job = args.get("job")
+            if not isinstance(job, dict):
+                raise RuntimeError("job must be an object")
+            saved = cron_mod.cron_upsert_job(job)
+            return json.dumps({"ok": True, "job": saved}, ensure_ascii=False)
+
+        if name == "cron_delete":
+            jid = str(args.get("id") or "").strip()
+            if not jid:
+                raise RuntimeError("id is required")
+            deleted = bool(cron_mod.cron_delete_job(jid))
+            return json.dumps({"ok": True, "deleted": deleted}, ensure_ascii=False)
+
+        jid = str(args.get("id") or "").strip()
+        if not jid:
+            raise RuntimeError("id is required")
+        ran = bool(cron_mod.cron_run_job(jid))
+        return json.dumps({"ok": True, "ran": ran}, ensure_ascii=False)
+
     if name == "update_app_state":
         config = args.get("config")
         ui = args.get("ui")
-        return json.dumps({
-            "ok": True,
-            "config": config,
-            "ui": ui
-        }, ensure_ascii=False)
+        return json.dumps({"ok": True, "config": config, "ui": ui}, ensure_ascii=False)
 
     if name == "TodoWrite":
         todos = args.get("todos")
         if not isinstance(todos, list):
-             raise RuntimeError("todos must be a list")
+            raise RuntimeError("todos must be a list")
         merge = bool(args.get("merge"))
-        return json.dumps({
-            "ok": True,
-            "todos": todos,
-            "merge": merge
-        }, ensure_ascii=False)
-
-    if name.startswith("mac_"):
-        if sys.platform != "darwin":
-            raise RuntimeError("macOS tools are only supported on macOS")
-
-        def run_osascript(script: str, argv: List[str]) -> str:
-            p = subprocess.run(["osascript", "-e", script, *argv], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=20)
-            if p.returncode != 0:
-                msg = (p.stderr or "").strip() or "osascript failed"
-                raise RuntimeError(msg)
-            return (p.stdout or "").strip()
-
-        if name == "mac_reminders_create":
-            title = str(args.get("title") or "").strip()
-            if not title:
-                raise RuntimeError("title is required")
-            notes = str(args.get("notes") or "")
-            list_name = str(args.get("listName") or "").strip()
-            due_at = str(args.get("dueAt") or "").strip()
-            delta_seconds = ""
-            if due_at:
-                s = due_at.replace("Z", "+00:00")
-                try:
-                    due_dt = datetime.fromisoformat(s)
-                    now_local = datetime.now().astimezone()
-                    if due_dt.tzinfo is None:
-                        due_dt = due_dt.replace(tzinfo=now_local.tzinfo)
-                    due_local = due_dt.astimezone(now_local.tzinfo)
-                    delta_seconds = str(int((due_local - now_local).total_seconds()))
-                except Exception:
-                    raise RuntimeError("Invalid dueAt; expected ISO-8601 string")
-
-            script = r'''
-on run argv
-  set t to item 1 of argv
-  set n to item 2 of argv
-  set listName to item 3 of argv
-  set deltaStr to item 4 of argv
-  if listName is "" then set listName to "Reminders"
-  tell application "Reminders"
-    if not (exists list listName) then
-      make new list with properties {name:listName}
-    end if
-    set theList to list listName
-    set r to make new reminder at end of reminders of theList with properties {name:t}
-    if n is not "" then set body of r to n
-    if deltaStr is not "" then
-      set due date of r to (current date) + (deltaStr as integer)
-    end if
-    set rid to id of r
-    return rid & "\t" & name of r
-  end tell
-end run
-'''
-            out = run_osascript(script, [title, notes, list_name, delta_seconds])
-            rid, rtitle = (out.split("\t", 1) + [""])[:2]
-            return json.dumps({"ok": True, "id": rid, "title": rtitle or title}, ensure_ascii=False)
-
-        if name == "mac_reminders_list":
-            list_name = str(args.get("listName") or "").strip()
-            status = str(args.get("status") or "open").strip()
-            if status not in ("open", "completed", "all"):
-                status = "open"
-            limit = int(args.get("limit") or 50)
-            limit = max(1, min(200, limit))
-
-            script = r'''
-on run argv
-  set listName to item 1 of argv
-  set status to item 2 of argv
-  set limitStr to item 3 of argv
-  if listName is "" then set listName to "Reminders"
-  set lim to (limitStr as integer)
-  set resultList to {}
-  tell application "Reminders"
-    if not (exists list listName) then return ""
-    set theList to list listName
-    if status is "open" then
-      set reminderItems to (reminders of theList whose completed is false)
-    else if status is "completed" then
-      set reminderItems to (reminders of theList whose completed is true)
-    else
-      set reminderItems to reminders of theList
-    end if
-    set c to 0
-    repeat with r in reminderItems
-      set c to c + 1
-      if c > lim then exit repeat
-      set rid to id of r
-      set nm to name of r
-      set comp to completed of r
-      set dd to ""
-      try
-        set d to due date of r
-        if d is not missing value then set dd to (d as string)
-      end try
-      set end of resultList to (rid & "\t" & nm & "\t" & (comp as string) & "\t" & dd)
-    end repeat
-  end tell
-  set AppleScript's text item delimiters to "\n"
-  return resultList as text
-end run
-'''
-            raw = run_osascript(script, [list_name, status, str(limit)])
-            items: List[Dict[str, Any]] = []
-            if raw:
-                for ln in raw.splitlines():
-                    parts = ln.split("\t")
-                    if len(parts) < 2:
-                        continue
-                    rid = parts[0]
-                    nm = parts[1]
-                    comp = parts[2] if len(parts) > 2 else "false"
-                    dd = parts[3] if len(parts) > 3 else ""
-                    items.append({"id": rid, "title": nm, "completed": comp.lower() == "true", "dueAtText": dd})
-            return json.dumps({"ok": True, "items": items}, ensure_ascii=False)
-
-        if name == "mac_reminders_complete":
-            rid = str(args.get("id") or "").strip()
-            title = str(args.get("title") or "").strip()
-            list_name = str(args.get("listName") or "").strip()
-            if not rid and not title:
-                raise RuntimeError("id or title is required")
-
-            script = r'''
-on run argv
-  set rid to item 1 of argv
-  set ttl to item 2 of argv
-  set listName to item 3 of argv
-  if listName is "" then set listName to "Reminders"
-  tell application "Reminders"
-    if not (exists list listName) then return "NOT_FOUND"
-    set theList to list listName
-    set target to missing value
-    if rid is not "" then
-      try
-        set target to first reminder of theList whose id is rid
-      end try
-    end if
-    if target is missing value and ttl is not "" then
-      try
-        set target to first reminder of theList whose name is ttl
-      end try
-    end if
-    if target is missing value then return "NOT_FOUND"
-    set completed of target to true
-    return "OK"
-  end tell
-end run
-'''
-            out = run_osascript(script, [rid, title, list_name])
-            ok = out.strip() == "OK"
-            if not ok:
-                return json.dumps({"ok": False, "error": "Reminder not found"}, ensure_ascii=False)
-            return json.dumps({"ok": True}, ensure_ascii=False)
-
-        if name == "mac_notes_create":
-            title = str(args.get("title") or "").strip()
-            body = str(args.get("body") or "")
-            folder_name = str(args.get("folderName") or "").strip()
-            if not title:
-                raise RuntimeError("title is required")
-            if not body:
-                raise RuntimeError("body is required")
-
-            script = r'''
-on run argv
-  set ttl to item 1 of argv
-  set bdy to item 2 of argv
-  set folderName to item 3 of argv
-  tell application "Notes"
-    set acc to first account
-    set theFolder to missing value
-    if folderName is not "" then
-      try
-        set theFolder to first folder of acc whose name is folderName
-      end try
-      if theFolder is missing value then
-        set theFolder to make new folder at acc with properties {name:folderName}
-      end if
-    else
-      set theFolder to first folder of acc
-    end if
-    set n to make new note at theFolder with properties {name:ttl, body:bdy}
-    set nid to ""
-    try
-      set nid to id of n
-    end try
-    return nid & "\t" & name of n
-  end tell
-end run
-'''
-            out = run_osascript(script, [title, body, folder_name])
-            nid, nt = (out.split("\t", 1) + [""])[:2]
-            return json.dumps({"ok": True, "id": nid, "title": nt or title}, ensure_ascii=False)
-
-        if name == "mac_notes_append":
-            title = str(args.get("title") or "").strip()
-            append_text = str(args.get("appendText") or "")
-            folder_name = str(args.get("folderName") or "").strip()
-            if not title:
-                raise RuntimeError("title is required")
-            if not append_text:
-                raise RuntimeError("appendText is required")
-
-            script = r'''
-on run argv
-  set ttl to item 1 of argv
-  set addText to item 2 of argv
-  set folderName to item 3 of argv
-  tell application "Notes"
-    set acc to first account
-    set target to missing value
-    if folderName is not "" then
-      try
-        set f to first folder of acc whose name is folderName
-        set target to first note of f whose name is ttl
-      end try
-    else
-      repeat with f in folders of acc
-        try
-          set target to first note of f whose name is ttl
-          exit repeat
-        end try
-      end repeat
-    end if
-    if target is missing value then return "NOT_FOUND"
-    set oldBody to body of target
-    set body of target to (oldBody & "<br/>" & addText)
-    return "OK"
-  end tell
-end run
-'''
-            out = run_osascript(script, [title, append_text, folder_name])
-            if out.strip() != "OK":
-                return json.dumps({"ok": False, "error": "Note not found"}, ensure_ascii=False)
-            return json.dumps({"ok": True}, ensure_ascii=False)
+        return json.dumps({"ok": True, "todos": todos, "merge": merge}, ensure_ascii=False)
 
     raise RuntimeError("Unknown tool")
 
