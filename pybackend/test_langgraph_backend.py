@@ -284,6 +284,22 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
             self.assertTrue(isinstance(caption, str))
             self.assertNotIn(img, caption)
 
+    def test_default_composer_for_telegram_supports_provider_model_override(self) -> None:
+        from anima_backend_lg.telegram_integration import _default_composer_for_telegram
+
+        settings_obj = {
+            "settings": {
+                "workspaceDir": "/tmp",
+                "toolsEnabledIds": [],
+                "mcpEnabledServerIds": [],
+                "skillsEnabledIds": [],
+                "im": {"provider": "telegram", "telegram": {"enabled": True, "providerOverrideId": "p1", "modelOverride": "m1"}},
+            }
+        }
+        composer = _default_composer_for_telegram(settings_obj)
+        self.assertEqual(str(composer.get("providerOverrideId") or ""), "p1")
+        self.assertEqual(str(composer.get("modelOverride") or ""), "m1")
+
     def test_telegram_extract_file_from_artifacts(self) -> None:
         from anima_backend_lg import telegram_integration as tg
 
@@ -589,6 +605,48 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
             self.assertEqual(int(getattr(h, "_code", 0)), 200)
             self.assertEqual(h.wfile.buf, b"xyz")
 
+    def test_attachments_file_serves_abs_image_outside_workspace(self) -> None:
+        from anima_backend_lg.api.settings_tools import handle_get_attachment_file
+
+        with tempfile.TemporaryDirectory() as td:
+            ws = os.path.join(td, "workspace")
+            os.makedirs(ws, exist_ok=True)
+            out_dir = os.path.join(td, "out")
+            os.makedirs(out_dir, exist_ok=True)
+            fp = os.path.join(out_dir, "a.png")
+            with open(fp, "wb") as f:
+                f.write(b"xyz")
+
+            class _WFile:
+                def __init__(self) -> None:
+                    self.buf = b""
+
+                def write(self, b: bytes) -> None:
+                    self.buf += b
+
+                def flush(self) -> None:
+                    return
+
+            class _Handler:
+                def __init__(self) -> None:
+                    self.headers = {}
+                    self.wfile = _WFile()
+                    self.query = {"path": fp, "workspaceDir": ws}
+
+                def send_response(self, code) -> None:
+                    self._code = int(code)
+
+                def send_header(self, k, v) -> None:
+                    return
+
+                def end_headers(self) -> None:
+                    return
+
+            h = _Handler()
+            handle_get_attachment_file(h)
+            self.assertEqual(int(getattr(h, "_code", 0)), 200)
+            self.assertEqual(h.wfile.buf, b"xyz")
+
     def test_chat_prepare_returns_messages(self) -> None:
         from anima_backend_lg.api.runs import handle_post_chat_prepare
 
@@ -627,6 +685,31 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         out = h.wfile.buf.decode("utf-8")
         self.assertIn('"ok": true', out)
         self.assertIn('"messages"', out)
+
+    def test_apply_attachments_inline_embeds_image_blocks(self) -> None:
+        from anima_backend_shared.chat import apply_attachments_inline
+
+        import base64
+
+        with tempfile.TemporaryDirectory() as td:
+            img_path = os.path.join(td, "a.png")
+            png = base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2wAAAABJRU5ErkJggg=="
+            )
+            with open(img_path, "wb") as f:
+                f.write(png)
+
+            messages = [{"role": "user", "content": "describe"}]
+            composer = {"workspaceDir": td, "attachments": [{"path": img_path, "mode": "inline"}]}
+            out = apply_attachments_inline(messages, composer)
+            self.assertTrue(isinstance(out, list) and len(out) == 1)
+            content = out[0].get("content")
+            self.assertTrue(isinstance(content, list))
+            self.assertTrue(any(isinstance(b, dict) and b.get("type") == "image_url" for b in content))
+            img = next((b for b in content if isinstance(b, dict) and b.get("type") == "image_url"), None)
+            self.assertTrue(isinstance(img, dict))
+            url = ((img.get("image_url") or {}) if isinstance(img.get("image_url"), dict) else {}).get("url")
+            self.assertTrue(isinstance(url, str) and url.startswith("data:image/png;base64,"))
 
     def test_chat_stream_emits_done_and_turn_id(self) -> None:
         from anima_backend_lg.api.runs import handle_post_chat
@@ -1260,7 +1343,10 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         def _fake_convert(path: str):
             return path, False
 
+        seen = {}
+
         def _fake_pipeline(_path: str, generate_kwargs=None):
+            seen["generate_kwargs"] = generate_kwargs
             return {"text": "hello"}
 
         with patch.object(shared_settings, "load_settings", side_effect=_fake_load_settings):
@@ -1269,10 +1355,15 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
                     with patch.object(shared_voice, "_convert_audio_to_wav_if_needed", side_effect=_fake_convert):
                         with patch.object(shared_voice, "get_voice_pipeline", return_value=_fake_pipeline):
                             with patch.object(tg, "_download_telegram_file", side_effect=_fake_download):
-                                ok, text = tg._transcribe_telegram_audio(token="t", file_id="f")
+                                ok, text = tg._transcribe_telegram_audio(token="t", file_id="f", lang_hint="zh-CN")
 
         self.assertTrue(ok)
         self.assertEqual(text, "hello")
+        self.assertTrue(isinstance(seen.get("generate_kwargs"), dict))
+        self.assertEqual(seen["generate_kwargs"].get("task"), "transcribe")
+        self.assertEqual(seen["generate_kwargs"].get("language"), "chinese")
+        self.assertEqual(seen["generate_kwargs"].get("temperature"), 0.0)
+        self.assertEqual(seen["generate_kwargs"].get("num_beams"), 1)
 
     def test_generate_image_tool_writes_file_and_returns_artifact(self) -> None:
         import base64

@@ -1436,10 +1436,6 @@ function ProvidersSettings() {
         {/* Top Actions Bar */}
         <div className="px-8 py-4">
           <div className="flex items-center justify-end gap-3 bg-secondary/10 border border-black/5 dark:border-white/5 rounded-xl px-4 py-3">
-            <Button variant="outline" className="gap-2 bg-background">
-              <span className="font-mono text-xs">{'>_'}</span>
-              {t.addCustomAcp}
-            </Button>
             <Button onClick={() => setCustomProviderDialogOpen(true)}>{t.addCustom}</Button>
           </div>
         </div>
@@ -2474,6 +2470,7 @@ function ImSettings() {
   const { settings: settings0, updateSettings } = useStore()
   const settings = settings0!
   const [showToken, setShowToken] = useState(false)
+  const providers = useStore((s) => s.providers)
 
   const t = (() => {
     const dict = {
@@ -2489,6 +2486,11 @@ function ImSettings() {
         allowGroupsHint: 'Default off for safety.',
         pollingIntervalMs: 'Polling Interval (ms)',
         pollingIntervalHint: 'Lower is more responsive but uses more requests.',
+        chatProvider: 'Chat Provider',
+        chatProviderHint: 'Optional. Use a specific provider/model for Telegram.',
+        chatModel: 'Chat Model',
+        chatModelHint: 'Optional. Overrides the provider default model.',
+        followDefault: 'Follow desktop default',
         openclaw: 'OpenClaw',
         enableOpenclaw: 'Enable OpenClaw',
         enableHeartbeat: 'Enable Heartbeat',
@@ -2510,6 +2512,11 @@ function ImSettings() {
         allowGroupsHint: '默认关闭以保证安全。',
         pollingIntervalMs: '轮询间隔（毫秒）',
         pollingIntervalHint: '越小越及时，但请求次数更多。',
+        chatProvider: '聊天提供商',
+        chatProviderHint: '可选。为 Telegram 单独指定 provider / model。',
+        chatModel: '聊天模型',
+        chatModelHint: '可选。覆盖 provider 的默认模型。',
+        followDefault: '跟随桌面默认',
         openclaw: 'OpenClaw',
         enableOpenclaw: '启用 OpenClaw',
         enableHeartbeat: '启用 Heartbeat',
@@ -2531,6 +2538,11 @@ function ImSettings() {
         allowGroupsHint: '安全のため既定はオフ。',
         pollingIntervalMs: 'ポーリング間隔（ms）',
         pollingIntervalHint: '小さいほど応答が速いが、リクエストが増えます。',
+        chatProvider: 'チャットプロバイダー',
+        chatProviderHint: '任意。Telegram 用に provider/model を指定できます。',
+        chatModel: 'チャットモデル',
+        chatModelHint: '任意。プロバイダー既定モデルを上書きします。',
+        followDefault: 'デスクトップ既定に従う',
         openclaw: 'OpenClaw',
         enableOpenclaw: 'OpenClaw を有効化',
         enableHeartbeat: 'Heartbeat を有効化',
@@ -2551,6 +2563,27 @@ function ImSettings() {
   const allowedUserIds = Array.isArray(tg.allowedUserIds) ? tg.allowedUserIds.map(String) : []
   const allowGroups = Boolean(tg.allowGroups)
   const pollingIntervalMs = Number.isFinite(tg.pollingIntervalMs as any) ? Number(tg.pollingIntervalMs) : 1500
+  const telegramProviderOverrideId = String((tg as any).providerOverrideId || '').trim()
+  const telegramModelOverride = String((tg as any).modelOverride || '').trim()
+
+  const availableProviders = useMemo(() => {
+    const list = Array.isArray(providers) ? providers.filter((p) => p && p.isEnabled) : []
+    list.sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)))
+    return list
+  }, [providers])
+
+  const selectedProvider = useMemo(() => {
+    if (!telegramProviderOverrideId) return undefined
+    return availableProviders.find((p) => p.id === telegramProviderOverrideId)
+  }, [availableProviders, telegramProviderOverrideId])
+
+  const availableModels = useMemo(() => {
+    const p = selectedProvider || availableProviders.find((x) => x.isEnabled)
+    const models = Array.isArray(p?.config?.models) ? p?.config?.models : []
+    return models
+      .map((m: any) => (typeof m === 'string' ? m : m?.id))
+      .filter((id: any) => typeof id === 'string' && id.trim())
+  }, [availableProviders, selectedProvider])
 
   const openclaw = settings.openclaw || {}
   const openclawEnabled = Boolean(openclaw.enabled)
@@ -2669,6 +2702,48 @@ function ImSettings() {
             onChange={(e) => updateTelegram({ pollingIntervalMs: Number(e.target.value) })}
           />
           <div className="text-xs text-muted-foreground">{t.pollingIntervalHint}</div>
+        </div>
+
+        <div className="space-y-2">
+          <Label>{t.chatProvider}</Label>
+          <Select
+            value={telegramProviderOverrideId ? telegramProviderOverrideId : ' '}
+            onValueChange={(val) => updateTelegram({ providerOverrideId: val.trim() ? val : '', modelOverride: '' } as any)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder={t.followDefault} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value=" ">{t.followDefault}</SelectItem>
+              {availableProviders.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.name || p.id}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="text-xs text-muted-foreground">{t.chatProviderHint}</div>
+        </div>
+
+        <div className="space-y-2">
+          <Label>{t.chatModel}</Label>
+          <Select
+            value={telegramModelOverride ? telegramModelOverride : ' '}
+            onValueChange={(val) => updateTelegram({ modelOverride: val.trim() ? val : '' } as any)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder={t.followDefault} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value=" ">{t.followDefault}</SelectItem>
+              {availableModels.map((m) => (
+                <SelectItem key={m} value={m}>
+                  {m}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="text-xs text-muted-foreground">{t.chatModelHint}</div>
         </div>
       </Card>
 

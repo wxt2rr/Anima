@@ -29,6 +29,20 @@ def _tg_debug(msg: str) -> None:
     print(f"[telegram][{ts}] {msg}")
 
 
+def _tg_voice_debug_enabled() -> bool:
+    v = str(os.environ.get("ANIMA_VOICE_DEBUG") or "").strip().lower()
+    return v in ("1", "true", "yes", "on") or _tg_debug_enabled()
+
+
+def _is_bad_transcript(text: str) -> bool:
+    s = str(text or "").strip()
+    if not s:
+        return True
+    if re.search(r"[\u4e00-\u9fffA-Za-z0-9]", s):
+        return False
+    return True
+
+
 def _extract_telegram_config(settings_obj: Dict[str, Any]) -> Dict[str, Any]:
     s = settings_obj.get("settings")
     if not isinstance(s, dict):
@@ -500,7 +514,7 @@ def _extract_audio_file_spec_from_message(msg: Dict[str, Any]) -> Optional[Dict[
     return None
 
 
-def _transcribe_telegram_audio(*, token: str, file_id: str) -> Tuple[bool, str]:
+def _transcribe_telegram_audio(*, token: str, file_id: str, lang_hint: Optional[str] = None) -> Tuple[bool, str]:
     dl = _download_telegram_file(token, file_id)
     if not isinstance(dl, dict):
         return False, "语音下载失败。"
@@ -568,16 +582,156 @@ def _transcribe_telegram_audio(*, token: str, file_id: str) -> Tuple[bool, str]:
             tmp_path = tmp.name
 
         pipe = get_voice_pipeline(model_key)
-        generate_kwargs = None
-        lang = str(voice_lang or "").strip()
-        if lang and lang != "auto":
-            lang_map = {"en": "english", "zh": "chinese", "ja": "japanese"}
-            generate_kwargs = {"language": lang_map.get(lang, lang)}
+        generate_kwargs: Dict[str, Any] = {"task": "transcribe", "temperature": 0.0, "num_beams": 1}
+        lang = str(voice_lang or "").strip().lower()
+        if not lang or lang == "auto":
+            hint = str(lang_hint or "").strip().lower()
+            if hint:
+                lang = hint.split("-", 1)[0].strip()
+        if not lang or lang == "auto":
+            lang = "zh"
+        if lang:
+            lang_map = {
+                "en": "english",
+                "zh": "chinese",
+                "ja": "japanese",
+                "ko": "korean",
+                "fr": "french",
+                "de": "german",
+                "es": "spanish",
+                "it": "italian",
+                "pt": "portuguese",
+                "ru": "russian",
+            }
+            generate_kwargs["language"] = lang_map.get(lang, lang)
 
         wav_path, wav_delete = _convert_audio_to_wav_if_needed(tmp_path)
-        result = pipe(wav_path, generate_kwargs=generate_kwargs) if generate_kwargs else pipe(wav_path)
+
+        debug_meta_out = None
+        debug_meta = None
+
+        if _tg_voice_debug_enabled():
+            try:
+                from anima_backend_shared.settings import config_root
+                import shutil
+                import wave
+
+                debug_dir = config_root() / "voice_debug" / "telegram"
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                ts = int(time.time() * 1000)
+                base = f"{ts}_{str(file_id or uuid.uuid4().hex)[:40]}"
+                raw_out = debug_dir / f"{base}{audio_ext}"
+                wav_out = debug_dir / f"{base}.wav"
+                meta_out = debug_dir / f"{base}.json"
+                try:
+                    raw_out.write_bytes(bytes(content))
+                except Exception:
+                    pass
+                if wav_path and os.path.exists(wav_path):
+                    try:
+                        shutil.copyfile(wav_path, wav_out)
+                    except Exception:
+                        pass
+                dur = None
+                try:
+                    if wav_path and os.path.exists(wav_path):
+                        with wave.open(wav_path, "rb") as wf:
+                            frames = int(wf.getnframes())
+                            rate = int(wf.getframerate()) or 0
+                            if rate > 0:
+                                dur = frames / rate
+                except Exception:
+                    dur = None
+
+                meta = {
+                    "fileId": str(file_id or ""),
+                    "sourceExt": audio_ext,
+                    "sourceBytes": int(len(content) if isinstance(content, (bytes, bytearray)) else 0),
+                    "voiceModelRaw": str(voice_model_raw or ""),
+                    "voiceModelId": str(model_id or ""),
+                    "voiceModelKey": str(model_key or ""),
+                    "voiceLanguageSetting": str(voice_lang or ""),
+                    "telegramLanguageHint": str(lang_hint or ""),
+                    "generateKwargs": generate_kwargs,
+                    "tmpAudioPath": tmp_path,
+                    "tmpWavPath": wav_path,
+                    "wavSeconds": dur,
+                    "debugRawPath": str(raw_out),
+                    "debugWavPath": str(wav_out),
+                }
+                try:
+                    meta_out.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+                debug_meta_out = meta_out
+                debug_meta = meta
+                _tg_debug(
+                    "voice debug "
+                    + json.dumps(
+                        {
+                            "fileId": str(file_id or ""),
+                            "voiceModelId": str(model_id or ""),
+                            "voiceLanguageSetting": str(voice_lang or ""),
+                            "telegramLanguageHint": str(lang_hint or ""),
+                            "generateKwargs": generate_kwargs,
+                            "wavSeconds": dur,
+                            "debugDir": str(debug_dir),
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            except Exception:
+                pass
+
+        try:
+            m = getattr(pipe, "model", None)
+            gc = getattr(m, "generation_config", None)
+            if gc is not None:
+                if getattr(gc, "forced_decoder_ids", None) is not None:
+                    gc.forced_decoder_ids = None
+                try:
+                    setattr(gc, "task", "transcribe")
+                except Exception:
+                    pass
+                try:
+                    if isinstance(generate_kwargs.get("language"), str) and generate_kwargs["language"].strip():
+                        setattr(gc, "language", generate_kwargs["language"])
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        result = pipe(wav_path, generate_kwargs=generate_kwargs)
         text = result.get("text", "") if isinstance(result, dict) else ""
         out = str(text or "").strip()
+
+        retry_out = ""
+        retry_kwargs = None
+        if _is_bad_transcript(out):
+            retry_kwargs = dict(generate_kwargs)
+            retry_kwargs.update({"num_beams": 5, "temperature": 0.0})
+            try:
+                result2 = pipe(wav_path, generate_kwargs=retry_kwargs)
+                text2 = result2.get("text", "") if isinstance(result2, dict) else ""
+                retry_out = str(text2 or "").strip()
+                if retry_out and not _is_bad_transcript(retry_out):
+                    out = retry_out
+                    if _tg_voice_debug_enabled():
+                        _tg_debug("voice retry used")
+            except Exception:
+                retry_out = ""
+
+        if debug_meta_out and isinstance(debug_meta, dict):
+            try:
+                debug_meta["transcript"] = out
+                if retry_out:
+                    debug_meta["retryTranscript"] = retry_out
+                if isinstance(retry_kwargs, dict):
+                    debug_meta["retryKwargs"] = retry_kwargs
+                debug_meta_out.write_text(json.dumps(debug_meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+
         if not out:
             return False, "未识别到有效语音内容。"
         return True, out
@@ -744,6 +898,8 @@ def _default_composer_for_telegram(settings_obj: Dict[str, Any]) -> Dict[str, An
     if not isinstance(s, dict):
         s = {}
 
+    tg = _extract_telegram_config(settings_obj)
+
     enabled_tool_ids = s.get("toolsEnabledIds")
     if not isinstance(enabled_tool_ids, list):
         enabled_tool_ids = []
@@ -757,6 +913,8 @@ def _default_composer_for_telegram(settings_obj: Dict[str, Any]) -> Dict[str, An
         enabled_skill_ids = []
 
     workspace_dir = str(s.get("workspaceDir") or "").strip()
+    provider_override_id = str(tg.get("providerOverrideId") or "").strip()
+    model_override = str(tg.get("modelOverride") or "").strip()
 
     return {
         "channel": "telegram",
@@ -766,6 +924,8 @@ def _default_composer_for_telegram(settings_obj: Dict[str, Any]) -> Dict[str, An
         "enabledMcpServerIds": [str(x) for x in enabled_mcp_server_ids if str(x).strip()],
         "skillMode": "auto",
         "enabledSkillIds": [str(x) for x in enabled_skill_ids if str(x).strip()],
+        "providerOverrideId": provider_override_id,
+        "modelOverride": model_override,
     }
 
 
@@ -1072,7 +1232,12 @@ class TelegramPoller:
                                 pass
                             continue
                         if file_id:
-                            ok, out = _transcribe_telegram_audio(token=token, file_id=file_id)
+                            lang_hint = ""
+                            try:
+                                lang_hint = str((msg.get("from") or {}).get("language_code") or "").strip()
+                            except Exception:
+                                lang_hint = ""
+                            ok, out = _transcribe_telegram_audio(token=token, file_id=file_id, lang_hint=lang_hint)
                             if ok:
                                 text = out
                             else:

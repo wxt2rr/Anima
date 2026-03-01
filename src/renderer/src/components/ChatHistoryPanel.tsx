@@ -98,7 +98,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
   return (
     <Card
       style={{ width: ui.sidebarCollapsed ? 0 : width }}
-      className={`flex flex-col no-drag transition-all duration-300 ease-in-out relative overflow-hidden border-[3px] border-black/5 dark:border-white/10 rounded-[12px] shadow-none ${
+      className={`flex flex-col no-drag transition-all duration-300 ease-in-out relative overflow-hidden border-[3px] border-black/5 dark:border-white/10 rounded-xl shadow-none ${
         ui.sidebarCollapsed ? 'opacity-0 p-0 m-0 border-0' : ''
       }`}
     >
@@ -162,7 +162,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
             <div
               key={chat.id}
               onClick={() => setActiveChat(chat.id)}
-              className={`group relative flex items-center gap-2 px-3 py-1.5 rounded-lg cursor-pointer transition-all duration-200 mx-1 ${
+              className={`group relative flex items-center gap-2 px-3 py-1.5 rounded-xl cursor-pointer transition-all duration-200 mx-1 ${
                 active
                   ? 'bg-secondary text-foreground font-semibold shadow-sm'
                   : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
@@ -175,7 +175,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
                   e.stopPropagation()
                   setDeleteId(chat.id)
                 }}
-                className={`p-1 rounded-md transition-all text-muted-foreground hover:text-destructive ${
+                className={`p-1 rounded-lg transition-all text-muted-foreground hover:text-destructive ${
                   active ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/10'
                 }`}
               >
@@ -214,7 +214,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
         <div className="p-3 mt-auto flex items-center justify-between">
           <Popover open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
             <PopoverTrigger asChild onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
-              <button className="p-2 rounded-md text-primary hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10 transition-colors">
+              <button className="p-2 rounded-md text-primary hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10 transition-colors focus:outline-none focus-visible:outline-none">
                 <MoreHorizontal className="w-4 h-4" />
               </button>
             </PopoverTrigger>
@@ -226,7 +226,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
               onMouseLeave={handleMouseLeave}
             >
               <button
-                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-sm text-sm hover:bg-accent hover:text-accent-foreground transition-colors text-left"
+                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-sm text-sm hover:bg-accent hover:text-accent-foreground transition-colors text-left focus:outline-none focus-visible:outline-none"
                 onClick={() => {
                   onOpenSettings?.()
                   setIsSettingsOpen(false)

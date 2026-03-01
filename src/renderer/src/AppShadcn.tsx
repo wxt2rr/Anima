@@ -53,10 +53,11 @@ function CircularProgress({ value }: { value: number }) {
   const radius = 7
   const circumference = 2 * Math.PI * radius
   const offset = circumference - (Math.min(100, Math.max(0, value)) / 100) * circumference
+  const label = value >= 99.5 ? '99+' : `${Math.round(Math.max(0, value))}%`
 
   return (
-    <div className="relative w-4 h-4 flex items-center justify-center">
-      <svg className="w-full h-full -rotate-90 transform" viewBox="0 0 16 16">
+    <div className="relative w-5 h-5 flex items-center justify-center">
+      <svg className="w-full h-full -rotate-90 transform" viewBox="0 0 16 16" aria-hidden="true">
         <circle
           cx="8"
           cy="8"
@@ -64,7 +65,7 @@ function CircularProgress({ value }: { value: number }) {
           fill="none"
           stroke="currentColor"
           strokeWidth="2.5"
-          className="opacity-20"
+          className="text-muted-foreground/20"
         />
         <circle
           cx="8"
@@ -76,11 +77,31 @@ function CircularProgress({ value }: { value: number }) {
           strokeDasharray={circumference}
           strokeDashoffset={offset}
           strokeLinecap="round"
-          className="transition-all duration-300 ease-out"
+          className="text-primary transition-all duration-300 ease-out"
         />
       </svg>
+      <div className="absolute inset-0 flex items-center justify-center text-[7px] leading-none text-primary/90">
+        {label}
+      </div>
     </div>
   )
+}
+
+function MaskedIcon({ url, className }: { url: string; className?: string }) {
+  const u = String(url || '').trim()
+  if (!u) return null
+  const style: any = {
+    WebkitMaskImage: `url(${u})`,
+    maskImage: `url(${u})`,
+    WebkitMaskRepeat: 'no-repeat',
+    maskRepeat: 'no-repeat',
+    WebkitMaskPosition: 'center',
+    maskPosition: 'center',
+    WebkitMaskSize: 'contain',
+    maskSize: 'contain',
+    backgroundColor: 'hsl(var(--primary))'
+  }
+  return <span className={className} style={style} aria-hidden="true" />
 }
 
 function normalizeChatMarkdown(input: string): string {
@@ -530,6 +551,7 @@ function AppLoaded(): JSX.Element {
   const usageStats = useMemo(() => {
     const used = tokenStatus.used || 0
     let total = tokenStatus.limit || 0
+    const defaultTotal = 128_000
     
     // Try to get total from model config if not in metadata
     if (!total && effectiveProvider?.config?.models) {
@@ -546,8 +568,10 @@ function AppLoaded(): JSX.Element {
     if (!total && tokenStatus.remaining && used) {
       total = used + tokenStatus.remaining
     }
+
+    if (!total) total = defaultTotal
     
-    const percentage = total > 0 ? (used / total) * 100 : 0
+    const percentage = total > 0 ? Math.min(100, (used / total) * 100) : 0
     return { used, total, percentage }
   }, [tokenStatus, effectiveProvider, effectiveModel])
 
@@ -628,6 +652,7 @@ function AppLoaded(): JSX.Element {
   }
 
   const closeTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const openTimerRef = useRef<NodeJS.Timeout | null>(null)
 
   const handleMouseEnter = (panel: typeof popoverPanel) => {
     if (closeTimerRef.current) {
@@ -644,6 +669,30 @@ function AppLoaded(): JSX.Element {
     closeTimerRef.current = setTimeout(() => {
       setPopoverPanel('')
     }, 300)
+  }
+
+  const handleInputPanelMouseEnter = (panel: typeof popoverPanel) => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current)
+      closeTimerRef.current = null
+    }
+    if (openTimerRef.current) {
+      clearTimeout(openTimerRef.current)
+      openTimerRef.current = null
+    }
+    openTimerRef.current = setTimeout(() => {
+      setPopoverPanel(panel)
+      if (panel === 'skills') ensureSkills()
+      openTimerRef.current = null
+    }, 30)
+  }
+
+  const handleInputPanelMouseLeave = () => {
+    if (openTimerRef.current) {
+      clearTimeout(openTimerRef.current)
+      openTimerRef.current = null
+    }
+    handleMouseLeave()
   }
 
   const handlePopoverOpenChange = async (name: typeof popoverPanel, open: boolean) => {
@@ -1025,6 +1074,8 @@ function AppLoaded(): JSX.Element {
     }
 
       const userMessage = inputValue.trim()
+      const userAttachments = composer.attachments.map((a) => ({ path: a.path }))
+      const userAttachmentsWorkspaceDir = resolveWorkspaceDir()
       setInputValue('')
       setIsLoading(true)
       const controller = new AbortController()
@@ -1040,8 +1091,15 @@ function AppLoaded(): JSX.Element {
         }
       }
 
-    // Add user message
-    addMessage({ role: 'user', content: userMessage, turnId })
+    const composerPayload = buildComposerPayload()
+
+    addMessage({
+      role: 'user',
+      content: userMessage,
+      turnId,
+      meta: userAttachments.length ? { userAttachments, userAttachmentsWorkspaceDir } : undefined
+    } as any)
+    if (composer.attachments.length) updateComposer({ attachments: [] })
 
       try {
         // Add placeholder for assistant
@@ -1054,7 +1112,6 @@ function AppLoaded(): JSX.Element {
         } as any)
 
         const runMessages = [{ role: 'user' as const, content: userMessage }]
-        const composerPayload = buildComposerPayload()
         const threadId = activeChatId || turnId
 
       if (settings.enableStreamingResponse) {
@@ -1529,7 +1586,7 @@ function AppLoaded(): JSX.Element {
 
             <div className="flex flex-1 overflow-hidden">
             <div className="flex flex-col flex-1 overflow-hidden min-w-0">
-            <main className="flex-1 overflow-y-auto pt-4 pl-8 pr-8 pb-4 no-drag scroll-smooth">
+            <main className="flex-1 overflow-y-auto pt-4 pl-6 pr-6 pb-4 no-drag scroll-smooth">
               {messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-4">
                   <p className="font-medium text-lg text-foreground">{t.helloTitle}</p>
@@ -1558,8 +1615,39 @@ function AppLoaded(): JSX.Element {
                     return (
                     <div key={msg.id} className="w-full">
                       {msg.role === 'user' ? (
-                        <div className={`py-2 pl-6 pr-6 flex justify-end ${msg.id === lastUserMessageId ? 'sticky top-0 z-20 bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/70' : ''}`}>
-                           <div className="w-fit rounded-[24px] bg-zinc-200/60 dark:bg-secondary/80 px-5 py-3 font-medium text-[15px] leading-relaxed whitespace-pre-wrap text-foreground">{msg.content}</div>
+                        <div className={`py-2 flex justify-end ${msg.id === lastUserMessageId ? 'sticky top-0 z-20' : ''}`}>
+                           <div className="flex flex-col items-end gap-2">
+                              <div className="w-fit max-w-[520px] rounded-2xl border border-border/60 bg-transparent px-4 py-2 text-[14px] leading-relaxed whitespace-pre-wrap break-words text-foreground/90">
+                                {msg.content}
+                              </div>
+                              {(() => {
+                                const meta: any = msg.meta || {}
+                                const atts = Array.isArray(meta.userAttachments) ? meta.userAttachments : []
+                                const ws = String(meta.userAttachmentsWorkspaceDir || '').trim()
+                                const imgs = atts
+                                  .map((a: any) => String(a?.path || '').trim())
+                                  .filter(Boolean)
+                                  .filter((p: string) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(p.split('/').pop()?.toLowerCase() || p.toLowerCase()))
+                                if (!imgs.length) return null
+                                if (!backendBaseUrl) return null
+                                return (
+                                  <div className="flex flex-wrap justify-end gap-2 max-w-[520px]">
+                                    {imgs.map((p: string, idx: number) => {
+                                      const url = `${backendBaseUrl}/api/attachments/file?path=${encodeURIComponent(p)}${ws ? `&workspaceDir=${encodeURIComponent(ws)}` : ''}`
+                                      return (
+                                        <img
+                                          key={`${p}:${idx}`}
+                                          src={url}
+                                          alt={p.split('/').pop() || 'image'}
+                                          className="h-20 w-20 rounded-2xl border border-border/60 object-cover bg-muted/10"
+                                          loading="lazy"
+                                        />
+                                      )
+                                    })}
+                                  </div>
+                                )
+                              })()}
+                           </div>
                         </div>
                       ) : msg.role === 'tool' ? (
                         <div className="py-0">
@@ -2022,6 +2110,30 @@ function AppLoaded(): JSX.Element {
                                       }
                                       return <code className={className} {...props}>{children}</code>
                                     },
+                                    img({ src, alt, ...props }: any) {
+                                      const raw = String(src || '').trim()
+                                      const hasArtifacts = Array.isArray(msg.meta?.artifacts) && msg.meta.artifacts.length > 0
+                                      const isGeneratedPath =
+                                        raw.startsWith('sandbox:') ||
+                                        raw.startsWith('.anima/') ||
+                                        raw.startsWith('/.anima/') ||
+                                        raw.includes('/.anima/artifacts/')
+
+                                      if (hasArtifacts && isGeneratedPath) return null
+
+                                      if (raw.startsWith('sandbox:')) {
+                                        const ws = String((settings as any)?.workspaceDir || '').trim()
+                                        const rel = raw.replace(/^sandbox:/, '')
+                                        if (backendBaseUrl && ws && rel.startsWith('/')) {
+                                          const abs = `${ws.replace(/\/$/, '')}${rel}`
+                                          const url = `${backendBaseUrl}/api/artifacts/file?path=${encodeURIComponent(abs)}&workspaceDir=${encodeURIComponent(ws)}`
+                                          return <img src={url} alt={String(alt || '')} {...props} />
+                                        }
+                                        return null
+                                      }
+
+                                      return <img src={raw} alt={String(alt || '')} {...props} />
+                                    },
                                     a({ href, children, ...props }: any) {
                                       const target = String(href || '').trim()
                                       return (
@@ -2075,7 +2187,46 @@ function AppLoaded(): JSX.Element {
             </main>
 
             <footer className="pl-6 pr-6 pt-6 pb-0 no-drag overflow-visible">
-              <div className="max-w-3xl mx-auto relative bg-background rounded-2xl shadow-sm border border-black/5 dark:border-white/10 p-3 transition-all duration-200">
+              <div className="max-w-3xl mx-auto relative bg-background rounded-xl shadow-sm border border-black/5 dark:border-white/10 p-3 transition-all duration-200">
+                  {composer.attachments.length > 0 && (
+                    <div className="flex gap-2 overflow-x-auto pb-2 px-1">
+                      {composer.attachments.map((a) => {
+                        const p = String(a.path || '').trim()
+                        if (!p) return null
+                        const name = p.split('/').pop() || p
+                        const lower = name.toLowerCase()
+                        const isImage = /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(lower)
+                        const ws = resolveWorkspaceDir()
+                        const src =
+                          isImage && backendBaseUrl
+                            ? `${backendBaseUrl}/api/attachments/file?path=${encodeURIComponent(p)}${ws ? `&workspaceDir=${encodeURIComponent(ws)}` : ''}`
+                            : ''
+
+                        return (
+                          <div key={a.id} className="group relative shrink-0">
+                            {isImage && src ? (
+                              <img
+                                src={src}
+                                alt={name}
+                                className="h-14 w-14 rounded-lg border border-border/60 object-cover"
+                              />
+                            ) : (
+                              <div className="h-14 max-w-[220px] rounded-lg border border-border/60 bg-muted/10 px-2 py-1.5 flex items-center">
+                                <div className="text-xs truncate">{name}</div>
+                              </div>
+                            )}
+                            <button
+                              type="button"
+                              className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-background border border-border/60 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                              onClick={() => updateComposer({ attachments: composer.attachments.filter((x) => x.id !== a.id) })}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
                   <InputAnimation
                     className="w-full bg-transparent border-0 resize-none shadow-none text-[13px] leading-relaxed"
                     placeholder={t.typeMessage}
@@ -2087,58 +2238,19 @@ function AppLoaded(): JSX.Element {
                   <div className="flex justify-between items-center px-2 pb-1 mt-1 gap-2">
                    <div className="flex items-center gap-1 flex-1 min-w-0 overflow-hidden">
                       {/* Attachments */}
-                      <Popover open={popoverPanel === 'attachments'} onOpenChange={(open) => handlePopoverOpenChange('attachments', open)}>
-                        <PopoverTrigger asChild onMouseEnter={() => handleMouseEnter('attachments')} onMouseLeave={handleMouseLeave}>
-                           <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full shrink-0 text-primary">
-                             <Paperclip className="w-4 h-4" />
-                           </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-80" align="start" onMouseEnter={() => handleMouseEnter('attachments')} onMouseLeave={handleMouseLeave}>
-                           <div className="space-y-3">
-                              <div className="flex items-center justify-between gap-2">
-                                <h4 className="font-medium text-xs leading-none">{t.composer.attachments}</h4>
-                                <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => updateComposer({ attachments: [] })}>{t.composer.clear}</Button>
-                              </div>
-                              {composer.attachments.length === 0 ? (
-                                <div className="text-xs text-muted-foreground">—</div>
-                              ) : (
-                                <ScrollArea className="h-[200px]">
-                                  <div className="space-y-2 pr-2">
-                                    {composer.attachments.map((a) => (
-                                      <div key={a.id} className="flex items-center justify-between gap-2 rounded-lg border bg-background px-3 py-2">
-                                        <div className="min-w-0 flex-1">
-                                          <div className="text-xs font-medium truncate">{a.path}</div>
-                                          <div className="text-[11px] text-muted-foreground mt-1">
-                                            <select
-                                              className="rounded-md border bg-background px-1 py-0.5 text-[10px]"
-                                              value={a.mode}
-                                              onChange={(e) => updateComposer({ attachments: composer.attachments.map((x) => (x.id === a.id ? { ...x, mode: e.target.value as any } : x)) })}
-                                            >
-                                              <option value="inline">inline</option>
-                                              <option value="tool">tool</option>
-                                            </select>
-                                          </div>
-                                        </div>
-                                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => updateComposer({ attachments: composer.attachments.filter((x) => x.id !== a.id) })}>
-                                          <X className="w-3 h-3" />
-                                        </Button>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </ScrollArea>
-                              )}
-                              <Button variant="outline" size="sm" className="w-full text-xs" onClick={() => void handlePickFiles()}>
-                                <Paperclip className="w-3.5 h-3.5 mr-2" />
-                                {t.composer.addFiles}
-                              </Button>
-                           </div>
-                        </PopoverContent>
-                      </Popover>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 rounded-full shrink-0 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0"
+                        onClick={() => void handlePickFiles()}
+                      >
+                        <Paperclip className="w-4 h-4" />
+                      </Button>
 
                       {/* Workspace */}
                       <Popover open={popoverPanel === 'workspace'} onOpenChange={(open) => handlePopoverOpenChange('workspace', open)}>
-                        <PopoverTrigger asChild onMouseEnter={() => handleMouseEnter('workspace')} onMouseLeave={handleMouseLeave}>
-                           <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full shrink-0 text-primary">
+                        <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('workspace')} onMouseLeave={handleInputPanelMouseLeave}>
+                           <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full shrink-0 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0">
                              <FolderOpen className="w-4 h-4" />
                            </Button>
                         </PopoverTrigger>
@@ -2165,8 +2277,8 @@ function AppLoaded(): JSX.Element {
 
                       {/* Tools */}
                       <Popover open={popoverPanel === 'tools'} onOpenChange={(open) => handlePopoverOpenChange('tools', open)}>
-                        <PopoverTrigger asChild onMouseEnter={() => handleMouseEnter('tools')} onMouseLeave={handleMouseLeave}>
-                           <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full shrink-0 text-primary">
+                        <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('tools')} onMouseLeave={handleInputPanelMouseLeave}>
+                           <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full shrink-0 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0">
                              <Wrench className="w-4 h-4" />
                            </Button>
                         </PopoverTrigger>
@@ -2221,8 +2333,8 @@ function AppLoaded(): JSX.Element {
 
                       {/* Skills */}
                       <Popover open={popoverPanel === 'skills'} onOpenChange={(open) => handlePopoverOpenChange('skills', open)}>
-                        <PopoverTrigger asChild onMouseEnter={() => handleMouseEnter('skills')} onMouseLeave={handleMouseLeave}>
-                           <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full shrink-0 text-primary">
+                        <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('skills')} onMouseLeave={handleInputPanelMouseLeave}>
+                           <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full shrink-0 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0">
                              <Sparkles className="w-4 h-4" />
                            </Button>
                         </PopoverTrigger>
@@ -2279,14 +2391,10 @@ function AppLoaded(): JSX.Element {
 
                       {/* Model Selector */}
                       <Popover open={popoverPanel === 'model'} onOpenChange={(open) => handlePopoverOpenChange('model', open)}>
-                        <PopoverTrigger asChild onMouseEnter={() => handleMouseEnter('model')} onMouseLeave={handleMouseLeave}>
-                           <Button variant="ghost" className="h-8 rounded-full gap-2 px-3 text-xs font-normal text-primary hover:text-foreground shrink min-w-0 max-w-[200px]">
+                        <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('model')} onMouseLeave={handleInputPanelMouseLeave}>
+                           <Button variant="ghost" className="h-8 rounded-full gap-2 px-3 text-xs font-normal text-primary hover:text-primary hover:bg-primary/15 shrink min-w-0 max-w-[200px] focus-visible:ring-0 focus-visible:ring-offset-0">
                               {effectiveProvider ? (
-                                <img
-                                  src={getProviderIconUrl(effectiveProvider)}
-                                  alt={String(effectiveProvider.name || '').trim() || 'Provider'}
-                                  className="w-3.5 h-3.5 shrink-0"
-                                />
+                                <MaskedIcon url={getProviderIconUrl(effectiveProvider)} className="w-3.5 h-3.5 shrink-0" />
                               ) : null}
                               <span className="truncate">{effectiveModel || 'Anima'}</span>
                               <ChevronDown className="w-3.5 h-3.5 opacity-50 shrink-0" />
@@ -2312,7 +2420,7 @@ function AppLoaded(): JSX.Element {
                                         <div key={p.id} className="space-y-2">
                                            <div className="flex items-center gap-2">
                                               <div className="w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold border bg-muted/50">
-                                                {iconUrl ? <img src={iconUrl} className="w-3.5 h-3.5" /> : String(p.name || p.id || '?')[0]}
+                                                {iconUrl ? <MaskedIcon url={iconUrl} className="w-3.5 h-3.5" /> : String(p.name || p.id || '?')[0]}
                                               </div>
                                               <span className="text-xs font-medium">{p.name}</span>
                                            </div>
@@ -2366,7 +2474,7 @@ function AppLoaded(): JSX.Element {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-8 w-8 rounded-full transition-colors text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10 cursor-default"
+                                className="h-8 w-8 rounded-full transition-colors text-muted-foreground hover:text-primary hover:bg-primary/15 cursor-default focus-visible:ring-0 focus-visible:ring-offset-0"
                               >
                                 <CircularProgress value={usageStats.percentage} />
                               </Button>
@@ -2387,7 +2495,7 @@ function AppLoaded(): JSX.Element {
                        <Button 
                          variant="ghost" 
                          size="icon" 
-                         className={`h-8 w-8 rounded-full transition-all duration-200 ${isRecording ? 'text-red-500 animate-pulse bg-red-500/10' : `text-primary hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10 ${isVoiceModelAvailable ? '' : 'opacity-50'}`}`}
+                         className={`h-8 w-8 rounded-full transition-all duration-200 focus-visible:ring-0 focus-visible:ring-offset-0 ${isRecording ? 'text-red-500 animate-pulse bg-red-500/10' : `text-primary hover:text-primary hover:bg-primary/15 ${isVoiceModelAvailable ? '' : 'opacity-50'}`}`}
                          onClick={() => {
                            if (!isRecording && !isVoiceModelAvailable) {
                              alert('请配置模型')
@@ -2403,7 +2511,7 @@ function AppLoaded(): JSX.Element {
                        <Button 
                          variant="ghost"
                          size="icon"
-                         className={`h-8 w-8 rounded-full transition-all duration-200 ${inputValue.trim() || isLoading ? '' : 'opacity-50'}`}
+                         className={`h-8 w-8 rounded-full transition-all duration-200 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0 ${inputValue.trim() || isLoading ? '' : 'opacity-50'}`}
                          onClick={isLoading ? handleStop : handleSend}
                          disabled={!inputValue.trim() && !isLoading}
                        >

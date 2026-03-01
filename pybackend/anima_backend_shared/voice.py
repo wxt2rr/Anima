@@ -493,26 +493,29 @@ def _start_download_task(model_id: str) -> str:
     return task_id
 
 
-def get_voice_pipeline(model_id: str):
+def get_voice_pipeline(model_id: str, device_hint: Optional[str] = None):
     key = str(model_id or "").strip()
     if not key:
         raise ValueError("voice model is not configured")
 
+    device_key = str(device_hint or os.environ.get("ANIMA_VOICE_DEVICE") or "cpu").strip().lower()
+    cache_key = key if not device_key else f"{key}::device={device_key}"
+
     is_builder = False
     with voice_pipeline_lock:
-        cached = voice_pipeline_cache.get(key)
+        cached = voice_pipeline_cache.get(cache_key)
         if cached is not None:
             return cached
-        event = voice_pipeline_events.get(key)
+        event = voice_pipeline_events.get(cache_key)
         if event is None:
             event = threading.Event()
-            voice_pipeline_events[key] = event
+            voice_pipeline_events[cache_key] = event
             is_builder = True
 
     if not is_builder:
         event.wait(timeout=300)
         with voice_pipeline_lock:
-            cached = voice_pipeline_cache.get(key)
+            cached = voice_pipeline_cache.get(cache_key)
             if cached is not None:
                 return cached
         raise RuntimeError("Failed to initialize voice pipeline")
@@ -521,7 +524,10 @@ def get_voice_pipeline(model_id: str):
         from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
         import torch
 
-        device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+        if device_key == "cpu":
+            device = torch.device("cpu")
+        else:
+            device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
         torch_dtype = torch.float16 if device.type == "mps" else torch.float32
 
         print(f"Loading Whisper model {key} on {device.type}...")
@@ -532,6 +538,12 @@ def get_voice_pipeline(model_id: str):
             low_cpu_mem_usage=False,
         )
         model.to(device)
+        try:
+            gc = getattr(model, "generation_config", None)
+            if gc is not None and getattr(gc, "forced_decoder_ids", None) is not None:
+                gc.forced_decoder_ids = None
+        except Exception:
+            pass
         pipe = pipeline(
             "automatic-speech-recognition",
             model=model,
@@ -541,11 +553,11 @@ def get_voice_pipeline(model_id: str):
         )
 
         with voice_pipeline_lock:
-            voice_pipeline_cache[key] = pipe
+            voice_pipeline_cache[cache_key] = pipe
         return pipe
     finally:
         with voice_pipeline_lock:
-            ev = voice_pipeline_events.pop(key, None)
+            ev = voice_pipeline_events.pop(cache_key, None)
         if ev is not None:
             ev.set()
 

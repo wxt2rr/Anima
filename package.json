@@ -1,16 +1,21 @@
 {
   "name": "anima",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "An elegant AI companion for macOS",
   "main": "out/main/index.js",
   "author": "Anima Team",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wxt2rr/Anima.git"
+  },
   "scripts": {
     "dev": "ANIMA_PYTHON=/Applications/Xcode.app/Contents/Developer/usr/bin/python3 electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "dist": "npm run build && electron-builder",
     "dist:mac": "npm run build && ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder --mac",
+    "dist:mac:publish": "npm run build && electron-builder --mac --publish always",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -42,7 +47,14 @@
       ],
       "icon": "build/icon.icns",
       "identity": null
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "wxt2rr",
+        "repo": "Anima"
+      }
+    ]
   },
   "dependencies": {
     "@pierre/diffs": "^1.0.4",
@@ -64,6 +76,7 @@
     "clsx": "^2.1.0",
     "cmdk": "^1.1.1",
     "date-fns": "^3.3.1",
+    "electron-updater": "^6.3.0",
     "electron-store": "^8.2.0",
     "framer-motion": "^11.0.8",
     "html-react-parser": "^5.2.11",

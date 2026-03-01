@@ -320,6 +320,127 @@ def handle_get_artifact_file(handler: Any) -> None:
         json_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(e)})
 
 
+def handle_get_attachment_file(handler: Any) -> None:
+    try:
+        q = getattr(handler, "query", None) or {}
+        raw_path = str(q.get("path") or "").strip()
+        if not raw_path:
+            json_response(handler, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "path is required"})
+            return
+
+        from anima_backend_shared.util import is_within, norm_abs
+
+        workspace_dir = str(q.get("workspaceDir") or "").strip()
+        if workspace_dir:
+            try:
+                workspace_dir = norm_abs(workspace_dir)
+            except Exception:
+                workspace_dir = ""
+
+        ap = ""
+        if os.path.isabs(raw_path):
+            try:
+                ap = norm_abs(raw_path)
+            except Exception:
+                ap = ""
+        else:
+            if not workspace_dir:
+                json_response(handler, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "workspaceDir is required for relative paths"})
+                return
+            try:
+                ap = norm_abs(str(Path(workspace_dir) / raw_path))
+            except Exception:
+                ap = ""
+            if not ap or not is_within(workspace_dir, ap):
+                json_response(handler, HTTPStatus.FORBIDDEN, {"ok": False, "error": "Path outside workspace"})
+                return
+
+        if not ap:
+            json_response(handler, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Invalid path"})
+            return
+        if not os.path.isfile(ap):
+            json_response(handler, HTTPStatus.NOT_FOUND, {"ok": False, "error": "File not found"})
+            return
+
+        total = 0
+        try:
+            total = int(os.path.getsize(ap))
+        except Exception:
+            total = 0
+        if total <= 0:
+            json_response(handler, HTTPStatus.NOT_FOUND, {"ok": False, "error": "Empty file"})
+            return
+
+        mime = mimetypes.guess_type(ap)[0] or "application/octet-stream"
+        if not str(mime).startswith("image/"):
+            json_response(handler, HTTPStatus.FORBIDDEN, {"ok": False, "error": "Only image/* is allowed"})
+            return
+
+        range_header = ""
+        try:
+            range_header = str(getattr(handler, "headers", None).get("Range") or "")
+        except Exception:
+            range_header = ""
+
+        start = 0
+        end = max(0, total - 1)
+        partial = False
+        if range_header.startswith("bytes=") and total > 0:
+            spec = range_header[len("bytes=") :].strip()
+            first = spec.split(",")[0].strip()
+            if "-" in first:
+                a, b = first.split("-", 1)
+                a = a.strip()
+                b = b.strip()
+                if a == "" and b:
+                    try:
+                        suffix = int(b)
+                        start = max(0, total - max(0, suffix))
+                        end = total - 1
+                        partial = True
+                    except Exception:
+                        partial = False
+                else:
+                    try:
+                        start = int(a) if a else 0
+                        end = int(b) if b else (total - 1)
+                        partial = True
+                    except Exception:
+                        partial = False
+
+        start = max(0, min(int(start), total - 1))
+        end = max(start, min(int(end), total - 1))
+        length = end - start + 1
+
+        if partial:
+            handler.send_response(HTTPStatus.PARTIAL_CONTENT)
+        else:
+            handler.send_response(HTTPStatus.OK)
+        handler.send_header("Access-Control-Allow-Origin", "*")
+        handler.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+        handler.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Range")
+        handler.send_header("Accept-Ranges", "bytes")
+        handler.send_header("Cache-Control", "no-store")
+        handler.send_header("Content-Type", mime)
+        if partial:
+            handler.send_header("Content-Range", f"bytes {start}-{end}/{total}")
+        handler.send_header("Content-Length", str(length if partial else total))
+        handler.end_headers()
+
+        with open(ap, "rb") as f:
+            if partial and start:
+                f.seek(start)
+            remaining = length if partial else total
+            while remaining > 0:
+                chunk = f.read(min(1024 * 64, remaining))
+                if not chunk:
+                    break
+                handler.wfile.write(chunk)
+                remaining -= len(chunk)
+    except Exception as e:
+        json_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(e)})
+
+
 def handle_post_providers_fetch_models(handler: Any) -> None:
     from anima_backend_shared.providers import fetch_provider_models
 

@@ -38,6 +38,8 @@ export interface Message {
     todoPlan?: TodoItem[]
     artifacts?: Artifact[]
     stage?: string
+    userAttachments?: { path: string }[]
+    userAttachmentsWorkspaceDir?: string
   }
 }
 

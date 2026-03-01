@@ -1,9 +1,10 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, globalShortcut, nativeImage, type OpenDialogOptions } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, globalShortcut, nativeImage, Menu, type MenuItemConstructorOptions, type OpenDialogOptions } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import * as net from 'net'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { autoUpdater } from 'electron-updater'
 import { registerFileService } from './services/fileService'
 import { registerGitService } from './services/gitService'
 import { registerTerminalService } from './services/terminalService'
@@ -11,6 +12,8 @@ import { registerTerminalService } from './services/terminalService'
 let mainWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
 let backendProcess: ChildProcessWithoutNullStreams | null = null
+let updatePromptOpen = false
+let interactiveUpdateCheck = false
 
 const BACKEND_HOST = '127.0.0.1'
 const DEFAULT_BACKEND_PORT = 17333
@@ -51,9 +54,14 @@ function startBackend(port: number): ChildProcessWithoutNullStreams {
     : join(app.getAppPath(), 'pybackend', 'server.py')
   const python = resolvePythonExecutable()
   const configRoot = process.env.ANIMA_CONFIG_ROOT || join(app.getPath('userData'), 'pybackend')
+  const extraEnv: Record<string, string> = { PYTHONUNBUFFERED: '1', ANIMA_CONFIG_ROOT: configRoot }
+  if (is.dev) {
+    if (!process.env.ANIMA_VOICE_DEBUG) extraEnv.ANIMA_VOICE_DEBUG = '1'
+    if (!process.env.ANIMA_TG_DEBUG) extraEnv.ANIMA_TG_DEBUG = '1'
+  }
   const child = spawn(python, [scriptPath, '--host', BACKEND_HOST, '--port', String(port)], {
     stdio: 'pipe',
-    env: { ...process.env, PYTHONUNBUFFERED: '1', ANIMA_CONFIG_ROOT: configRoot }
+    env: { ...process.env, ...extraEnv }
   })
   child.stdout.on('data', (buf) => {
     if (is.dev) process.stdout.write(buf)
@@ -275,6 +283,106 @@ function registerIpcHandlers(): void {
   })
 }
 
+function setupAppMenu(): void {
+  const checkForUpdatesItem: MenuItemConstructorOptions = {
+    label: 'Check for Updates…',
+    enabled: !is.dev,
+    click: () => {
+      interactiveUpdateCheck = true
+      void autoUpdater.checkForUpdates()
+    }
+  }
+
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: app.name,
+      submenu: [checkForUpdatesItem, { type: 'separator' }, { role: 'quit' }]
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' }
+      ]
+    },
+    {
+      label: 'Window',
+      submenu: [{ role: 'minimize' }, { role: 'zoom' }, { type: 'separator' }, { role: 'front' }]
+    }
+  ]
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
+function setupAutoUpdates(): void {
+  if (is.dev) return
+
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+
+  const getPromptWindow = () => {
+    const focused = BrowserWindow.getFocusedWindow()
+    if (focused && !focused.isDestroyed()) return focused
+    if (mainWindow && !mainWindow.isDestroyed()) return mainWindow
+    return null
+  }
+
+  const showMessageBox = async (options: Electron.MessageBoxOptions) => {
+    const win = getPromptWindow()
+    return win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options)
+  }
+
+  autoUpdater.on('error', async (err) => {
+    const msg = String((err as any)?.message || err || '').trim() || 'Unknown error'
+    if (!interactiveUpdateCheck) return
+    interactiveUpdateCheck = false
+    await showMessageBox({ type: 'error', message: 'Update failed', detail: msg })
+  })
+
+  autoUpdater.on('update-available', async (info) => {
+    if (!interactiveUpdateCheck) return
+    interactiveUpdateCheck = false
+    await showMessageBox({
+      type: 'info',
+      message: `Update ${info.version} is available`,
+      detail: 'Downloading in the background…'
+    })
+  })
+
+  autoUpdater.on('update-not-available', async () => {
+    if (!interactiveUpdateCheck) return
+    interactiveUpdateCheck = false
+    await showMessageBox({ type: 'info', message: 'You are up to date' })
+  })
+
+  autoUpdater.on('update-downloaded', async (info) => {
+    if (updatePromptOpen) return
+    updatePromptOpen = true
+    try {
+      const res = await showMessageBox({
+        type: 'info',
+        message: `Update ${info.version} has been downloaded`,
+        detail: 'Restart the app to apply the update.',
+        buttons: ['Restart', 'Later'],
+        defaultId: 0,
+        cancelId: 1
+      })
+      if (res.response === 0) {
+        autoUpdater.quitAndInstall()
+      }
+    } finally {
+      updatePromptOpen = false
+    }
+  })
+
+  void autoUpdater.checkForUpdates()
+}
+
 async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
     width: 1000,
@@ -336,6 +444,7 @@ app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.anima.app')
   registerIpcHandlers()
   trySetDockIcon()
+  setupAppMenu()
 
   backendPort = await findAvailableBackendPort()
   backendBaseUrl = `http://${BACKEND_HOST}:${backendPort}`
@@ -347,6 +456,7 @@ app.whenReady().then(async () => {
   })
 
   await createWindow()
+  setupAutoUpdates()
 
   const shortcut = process.env.ANIMA_DEVTOOLS_SHORTCUT || 'CommandOrControl+Alt+I'
   globalShortcut.register(shortcut, toggleDevTools)

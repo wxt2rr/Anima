@@ -22,6 +22,7 @@ from .runs import (
 )
 from .runs_stream import handle_post_runs_stream
 from .settings_tools import (
+    handle_get_attachment_file,
     handle_get_artifact_file,
     handle_get_settings,
     handle_get_skills_list,
@@ -127,6 +128,9 @@ def dispatch(handler: Any, method: str, path: str) -> bool:
 
     if m == "GET" and path == "/api/artifacts/file":
         handle_get_artifact_file(handler)
+        return True
+    if m == "GET" and path == "/api/attachments/file":
+        handle_get_attachment_file(handler)
         return True
 
     if m == "POST" and path == "/api/artifacts/cleanup":
