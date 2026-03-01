@@ -15,6 +15,7 @@ import { THEMES } from './lib/themes'
 import { SettingsDialog, SettingsWindow } from './components/SettingsDialog'
 import { ChatHistoryPanel } from './components/ChatHistoryPanel'
 import { InputAnimation } from './components/InputAnimation'
+import { UpdateDialog } from './components/UpdateDialog'
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -23,6 +24,7 @@ import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { RightSidebar } from './components/sidebar/RightSidebar'
+import { useUpdateStore } from './store/useUpdateStore'
 
 type BackendUsage = {
   prompt_tokens?: number
@@ -282,6 +284,26 @@ function AppLoaded(): JSX.Element {
   useEffect(() => {
     void initApp()
   }, [initApp])
+
+  const setUpdateState = useUpdateStore((s) => s.setState)
+
+  useEffect(() => {
+    const api = window.anima?.update
+    if (!api?.getState || !api?.onState) return
+    void api
+      .getState()
+      .then((res: any) => {
+        if (res && res.ok && res.state) setUpdateState(res.state)
+      })
+      .catch(() => {})
+
+    const unsub = api.onState((state: any) => {
+      if (state) setUpdateState(state)
+    })
+    return () => {
+      if (typeof unsub === 'function') unsub()
+    }
+  }, [setUpdateState])
 
   const activeProvider = getActiveProvider()
   const isSettingsWindow = typeof window !== 'undefined' && window.location.hash.startsWith('#/settings')
@@ -1523,6 +1545,7 @@ function AppLoaded(): JSX.Element {
       <div className="draggable absolute inset-x-0 top-0 h-2" />
       <div className={`flex h-full w-full overflow-hidden p-2 ${ui.sidebarCollapsed ? 'gap-0' : 'gap-2'}`}>
         <SettingsDialog />
+        <UpdateDialog />
 
         {isSettingsWindow ? (
           <SettingsWindow />

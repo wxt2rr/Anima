@@ -1,6 +1,7 @@
-import { Search, Trash2, SquarePen, PanelLeftClose, MoreHorizontal, MessageSquare, Settings } from 'lucide-react'
+import { Search, Trash2, SquarePen, PanelLeftClose, MoreHorizontal, MessageSquare, Settings, RefreshCcw } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, memo } from 'react'
 import { useStore } from '../store/useStore'
+import { useUpdateStore } from '../store/useUpdateStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
@@ -31,6 +32,8 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const closeTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const updateState = useUpdateStore((s) => s.state)
+  const setUpdateDialogOpen = useUpdateStore((s) => s.setDialogOpen)
 
   const handleMouseEnter = () => {
     if (closeTimerRef.current) {
@@ -94,6 +97,11 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
     if (!q) return chats
     return chats.filter((c) => (c.title || '').toLowerCase().includes(q))
   }, [chats, ui.sidebarSearchQuery])
+
+  const showUpdateEntry = useMemo(() => {
+    const st = updateState?.status
+    return st === 'available' || st === 'downloading' || st === 'downloaded'
+  }, [updateState?.status])
 
   return (
     <Card
@@ -238,6 +246,17 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
             </PopoverContent>
           </Popover>
 
+          {showUpdateEntry ? (
+            <button
+              className="flex items-center gap-2 px-2.5 py-1.5 rounded-full bg-black/5 dark:bg-white/10 hover:bg-black/10 dark:hover:bg-white/15 transition-colors text-xs text-foreground"
+              onClick={() => setUpdateDialogOpen(true)}
+            >
+              <RefreshCcw className="w-3.5 h-3.5 text-primary" />
+              <span>更新</span>
+            </button>
+          ) : (
+            <span />
+          )}
         </div>
       )}
     </Card>

@@ -49,6 +49,18 @@ const animaAPI = {
       return () => ipcRenderer.removeListener(channel, subscription)
     }
   },
+  update: {
+    getState: () => ipcRenderer.invoke('anima:update:getState'),
+    check: (opts?: { interactive?: boolean }) => ipcRenderer.invoke('anima:update:check', opts),
+    download: () => ipcRenderer.invoke('anima:update:download'),
+    quitAndInstall: () => ipcRenderer.invoke('anima:update:quitAndInstall'),
+    onState: (callback: (state: any) => void) => {
+      const channel = 'anima:update:state'
+      const subscription = (_: any, state: any) => callback(state)
+      ipcRenderer.on(channel, subscription)
+      return () => ipcRenderer.removeListener(channel, subscription)
+    }
+  },
   shell: {
     openPath: (path: string) => ipcRenderer.invoke('anima:shell:openPath', path)
   }

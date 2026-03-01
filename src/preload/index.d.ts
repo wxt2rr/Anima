@@ -28,6 +28,13 @@ declare global {
         kill: (id: string) => void
         onData: (id: string, callback: (data: string) => void) => () => void
       }
+      update: {
+        getState: () => Promise<{ ok: boolean; state: any }>
+        check: (opts?: { interactive?: boolean }) => Promise<{ ok: boolean; updateInfo?: any; error?: string }>
+        download: () => Promise<{ ok: boolean; error?: string }>
+        quitAndInstall: () => Promise<{ ok: boolean; error?: string }>
+        onState: (callback: (state: any) => void) => () => void
+      }
       shell: {
         openPath: (path: string) => Promise<{ ok: boolean; error?: string }>
       }

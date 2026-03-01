@@ -12,8 +12,23 @@ import { registerTerminalService } from './services/terminalService'
 let mainWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
 let backendProcess: ChildProcessWithoutNullStreams | null = null
-let updatePromptOpen = false
-let interactiveUpdateCheck = false
+
+type UpdateStatus = 'disabled' | 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
+type UpdateProgress = { percent?: number; bytesPerSecond?: number; transferred?: number; total?: number }
+type UpdateState = {
+  status: UpdateStatus
+  currentVersion: string
+  availableVersion?: string
+  releaseNotes?: string
+  progress?: UpdateProgress
+  error?: string
+  lastCheckedAt?: number
+}
+
+let updateState: UpdateState = {
+  status: is.dev ? 'disabled' : 'idle',
+  currentVersion: app.getVersion()
+}
 
 const BACKEND_HOST = '127.0.0.1'
 const DEFAULT_BACKEND_PORT = 17333
@@ -123,6 +138,36 @@ function toggleDevTools(): void {
   } else {
     win.webContents.openDevTools({ mode: 'detach' })
   }
+}
+
+function normalizeReleaseNotes(notes: any): string | undefined {
+  if (!notes) return undefined
+  if (typeof notes === 'string') return notes.trim() || undefined
+  if (Array.isArray(notes)) {
+    const lines = notes
+      .map((n) => {
+        if (!n) return ''
+        if (typeof n === 'string') return n.trim()
+        const v = String((n as any).note || (n as any).notes || (n as any).body || '').trim()
+        return v
+      })
+      .filter(Boolean)
+    const joined = lines.join('\n\n').trim()
+    return joined || undefined
+  }
+  return undefined
+}
+
+function broadcastUpdateState(): void {
+  const wins = [mainWindow, settingsWindow].filter((w): w is BrowserWindow => Boolean(w && !w.isDestroyed()))
+  for (const w of wins) {
+    if (!w.webContents.isDestroyed()) w.webContents.send('anima:update:state', updateState)
+  }
+}
+
+function setUpdateState(patch: Partial<UpdateState>): void {
+  updateState = { ...updateState, ...patch }
+  broadcastUpdateState()
 }
 
 function trySetDockIcon(): void {
@@ -262,6 +307,46 @@ function registerIpcHandlers(): void {
     return { ok: true, canceled: res.canceled, path }
   })
 
+  ipcMain.handle('anima:update:getState', async () => {
+    return { ok: true, state: updateState }
+  })
+
+  ipcMain.handle('anima:update:check', async (_evt, opts?: { interactive?: boolean }) => {
+    if (is.dev) return { ok: false, error: 'updates disabled in dev' }
+    setUpdateState({ status: 'checking', error: undefined, lastCheckedAt: Date.now() })
+    try {
+      const res = await autoUpdater.checkForUpdates()
+      return { ok: true, updateInfo: res?.updateInfo || null }
+    } catch (e: any) {
+      const msg = String(e?.message || e || '').trim() || 'Unknown error'
+      setUpdateState({ status: 'error', error: msg })
+      return { ok: false, error: msg }
+    }
+  })
+
+  ipcMain.handle('anima:update:download', async () => {
+    if (is.dev) return { ok: false, error: 'updates disabled in dev' }
+    try {
+      await autoUpdater.downloadUpdate()
+      return { ok: true }
+    } catch (e: any) {
+      const msg = String(e?.message || e || '').trim() || 'Unknown error'
+      setUpdateState({ status: 'error', error: msg })
+      return { ok: false, error: msg }
+    }
+  })
+
+  ipcMain.handle('anima:update:quitAndInstall', async () => {
+    if (is.dev) return { ok: false, error: 'updates disabled in dev' }
+    try {
+      autoUpdater.quitAndInstall()
+      return { ok: true }
+    } catch (e: any) {
+      const msg = String(e?.message || e || '').trim() || 'Unknown error'
+      return { ok: false, error: msg }
+    }
+  })
+
   // Window Controls
   ipcMain.on('window:minimize', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
@@ -288,7 +373,6 @@ function setupAppMenu(): void {
     label: 'Check for Updates…',
     enabled: !is.dev,
     click: () => {
-      interactiveUpdateCheck = true
       void autoUpdater.checkForUpdates()
     }
   }
@@ -322,62 +406,46 @@ function setupAppMenu(): void {
 function setupAutoUpdates(): void {
   if (is.dev) return
 
-  autoUpdater.autoDownload = true
+  autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = true
-
-  const getPromptWindow = () => {
-    const focused = BrowserWindow.getFocusedWindow()
-    if (focused && !focused.isDestroyed()) return focused
-    if (mainWindow && !mainWindow.isDestroyed()) return mainWindow
-    return null
-  }
-
-  const showMessageBox = async (options: Electron.MessageBoxOptions) => {
-    const win = getPromptWindow()
-    return win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options)
-  }
 
   autoUpdater.on('error', async (err) => {
     const msg = String((err as any)?.message || err || '').trim() || 'Unknown error'
-    if (!interactiveUpdateCheck) return
-    interactiveUpdateCheck = false
-    await showMessageBox({ type: 'error', message: 'Update failed', detail: msg })
+    setUpdateState({ status: 'error', error: msg })
   })
 
-  autoUpdater.on('update-available', async (info) => {
-    if (!interactiveUpdateCheck) return
-    interactiveUpdateCheck = false
-    await showMessageBox({
-      type: 'info',
-      message: `Update ${info.version} is available`,
-      detail: 'Downloading in the background…'
+  autoUpdater.on('checking-for-update', () => {
+    setUpdateState({ status: 'checking', error: undefined, lastCheckedAt: Date.now() })
+  })
+
+  autoUpdater.on('update-available', (info) => {
+    setUpdateState({
+      status: 'available',
+      availableVersion: String((info as any)?.version || '').trim() || undefined,
+      releaseNotes: normalizeReleaseNotes((info as any)?.releaseNotes),
+      progress: undefined,
+      error: undefined
     })
   })
 
-  autoUpdater.on('update-not-available', async () => {
-    if (!interactiveUpdateCheck) return
-    interactiveUpdateCheck = false
-    await showMessageBox({ type: 'info', message: 'You are up to date' })
+  autoUpdater.on('update-not-available', () => {
+    setUpdateState({ status: 'not-available', availableVersion: undefined, releaseNotes: undefined, progress: undefined, error: undefined })
   })
 
-  autoUpdater.on('update-downloaded', async (info) => {
-    if (updatePromptOpen) return
-    updatePromptOpen = true
-    try {
-      const res = await showMessageBox({
-        type: 'info',
-        message: `Update ${info.version} has been downloaded`,
-        detail: 'Restart the app to apply the update.',
-        buttons: ['Restart', 'Later'],
-        defaultId: 0,
-        cancelId: 1
-      })
-      if (res.response === 0) {
-        autoUpdater.quitAndInstall()
+  autoUpdater.on('download-progress', (p: any) => {
+    setUpdateState({
+      status: 'downloading',
+      progress: {
+        percent: typeof p?.percent === 'number' ? p.percent : undefined,
+        bytesPerSecond: typeof p?.bytesPerSecond === 'number' ? p.bytesPerSecond : undefined,
+        transferred: typeof p?.transferred === 'number' ? p.transferred : undefined,
+        total: typeof p?.total === 'number' ? p.total : undefined
       }
-    } finally {
-      updatePromptOpen = false
-    }
+    })
+  })
+
+  autoUpdater.on('update-downloaded', () => {
+    setUpdateState({ status: 'downloaded', progress: { percent: 100 } })
   })
 
   void autoUpdater.checkForUpdates()
