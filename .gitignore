@@ -14,8 +14,9 @@ pnpm-debug.log*
 # Electron / Build Output
 dist/
 out/
-build/*
+build/**
 !build/icon.icns
+!build/icon.iconset/
 !build/icon.iconset/**
 release/
 
