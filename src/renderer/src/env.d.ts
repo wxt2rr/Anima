@@ -6,6 +6,9 @@ declare global {
   interface Window {
     electron: ElectronAPI
     anima: {
+      app: {
+        getInfo: () => Promise<{ ok: boolean; name?: string; version?: string; author?: string; repositoryUrl?: string; error?: string }>
+      }
       backend: {
         getBaseUrl: () => Promise<{ ok: boolean; baseUrl: string }>
       }

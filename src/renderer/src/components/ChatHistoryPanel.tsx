@@ -100,7 +100,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
 
   const showUpdateEntry = useMemo(() => {
     const st = updateState?.status
-    return st === 'available' || st === 'downloading' || st === 'downloaded'
+    return st === 'available' || st === 'downloading' || st === 'downloaded' || st === 'error'
   }, [updateState?.status])
 
   return (

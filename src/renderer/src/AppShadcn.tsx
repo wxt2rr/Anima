@@ -305,6 +305,15 @@ function AppLoaded(): JSX.Element {
     }
   }, [setUpdateState])
 
+  useEffect(() => {
+    const api = window.anima?.update
+    if (!api?.check) return
+    const t = setTimeout(() => {
+      void api.check({ interactive: false })
+    }, 1500)
+    return () => clearTimeout(t)
+  }, [])
+
   const activeProvider = getActiveProvider()
   const isSettingsWindow = typeof window !== 'undefined' && window.location.hash.startsWith('#/settings')
 

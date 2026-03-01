@@ -570,7 +570,14 @@ def _convert_audio_to_wav_if_needed(src_path: str) -> Tuple[str, bool]:
     if ext in [".wav", ".flac", ".mp3", ".m4a"]:
         return p, False
 
-    ffmpeg = shutil.which("ffmpeg")
+    ffmpeg = None
+    for k in ("ANIMA_FFMPEG", "FFMPEG_BINARY", "IMAGEIO_FFMPEG_EXE"):
+        v = str(os.environ.get(k) or "").strip()
+        if v and os.path.exists(v):
+            ffmpeg = v
+            break
+    if not ffmpeg:
+        ffmpeg = shutil.which("ffmpeg")
     if ext == ".ogg" and not ffmpeg:
         return p, False
     if not ffmpeg:

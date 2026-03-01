@@ -2,6 +2,9 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
 const animaAPI = {
+  app: {
+    getInfo: () => ipcRenderer.invoke('anima:app:getInfo')
+  },
   backend: {
     getBaseUrl: () => ipcRenderer.invoke('anima:backend:getBaseUrl')
   },

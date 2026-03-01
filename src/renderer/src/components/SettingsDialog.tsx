@@ -1,7 +1,7 @@
 import { 
   Settings, MessageSquare, Database, Globe, 
   Cpu, Search, Plus, Trash2, CheckCircle2, XCircle, RefreshCw,
-  Copy, ChevronDown, ChevronRight, Eye, EyeOff, ExternalLink, Wand2, FolderOpen, Sparkles, Mic
+  Copy, ChevronDown, ChevronRight, Eye, EyeOff, ExternalLink, Wand2, FolderOpen, Sparkles, Mic, Info
 } from 'lucide-react'
 import { resolveBackendBaseUrl, useStore, type Provider, type ProviderModel, type VoiceModelEntry } from '../store/useStore'
 import { THEMES, ThemeColor } from '../lib/themes'
@@ -17,6 +17,8 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from '@/components/ui/textarea'
 import { Slider } from '@/components/ui/slider'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { UpdateDialog } from './UpdateDialog'
+import { useUpdateStore } from '../store/useUpdateStore'
 
 const EMPTY_PROVIDERS: Provider[] = []
 
@@ -634,7 +636,8 @@ export const SettingsDialog = memo(function SettingsDialog() {
           skills: 'Skills',
           network: 'Network',
           data: 'Data',
-          voice: 'Voice'
+          voice: 'Voice',
+          about: 'About'
         },
         voice: {
           title: 'Voice',
@@ -735,7 +738,8 @@ export const SettingsDialog = memo(function SettingsDialog() {
           skills: '技能',
           network: '网络',
           data: '数据',
-          voice: '语音'
+          voice: '语音',
+          about: '关于'
         },
         providers: {
           search: '搜索提供商…',
@@ -836,7 +840,8 @@ export const SettingsDialog = memo(function SettingsDialog() {
           skills: 'スキル',
           network: 'ネットワーク',
           data: 'データ',
-          voice: '音声'
+          voice: '音声',
+          about: '情報'
         },
         providers: {
           search: 'プロバイダー検索…',
@@ -937,6 +942,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
     { id: 'network', label: t.tabs.network, icon: Globe },
     { id: 'data', label: t.tabs.data, icon: Database },
     { id: 'voice', label: t.tabs.voice, icon: Mic },
+    { id: 'about', label: t.tabs.about, icon: Info },
   ]
 
   return (
@@ -993,6 +999,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
             {activeTab === 'network' && <NetworkSettings />}
             {activeTab === 'data' && <DataSettings />}
             {activeTab === 'voice' && <VoiceSettings t={t} />}
+            {activeTab === 'about' && <AboutSettings />}
           </div>
           
           <div className="h-16 px-8 border-t border-border bg-[#F5F7FA] flex justify-between items-center text-xs text-muted-foreground">
@@ -1021,7 +1028,6 @@ export const SettingsWindow = memo(function SettingsWindow() {
   const activeTab = useStore(s => s.activeTab)
   const setActiveTab = useStore(s => s.setActiveTab)
   const settings = useStore(s => s.settings)
-  if (!settings) return null
 
   const t = (() => {
     const dict = {
@@ -1035,7 +1041,8 @@ export const SettingsWindow = memo(function SettingsWindow() {
           skills: 'Skills',
           network: 'Network',
           data: 'Data',
-          voice: 'Voice'
+          voice: 'Voice',
+          about: 'About'
         },
         savedHint: 'All changes are saved automatically.',
         footer: { close: 'Close', save: 'Save' },
@@ -1064,7 +1071,8 @@ export const SettingsWindow = memo(function SettingsWindow() {
           skills: '技能',
           network: '网络',
           data: '数据',
-          voice: '语音'
+          voice: '语音',
+          about: '关于'
         },
         savedHint: '所有更改会自动保存。',
         footer: { close: '关闭', save: '保存' },
@@ -1093,7 +1101,8 @@ export const SettingsWindow = memo(function SettingsWindow() {
           skills: 'スキル',
           network: 'ネットワーク',
           data: 'データ',
-          voice: '音声'
+          voice: '音声',
+          about: '情報'
         },
         savedHint: '変更は自動的に保存されます。',
         footer: { close: '閉じる', save: '保存' },
@@ -1113,8 +1122,41 @@ export const SettingsWindow = memo(function SettingsWindow() {
         }
       }
     } as const
-    return dict[settings.language as keyof typeof dict] || dict.en
+    const lang = (settings?.language || 'en') as keyof typeof dict
+    return dict[lang] || dict.en
   })()
+
+  const setUpdateState = useUpdateStore((s) => s.setState)
+  const setUpdateDialogOpen = useUpdateStore((s) => s.setDialogOpen)
+
+  useEffect(() => {
+    const api = window.anima?.update
+    if (!api?.getState || !api?.onState) return
+    void api
+      .getState()
+      .then((res: any) => {
+        if (res && res.ok && res.state) setUpdateState(res.state)
+      })
+      .catch(() => {})
+
+    const unsub = api.onState((state: any) => {
+      if (state) setUpdateState(state)
+    })
+    return () => {
+      if (typeof unsub === 'function') unsub()
+    }
+  }, [setUpdateState])
+
+  useEffect(() => {
+    const api = window.anima?.update
+    if (!api?.check) return
+    const t = setTimeout(() => {
+      void api.check({ interactive: false })
+    }, 1500)
+    return () => clearTimeout(t)
+  }, [])
+
+  if (!settings) return null
 
   const tabs = [
     { id: 'general', label: t.tabs.general, icon: Settings },
@@ -1125,7 +1167,8 @@ export const SettingsWindow = memo(function SettingsWindow() {
     { id: 'skills', label: t.tabs.skills, icon: Wand2 },
     { id: 'network', label: t.tabs.network, icon: Globe },
     { id: 'data', label: t.tabs.data, icon: Database },
-    { id: 'voice', label: t.tabs.voice, icon: Mic }
+    { id: 'voice', label: t.tabs.voice, icon: Mic },
+    { id: 'about', label: t.tabs.about, icon: Info }
   ]
 
   const onClose = () => window.close()
@@ -1133,6 +1176,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
   return (
     <div className="flex h-screen w-full bg-secondary/30 dark:bg-black/40 text-foreground transition-colors duration-300 overflow-hidden p-3 gap-3 font-sans relative">
       <div className="draggable absolute inset-x-0 top-0 h-3" />
+      <UpdateDialog />
       <div className="w-64 bg-background rounded-2xl shadow-sm flex flex-col overflow-hidden shrink-0">
         <div className="h-[52px] flex items-center shrink-0 draggable select-none pl-[80px] border-b border-black/5 dark:border-white/5">
         </div>
@@ -1176,6 +1220,12 @@ export const SettingsWindow = memo(function SettingsWindow() {
           {activeTab === 'network' && <NetworkSettings />}
           {activeTab === 'data' && <DataSettings />}
           {activeTab === 'voice' && <VoiceSettings t={t} />}
+          {activeTab === 'about' && <AboutSettings onCheckUpdate={() => {
+            const api = window.anima?.update
+            if (!api?.check) return
+            setUpdateDialogOpen(true)
+            void api.check({ interactive: true })
+          }} />}
         </div>
 
         <div className="h-14 px-6 border-t border-black/5 dark:border-white/5 bg-secondary/10 flex justify-between items-center text-xs text-muted-foreground shrink-0">
@@ -1198,6 +1248,171 @@ export const SettingsWindow = memo(function SettingsWindow() {
     </div>
   )
 })
+
+function AboutSettings({ onCheckUpdate }: { onCheckUpdate?: () => void }) {
+  const settings = useStore(s => s.settings)
+  const updateState = useUpdateStore((s) => s.state)
+  const setUpdateDialogOpen = useUpdateStore((s) => s.setDialogOpen)
+  const [info, setInfo] = useState<{ name?: string; version?: string; author?: string; repositoryUrl?: string }>({})
+  const language = (settings?.language || 'en') as 'en' | 'zh' | 'ja'
+
+  const t = useMemo(() => {
+    const dict = {
+      en: {
+        name: 'Name',
+        version: 'Version',
+        author: 'Author',
+        github: 'GitHub',
+        open: 'Open',
+        checkUpdate: 'Check for updates',
+        status: {
+          disabled: 'Updates are disabled in dev.',
+          idle: 'Ready.',
+          checking: 'Checking for updates…',
+          available: 'Update available.',
+          notAvailable: 'You are up to date.',
+          downloading: 'Downloading…',
+          downloaded: 'Downloaded. Ready to install.',
+          error: 'Update error.'
+        }
+      },
+      zh: {
+        name: '名称',
+        version: '版本号',
+        author: '作者',
+        github: 'GitHub',
+        open: '打开',
+        checkUpdate: '检查更新',
+        status: {
+          disabled: '开发环境不支持自动更新。',
+          idle: '准备就绪。',
+          checking: '正在检查更新…',
+          available: '发现新版本可用。',
+          notAvailable: '当前已是最新版本。',
+          downloading: '正在下载…',
+          downloaded: '下载完成，准备安装。',
+          error: '更新失败。'
+        }
+      },
+      ja: {
+        name: '名称',
+        version: 'バージョン',
+        author: '作者',
+        github: 'GitHub',
+        open: '開く',
+        checkUpdate: '更新を確認',
+        status: {
+          disabled: '開発環境では更新が無効です。',
+          idle: '準備完了。',
+          checking: '更新を確認中…',
+          available: '新しいバージョンがあります。',
+          notAvailable: '最新です。',
+          downloading: 'ダウンロード中…',
+          downloaded: 'ダウンロード完了。',
+          error: '更新エラー。'
+        }
+      }
+    } as const
+    return dict[language] || dict.en
+  }, [language])
+
+  useEffect(() => {
+    const api = window.anima?.app
+    if (!api?.getInfo) return
+    void api
+      .getInfo()
+      .then((res: any) => {
+        if (res?.ok) {
+          setInfo({
+            name: res.name,
+            version: res.version,
+            author: res.author,
+            repositoryUrl: res.repositoryUrl
+          })
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  const version = info.version || updateState?.currentVersion || ''
+  const author = info.author || 'wangxt'
+  const repoUrl = info.repositoryUrl || 'https://github.com/wxt2rr/Anima'
+  const status = updateState?.status || 'idle'
+  const percent = updateState?.progress?.percent
+
+  const statusText = (() => {
+    if (status === 'disabled') return t.status.disabled
+    if (status === 'checking') return t.status.checking
+    if (status === 'available') return t.status.available
+    if (status === 'not-available') return t.status.notAvailable
+    if (status === 'downloading') return `${t.status.downloading}${typeof percent === 'number' ? ` ${Math.max(0, Math.min(100, percent)).toFixed(0)}%` : ''}`
+    if (status === 'downloaded') return t.status.downloaded
+    if (status === 'error') return `${t.status.error}${updateState?.error ? ` ${String(updateState.error)}` : ''}`
+    return t.status.idle
+  })()
+
+  const openExternal = async (url: string) => {
+    const target = String(url || '').trim()
+    if (!target) return
+    if (window.anima?.preview?.openExternal) {
+      await window.anima.preview.openExternal(target)
+      return
+    }
+    window.open(target)
+  }
+
+  const handleCheckUpdate = () => {
+    if (onCheckUpdate) {
+      onCheckUpdate()
+      return
+    }
+    const api = window.anima?.update
+    if (!api?.check) return
+    setUpdateDialogOpen(true)
+    void api.check({ interactive: true })
+  }
+
+  return (
+    <div className="p-6 space-y-6">
+      <Card>
+        <CardContent className="pt-6 space-y-4">
+          <div className="grid grid-cols-[120px_1fr] gap-y-3 gap-x-4 items-center">
+            <div className="text-sm text-muted-foreground">{t.name}</div>
+            <div className="text-sm font-medium">{info.name || 'Anima'}</div>
+
+            <div className="text-sm text-muted-foreground">{t.version}</div>
+            <div className="text-sm font-mono">{version || '--'}</div>
+
+            <div className="text-sm text-muted-foreground">{t.author}</div>
+            <div className="text-sm">{author}</div>
+
+            <div className="text-sm text-muted-foreground">{t.github}</div>
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="text-sm font-mono truncate">{repoUrl}</div>
+              <Button variant="outline" size="sm" onClick={() => void openExternal(repoUrl)}>
+                {t.open}
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="pt-6 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm text-muted-foreground">{statusText}</div>
+            <Button
+              onClick={handleCheckUpdate}
+              disabled={status === 'disabled' || status === 'checking' || status === 'downloading'}
+            >
+              {t.checkUpdate}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
 
 function ProvidersSettings() {
   const { providers: providers0, toggleProvider, updateProvider } = useStore()

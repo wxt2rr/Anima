@@ -74,6 +74,21 @@ function startBackend(port: number): ChildProcessWithoutNullStreams {
     if (!process.env.ANIMA_VOICE_DEBUG) extraEnv.ANIMA_VOICE_DEBUG = '1'
     if (!process.env.ANIMA_TG_DEBUG) extraEnv.ANIMA_TG_DEBUG = '1'
   }
+
+  const homeDir = app.getPath('home')
+  const extraPaths = [
+    '/opt/anaconda3/bin',
+    '/usr/local/anaconda3/bin',
+    join(homeDir, 'anaconda3', 'bin'),
+    join(homeDir, 'miniconda3', 'bin'),
+    join(homeDir, 'miniforge3', 'bin')
+  ]
+  const defaultPath = '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin'
+  const inheritedPath = String(process.env.PATH || '').trim()
+  const pathParts = inheritedPath ? inheritedPath.split(':').filter(Boolean) : []
+  const merged = Array.from(new Set([...extraPaths, ...defaultPath.split(':'), ...pathParts])).filter(Boolean).join(':')
+  extraEnv.PATH = merged
+
   const child = spawn(python, [scriptPath, '--host', BACKEND_HOST, '--port', String(port)], {
     stdio: 'pipe',
     env: { ...process.env, ...extraEnv }
@@ -194,6 +209,16 @@ function registerIpcHandlers(): void {
   registerFileService()
   registerGitService()
   registerTerminalService()
+
+  ipcMain.handle('anima:app:getInfo', async () => {
+    return {
+      ok: true,
+      name: app.getName(),
+      version: app.getVersion(),
+      author: 'wangxt',
+      repositoryUrl: 'https://github.com/wxt2rr/Anima'
+    }
+  })
 
   ipcMain.handle('anima:backend:getBaseUrl', async () => {
     return { ok: true, baseUrl: backendBaseUrl }
@@ -448,7 +473,10 @@ function setupAutoUpdates(): void {
     setUpdateState({ status: 'downloaded', progress: { percent: 100 } })
   })
 
-  void autoUpdater.checkForUpdates()
+  void autoUpdater.checkForUpdates().catch((e: any) => {
+    const msg = String(e?.message || e || '').trim() || 'Unknown error'
+    setUpdateState({ status: 'error', error: msg })
+  })
 }
 
 async function createWindow(): Promise<void> {
