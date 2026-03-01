@@ -51,16 +51,6 @@ export function UpdateDialog() {
           ? t.error
           : ''
 
-  const handleCheck = async () => {
-    if (!window.anima?.update?.check) return
-    setActionLoading(true)
-    try {
-      await window.anima.update.check({ interactive: true })
-    } finally {
-      setActionLoading(false)
-    }
-  }
-
   const handleDownload = async () => {
     if (!window.anima?.update?.download) return
     setActionLoading(true)
@@ -139,11 +129,7 @@ export function UpdateDialog() {
         ) : null}
 
         <DialogFooter className="mt-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={handleCheck} disabled={actionLoading || status === 'disabled'}>
-              检查更新
-            </Button>
-          </div>
+          <span />
 
           <div className="flex items-center gap-2">
             {status === 'downloaded' ? (
@@ -182,4 +168,3 @@ export function UpdateDialog() {
     </Dialog>
   )
 }
-

@@ -1127,7 +1127,6 @@ export const SettingsWindow = memo(function SettingsWindow() {
   })()
 
   const setUpdateState = useUpdateStore((s) => s.setState)
-  const setUpdateDialogOpen = useUpdateStore((s) => s.setDialogOpen)
 
   useEffect(() => {
     const api = window.anima?.update
@@ -1220,12 +1219,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           {activeTab === 'network' && <NetworkSettings />}
           {activeTab === 'data' && <DataSettings />}
           {activeTab === 'voice' && <VoiceSettings t={t} />}
-          {activeTab === 'about' && <AboutSettings onCheckUpdate={() => {
-            const api = window.anima?.update
-            if (!api?.check) return
-            setUpdateDialogOpen(true)
-            void api.check({ interactive: true })
-          }} />}
+          {activeTab === 'about' && <AboutSettings />}
         </div>
 
         <div className="h-14 px-6 border-t border-black/5 dark:border-white/5 bg-secondary/10 flex justify-between items-center text-xs text-muted-foreground shrink-0">
@@ -1249,7 +1243,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
   )
 })
 
-function AboutSettings({ onCheckUpdate }: { onCheckUpdate?: () => void }) {
+function AboutSettings() {
   const settings = useStore(s => s.settings)
   const updateState = useUpdateStore((s) => s.state)
   const setUpdateDialogOpen = useUpdateStore((s) => s.setDialogOpen)
@@ -1264,7 +1258,7 @@ function AboutSettings({ onCheckUpdate }: { onCheckUpdate?: () => void }) {
         author: 'Author',
         github: 'GitHub',
         open: 'Open',
-        checkUpdate: 'Check for updates',
+        checkUpdate: 'Update now',
         status: {
           disabled: 'Updates are disabled in dev.',
           idle: 'Ready.',
@@ -1282,7 +1276,7 @@ function AboutSettings({ onCheckUpdate }: { onCheckUpdate?: () => void }) {
         author: '作者',
         github: 'GitHub',
         open: '打开',
-        checkUpdate: '检查更新',
+        checkUpdate: '立即更新',
         status: {
           disabled: '开发环境不支持自动更新。',
           idle: '准备就绪。',
@@ -1300,7 +1294,7 @@ function AboutSettings({ onCheckUpdate }: { onCheckUpdate?: () => void }) {
         author: '作者',
         github: 'GitHub',
         open: '開く',
-        checkUpdate: '更新を確認',
+        checkUpdate: '今すぐ更新',
         status: {
           disabled: '開発環境では更新が無効です。',
           idle: '準備完了。',
@@ -1339,6 +1333,7 @@ function AboutSettings({ onCheckUpdate }: { onCheckUpdate?: () => void }) {
   const repoUrl = info.repositoryUrl || 'https://github.com/wxt2rr/Anima'
   const status = updateState?.status || 'idle'
   const percent = updateState?.progress?.percent
+  const hasUpdate = status === 'available' || status === 'downloading' || status === 'downloaded'
 
   const statusText = (() => {
     if (status === 'disabled') return t.status.disabled
@@ -1362,14 +1357,12 @@ function AboutSettings({ onCheckUpdate }: { onCheckUpdate?: () => void }) {
   }
 
   const handleCheckUpdate = () => {
-    if (onCheckUpdate) {
-      onCheckUpdate()
-      return
-    }
     const api = window.anima?.update
-    if (!api?.check) return
+    if (!api) return
     setUpdateDialogOpen(true)
-    void api.check({ interactive: true })
+    if (status === 'available' && api.download) {
+      void api.download()
+    }
   }
 
   return (
@@ -1401,12 +1394,9 @@ function AboutSettings({ onCheckUpdate }: { onCheckUpdate?: () => void }) {
         <CardContent className="pt-6 space-y-3">
           <div className="flex items-center justify-between gap-3">
             <div className="text-sm text-muted-foreground">{statusText}</div>
-            <Button
-              onClick={handleCheckUpdate}
-              disabled={status === 'disabled' || status === 'checking' || status === 'downloading'}
-            >
-              {t.checkUpdate}
-            </Button>
+            {hasUpdate ? (
+              <Button onClick={handleCheckUpdate}>{t.checkUpdate}</Button>
+            ) : null}
           </div>
         </CardContent>
       </Card>

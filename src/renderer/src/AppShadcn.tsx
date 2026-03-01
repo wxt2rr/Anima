@@ -1649,7 +1649,7 @@ function AppLoaded(): JSX.Element {
                       {msg.role === 'user' ? (
                         <div className={`py-2 flex justify-end ${msg.id === lastUserMessageId ? 'sticky top-0 z-20' : ''}`}>
                            <div className="flex flex-col items-end gap-2">
-                              <div className="w-fit max-w-[520px] rounded-2xl border border-border/60 bg-transparent px-4 py-2 text-[14px] leading-relaxed whitespace-pre-wrap break-words text-foreground/90">
+                              <div className="w-fit max-w-[520px] rounded-2xl border border-border/60 bg-black/5 dark:bg-white/10 px-4 py-2 text-[14px] leading-relaxed whitespace-pre-wrap break-words text-foreground/90">
                                 {msg.content}
                               </div>
                               {(() => {
