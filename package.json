@@ -1,6 +1,6 @@
 {
   "name": "anima",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "An elegant AI companion for macOS",
   "main": "out/main/index.js",
   "author": "Anima Team",
