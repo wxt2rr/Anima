@@ -57,7 +57,8 @@
       {
         "provider": "github",
         "owner": "wxt2rr",
-        "repo": "Anima"
+        "repo": "Anima",
+        "releaseType": "release"
       }
     ]
   },
