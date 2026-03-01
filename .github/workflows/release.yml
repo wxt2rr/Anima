@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 jobs:
-  mac_arm64:
+  mac:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,17 +22,6 @@ jobs:
       - run: npm run dist:mac:publish:arm64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  mac_x64:
-    needs: mac_arm64
-    runs-on: macos-13
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-      - run: npm ci
       - run: npm run dist:mac:publish:x64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
