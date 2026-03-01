@@ -16,6 +16,8 @@
     "dist": "npm run build && electron-builder",
     "dist:mac": "npm run build && ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder --mac",
     "dist:mac:publish": "npm run build && electron-builder --mac --publish always",
+    "dist:mac:publish:arm64": "npm run build && electron-builder --mac --arm64 --publish always",
+    "dist:mac:publish:x64": "npm run build && electron-builder --mac --x64 --publish always",
     "icons:update": "node scripts/update_icons.mjs",
     "release": "node scripts/release.mjs",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
