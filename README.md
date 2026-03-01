@@ -67,6 +67,20 @@ git push origin v0.1.1
 
 3. GitHub Actions 会在 macOS runner 上执行 `npm run dist:mac:publish`，并把产物上传到对应 tag 的 Release。
 
+### 一键发版脚本
+
+可以用脚本自动改版本号并执行 commit/tag/push：
+
+```bash
+npm run release -- 0.1.2
+```
+
+也支持交互输入版本号：
+
+```bash
+npm run release
+```
+
 ### 无签名/无公证的提示
 
 如果你还没有 Apple Developer 账号，macOS 上分发/升级可能会遇到 Gatekeeper 限制。常见处理方式：
