@@ -552,6 +552,8 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
                     "id": s.get("id"),
                     "name": s.get("name"),
                     "description": s.get("description"),
+                    "dir": s.get("dir"),
+                    "file": s.get("file"),
                     "content": s.get("content"),
                     "meta": s.get("meta"),
                     "updatedAt": s.get("updatedAt"),

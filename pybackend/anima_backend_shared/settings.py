@@ -83,6 +83,13 @@ def project_skills_dir() -> Path:
     return root / "skills"
 
 
+def bundled_skills_dir() -> Optional[Path]:
+    raw = str(os.environ.get("ANIMA_BUNDLED_SKILLS_DIR") or "").strip()
+    if not raw:
+        return None
+    return Path(raw).expanduser()
+
+
 def load_settings() -> Dict[str, Any]:
     existing = get_app_settings()
     if not isinstance(existing, dict):
@@ -141,6 +148,9 @@ def list_skills() -> Tuple[str, List[Dict[str, Any]]]:
     proj_dir = project_skills_dir()
     if proj_dir != dir_path and proj_dir.exists():
         roots.append(proj_dir)
+    bundled_dir = bundled_skills_dir()
+    if bundled_dir and bundled_dir != dir_path and bundled_dir != proj_dir and bundled_dir.exists():
+        roots.append(bundled_dir)
     seen: Dict[str, Dict[str, Any]] = {}
     for base in roots:
         for entry in base.iterdir():
@@ -186,6 +196,9 @@ def get_skills_content(ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     proj_dir = project_skills_dir()
     if proj_dir != dir_path and proj_dir.exists():
         roots.append(proj_dir)
+    bundled_dir = bundled_skills_dir()
+    if bundled_dir and bundled_dir != dir_path and bundled_dir != proj_dir and bundled_dir.exists():
+        roots.append(bundled_dir)
     seen: Dict[str, Dict[str, Any]] = {}
     for base in roots:
         for entry in base.iterdir():

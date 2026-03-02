@@ -69,7 +69,9 @@ function startBackend(port: number): ChildProcessWithoutNullStreams {
     : join(app.getAppPath(), 'pybackend', 'server.py')
   const python = resolvePythonExecutable()
   const configRoot = process.env.ANIMA_CONFIG_ROOT || join(app.getPath('userData'), 'pybackend')
+  const bundledSkillsDir = process.env.ANIMA_BUNDLED_SKILLS_DIR || (app.isPackaged ? join(process.resourcesPath, 'skills') : join(app.getAppPath(), 'skills'))
   const extraEnv: Record<string, string> = { PYTHONUNBUFFERED: '1', ANIMA_CONFIG_ROOT: configRoot }
+  extraEnv.ANIMA_BUNDLED_SKILLS_DIR = bundledSkillsDir
   if (is.dev) {
     if (!process.env.ANIMA_VOICE_DEBUG) extraEnv.ANIMA_VOICE_DEBUG = '1'
     if (!process.env.ANIMA_TG_DEBUG) extraEnv.ANIMA_TG_DEBUG = '1'
