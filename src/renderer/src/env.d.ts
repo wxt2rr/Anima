@@ -20,6 +20,7 @@ declare global {
       fs: {
         readDir: (path: string) => Promise<{ ok: boolean; files?: Array<{ name: string; isDirectory: boolean; path: string }>; error?: string }>
         readFile: (path: string) => Promise<{ ok: boolean; content?: string; error?: string }>
+        readFileBinary: (path: string) => Promise<{ ok: boolean; base64?: string; mime?: string; error?: string }>
         getCwd: () => Promise<{ ok: boolean; cwd?: string; error?: string }>
       }
       git: {

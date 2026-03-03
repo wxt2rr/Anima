@@ -18,7 +18,11 @@ import {
   RotateCcw,
   Search,
   ZoomIn,
-  ZoomOut
+  ZoomOut,
+  PanelLeftClose,
+  PanelLeftOpen,
+  ExternalLink,
+  X
 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
@@ -35,6 +39,7 @@ interface SelectedFile {
   path: string;
   name: string;
   content?: string;
+  blobUrl?: string;
   type: 'image' | 'text' | 'pdf' | 'other';
   error?: string;
 }
@@ -109,10 +114,28 @@ export const FileExplorer: React.FC = () => {
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
   const [loadingFile, setLoadingFile] = useState(false);
+  const selectedBlobUrlRef = React.useRef<string | null>(null)
+  const prevSidebarWidthRef = React.useRef<number>(240)
+  const [isExplorerCollapsed, setIsExplorerCollapsed] = useState(false)
   
   // Resize state
   const [sidebarWidth, setSidebarWidth] = useState(240);
   const [isResizing, setIsResizing] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      const prev = selectedBlobUrlRef.current
+      if (prev) URL.revokeObjectURL(prev)
+      selectedBlobUrlRef.current = null
+    }
+  }, [])
+
+  const clearSelectedFile = () => {
+    const prev = selectedBlobUrlRef.current
+    if (prev) URL.revokeObjectURL(prev)
+    selectedBlobUrlRef.current = null
+    setSelectedFile(null)
+  }
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -191,6 +214,20 @@ export const FileExplorer: React.FC = () => {
     setRefreshKey(k => k + 1);
   };
 
+  const handleToggleExplorer = () => {
+    setIsExplorerCollapsed((v) => {
+      if (!v) prevSidebarWidthRef.current = sidebarWidth
+      return !v
+    })
+    if (isExplorerCollapsed) setSidebarWidth(prevSidebarWidthRef.current || 240)
+  }
+
+  const handleOpenInFinder = async () => {
+    const p = String(rootPath || settings?.workspaceDir || '').trim()
+    if (!p) return
+    await window.anima.shell.openPath(p)
+  }
+
   const openFilePath = async (filePath: string) => {
     const normalized = String(filePath || '')
       .trim()
@@ -201,6 +238,9 @@ export const FileExplorer: React.FC = () => {
     const type = getFileType(name);
     
     if (type === 'text') {
+      const prev = selectedBlobUrlRef.current
+      if (prev) URL.revokeObjectURL(prev)
+      selectedBlobUrlRef.current = null
       const res = await window.anima.fs.readFile(normalized);
       if (res.ok) {
         setSelectedFile({
@@ -218,12 +258,26 @@ export const FileExplorer: React.FC = () => {
         });
       }
     } else {
-      // For images/pdf, we just use the path
-      setSelectedFile({
-        path: normalized,
-        name,
-        type
-      });
+      const prev = selectedBlobUrlRef.current
+      if (prev) URL.revokeObjectURL(prev)
+      selectedBlobUrlRef.current = null
+      if (type === 'image' || type === 'pdf') {
+        const res = await window.anima.fs.readFileBinary(normalized)
+        if (res.ok && res.base64) {
+          const binary = atob(res.base64)
+          const bytes = new Uint8Array(binary.length)
+          for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+          const mime = String(res.mime || '').trim() || (type === 'pdf' ? 'application/pdf' : 'application/octet-stream')
+          const blob = new Blob([bytes], { type: mime })
+          const blobUrl = URL.createObjectURL(blob)
+          selectedBlobUrlRef.current = blobUrl
+          setSelectedFile({ path: normalized, name, type, blobUrl })
+        } else {
+          setSelectedFile({ path: normalized, name, type, error: res.error || 'Failed to read file' })
+        }
+      } else {
+        setSelectedFile({ path: normalized, name, type })
+      }
     }
     setLoadingFile(false);
   };
@@ -266,47 +320,110 @@ export const FileExplorer: React.FC = () => {
   return (
     <div className="flex h-full w-full overflow-hidden">
       {/* Left: File Tree */}
-      <div 
-        className="flex flex-col h-full shrink-0 transition-none border-r border-border" // Remove transition during resize
-        style={{ width: sidebarWidth }}
-      >
-        <div className="h-9 px-4 flex items-center justify-between border-b border-border/40 bg-muted/5 shrink-0">
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Explorer</span>
-          <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" onClick={handleRefresh} title="Refresh">
-            <RefreshCw className="w-3.5 h-3.5" />
-          </Button>
-        </div>
-        <ScrollArea className="flex-1">
-          <div className="p-2">
-             <FileTreeItem 
-               key={`${rootPath}-${refreshKey}`}
-               path={rootPath} 
-               name={rootPath.split('/').pop() || rootPath} 
-               isDirectory={true} 
-               defaultExpanded={true}
-               onSelect={handleFileSelect}
-               selectedPath={selectedFile?.path}
-             />
+      {isExplorerCollapsed ? (
+        <div className="flex flex-col h-full shrink-0 border-r border-border bg-muted/5 w-10">
+          <div className="h-9 flex items-center justify-center border-b border-border/40 shrink-0">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-muted-foreground hover:text-foreground"
+              onClick={handleToggleExplorer}
+              title="Expand"
+            >
+              <PanelLeftOpen className="w-3.5 h-3.5" />
+            </Button>
           </div>
-        </ScrollArea>
-      </div>
+          <div className="flex-1 flex flex-col items-center gap-1 p-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-foreground"
+              onClick={handleRefresh}
+              title="Refresh"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-foreground"
+              onClick={() => void handleOpenInFinder()}
+              title="Open in Finder"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div 
+          className="flex flex-col h-full shrink-0 transition-none border-r border-border"
+          style={{ width: sidebarWidth }}
+        >
+          <div className="h-9 px-2 flex items-center justify-between border-b border-border/40 bg-muted/5 shrink-0">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground px-2">Explorer</span>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                onClick={handleToggleExplorer}
+                title="Collapse"
+              >
+                <PanelLeftClose className="w-3.5 h-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                onClick={() => void handleOpenInFinder()}
+                title="Open in Finder"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                onClick={handleRefresh}
+                title="Refresh"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          </div>
+          <ScrollArea className="flex-1">
+            <div className="p-2">
+               <FileTreeItem 
+                 key={`${rootPath}-${refreshKey}`}
+                 path={rootPath} 
+                 name={rootPath.split('/').pop() || rootPath} 
+                 isDirectory={true} 
+                 defaultExpanded={true}
+                 onSelect={handleFileSelect}
+                 selectedPath={selectedFile?.path}
+               />
+            </div>
+          </ScrollArea>
+        </div>
+      )}
 
       {/* Resize Handle */}
-      <div
-        className={cn(
-          "w-1 h-full cursor-col-resize hover:bg-primary/50 transition-colors flex items-center justify-center group z-10 shrink-0",
-          isResizing && "bg-primary/50"
-        )}
-        onMouseDown={() => setIsResizing(true)}
-      >
-        {/* Optional: Visual indicator */}
-        <div className="w-[1px] h-8 bg-border group-hover:bg-primary/80 transition-colors" />
-      </div>
+      {!isExplorerCollapsed && (
+        <div
+          className={cn(
+            "w-1 h-full cursor-col-resize hover:bg-primary/50 transition-colors flex items-center justify-center group z-10 shrink-0",
+            isResizing && "bg-primary/50"
+          )}
+          onMouseDown={() => setIsResizing(true)}
+        >
+          <div className="w-[1px] h-8 bg-border group-hover:bg-primary/80 transition-colors" />
+        </div>
+      )}
 
       {/* Right: Preview */}
       <div className="flex-1 flex flex-col h-full overflow-hidden bg-background min-w-0">
         {selectedFile ? (
-          <FilePreview file={selectedFile} loading={loadingFile} />
+          <FilePreview file={selectedFile} loading={loadingFile} onClose={clearSelectedFile} />
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-2 p-8 text-center opacity-50">
             <Search className="w-10 h-10 stroke-1" />
@@ -401,7 +518,7 @@ const FileTreeItem: React.FC<{
   );
 };
 
-const FilePreview: React.FC<{ file: SelectedFile, loading: boolean }> = ({ file, loading }) => {
+const FilePreview: React.FC<{ file: SelectedFile, loading: boolean, onClose: () => void }> = ({ file, loading, onClose }) => {
   const [scale, setScale] = useState(1);
 
   if (loading) {
@@ -426,6 +543,9 @@ const FilePreview: React.FC<{ file: SelectedFile, loading: boolean }> = ({ file,
           <span className="text-xs font-medium truncate">{file.name}</span>
         </div>
         <div className="flex items-center gap-1">
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose} title="Close">
+            <X className="w-3.5 h-3.5" />
+          </Button>
           {file.type === 'image' && (
             <>
               <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setScale(s => Math.max(0.1, s - 0.1))}>
@@ -471,7 +591,7 @@ const FilePreview: React.FC<{ file: SelectedFile, loading: boolean }> = ({ file,
           {file.type === 'image' && (
             <div className="flex items-center justify-center min-h-[300px] p-4">
               <img 
-                src={`file://${file.path}`} 
+                src={file.blobUrl || `file://${file.path}`} 
                 alt={file.name}
                 style={{ transform: `scale(${scale})`, transition: 'transform 0.2s' }}
                 className="max-w-full shadow-md rounded border bg-[url('https://ui.shadcn.com/placeholder.svg')] bg-repeat" // pattern bg for transparent images
@@ -482,7 +602,7 @@ const FilePreview: React.FC<{ file: SelectedFile, loading: boolean }> = ({ file,
           {file.type === 'pdf' && (
             <div className="h-full w-full flex flex-col">
               <iframe 
-                src={`file://${file.path}`} 
+                src={file.blobUrl || `file://${file.path}`} 
                 className="flex-1 w-full h-full border-0"
               />
             </div>

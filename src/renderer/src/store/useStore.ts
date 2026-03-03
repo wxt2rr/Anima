@@ -269,6 +269,7 @@ export interface Settings {
       allowedUserIds?: string[]
       allowGroups?: boolean
       pollingIntervalMs?: number
+      projectId?: string
     }
   }
 

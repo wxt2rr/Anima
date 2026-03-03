@@ -125,7 +125,7 @@ def _tg_api_post_multipart(token: str, method: str, fields: Dict[str, Any], file
     return obj if isinstance(obj, dict) else {"ok": False, "error": "Invalid response"}
 
 
-def _tg_send_message(token: str, chat_id: str, text: str) -> None:
+def _tg_send_message(token: str, chat_id: str, text: str, reply_to_message_id: Optional[int] = None) -> None:
     msg = str(text or "")
     if not msg.strip():
         msg = "(empty)"
@@ -153,8 +153,13 @@ def _tg_send_message(token: str, chat_id: str, text: str) -> None:
         if buf:
             parts.append(buf)
 
+    replied = False
     for p in parts:
-        payload = {"chat_id": chat_id, "text": p}
+        payload: Dict[str, Any] = {"chat_id": chat_id, "text": p}
+        if (not replied) and isinstance(reply_to_message_id, int) and reply_to_message_id > 0:
+            payload["reply_to_message_id"] = int(reply_to_message_id)
+            payload["allow_sending_without_reply"] = True
+            replied = True
         resp = _tg_api_post_form(token, "sendMessage", payload)
         if not (isinstance(resp, dict) and resp.get("ok") is True):
             err = ""
@@ -163,17 +168,21 @@ def _tg_send_message(token: str, chat_id: str, text: str) -> None:
             raise RuntimeError(err or "Telegram sendMessage failed")
 
 
-def _tg_send_photo(token: str, chat_id: str, image_path: str, caption: str) -> None:
+def _tg_send_photo(token: str, chat_id: str, image_path: str, caption: str, reply_to_message_id: Optional[int] = None) -> None:
     with open(image_path, "rb") as f:
         content = f.read()
     ct = mimetypes.guess_type(image_path)[0] or "application/octet-stream"
     cap = str(caption or "").strip()
     if len(cap) > 900:
         cap = cap[:900]
+    fields: Dict[str, Any] = {"chat_id": chat_id, "caption": cap} if cap else {"chat_id": chat_id}
+    if isinstance(reply_to_message_id, int) and reply_to_message_id > 0:
+        fields["reply_to_message_id"] = int(reply_to_message_id)
+        fields["allow_sending_without_reply"] = True
     resp = _tg_api_post_multipart(
         token,
         "sendPhoto",
-        {"chat_id": chat_id, "caption": cap} if cap else {"chat_id": chat_id},
+        fields,
         {"photo": {"filename": os.path.basename(image_path), "contentType": ct, "content": content}},
     )
     if not (isinstance(resp, dict) and resp.get("ok") is True):
@@ -183,17 +192,21 @@ def _tg_send_photo(token: str, chat_id: str, image_path: str, caption: str) -> N
         raise RuntimeError(err or "Telegram sendPhoto failed")
 
 
-def _tg_send_document(token: str, chat_id: str, file_path: str, caption: str) -> None:
+def _tg_send_document(token: str, chat_id: str, file_path: str, caption: str, reply_to_message_id: Optional[int] = None) -> None:
     with open(file_path, "rb") as f:
         content = f.read()
     ct = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
     cap = str(caption or "").strip()
     if len(cap) > 900:
         cap = cap[:900]
+    fields: Dict[str, Any] = {"chat_id": chat_id, "caption": cap} if cap else {"chat_id": chat_id}
+    if isinstance(reply_to_message_id, int) and reply_to_message_id > 0:
+        fields["reply_to_message_id"] = int(reply_to_message_id)
+        fields["allow_sending_without_reply"] = True
     resp = _tg_api_post_multipart(
         token,
         "sendDocument",
-        {"chat_id": chat_id, "caption": cap} if cap else {"chat_id": chat_id},
+        fields,
         {"document": {"filename": os.path.basename(file_path), "contentType": ct, "content": content}},
     )
     if not (isinstance(resp, dict) and resp.get("ok") is True):
@@ -203,17 +216,21 @@ def _tg_send_document(token: str, chat_id: str, file_path: str, caption: str) ->
         raise RuntimeError(err or "Telegram sendDocument failed")
 
 
-def _tg_send_video(token: str, chat_id: str, video_path: str, caption: str) -> None:
+def _tg_send_video(token: str, chat_id: str, video_path: str, caption: str, reply_to_message_id: Optional[int] = None) -> None:
     with open(video_path, "rb") as f:
         content = f.read()
     ct = mimetypes.guess_type(video_path)[0] or "application/octet-stream"
     cap = str(caption or "").strip()
     if len(cap) > 900:
         cap = cap[:900]
+    fields: Dict[str, Any] = {"chat_id": chat_id, "caption": cap} if cap else {"chat_id": chat_id}
+    if isinstance(reply_to_message_id, int) and reply_to_message_id > 0:
+        fields["reply_to_message_id"] = int(reply_to_message_id)
+        fields["allow_sending_without_reply"] = True
     resp = _tg_api_post_multipart(
         token,
         "sendVideo",
-        {"chat_id": chat_id, "caption": cap} if cap else {"chat_id": chat_id},
+        fields,
         {"video": {"filename": os.path.basename(video_path), "contentType": ct, "content": content}},
     )
     if not (isinstance(resp, dict) and resp.get("ok") is True):
@@ -913,6 +930,19 @@ def _default_composer_for_telegram(settings_obj: Dict[str, Any]) -> Dict[str, An
         enabled_skill_ids = []
 
     workspace_dir = str(s.get("workspaceDir") or "").strip()
+    project_id = str(tg.get("projectId") or "").strip()
+    if project_id:
+        projects = s.get("projects")
+        if isinstance(projects, list):
+            for p in projects:
+                if not isinstance(p, dict):
+                    continue
+                if str(p.get("id") or "").strip() != project_id:
+                    continue
+                d = str(p.get("dir") or "").strip()
+                if d:
+                    workspace_dir = d
+                break
     provider_override_id = str(tg.get("providerOverrideId") or "").strip()
     model_override = str(tg.get("modelOverride") or "").strip()
 
@@ -1144,6 +1174,10 @@ class TelegramPoller:
                 chat_id = _chat_id_from_message(msg)
                 if not thread_id or not chat_id:
                     continue
+                try:
+                    reply_to_message_id = int(msg.get("message_id") or 0)
+                except Exception:
+                    reply_to_message_id = 0
 
                 workspace_dir = str(composer.get("workspaceDir") or "").strip()
                 saved_images: List[str] = []
@@ -1227,7 +1261,7 @@ class TelegramPoller:
                             size = 0
                         if size and size > (25 * 1024 * 1024):
                             try:
-                                _tg_send_message(token, chat_id, "语音文件过大，无法处理。")
+                                _tg_send_message(token, chat_id, "语音文件过大，无法处理。", reply_to_message_id=reply_to_message_id)
                             except Exception:
                                 pass
                             continue
@@ -1242,7 +1276,7 @@ class TelegramPoller:
                                 text = out
                             else:
                                 try:
-                                    _tg_send_message(token, chat_id, out)
+                                    _tg_send_message(token, chat_id, out, reply_to_message_id=reply_to_message_id)
                                 except Exception:
                                     pass
                                 continue
@@ -1250,7 +1284,12 @@ class TelegramPoller:
                 if not (str(text or "").strip()) and not saved_images:
                     if has_image and not workspace_dir:
                         try:
-                            _tg_send_message(token, chat_id, "未配置 workspaceDir，无法保存图片。请在设置中选择工作区目录。")
+                            _tg_send_message(
+                                token,
+                                chat_id,
+                                "未配置 workspaceDir，无法保存图片。请在设置中选择工作区目录。",
+                                reply_to_message_id=reply_to_message_id,
+                            )
                         except Exception:
                             pass
                     continue
@@ -1360,14 +1399,14 @@ class TelegramPoller:
                             except Exception:
                                 too_large = False
                             if too_large:
-                                _tg_send_document(token, chat_id, img_path, caption)
+                                _tg_send_document(token, chat_id, img_path, caption, reply_to_message_id=reply_to_message_id)
                             else:
-                                _tg_send_photo(token, chat_id, img_path, caption)
+                                _tg_send_photo(token, chat_id, img_path, caption, reply_to_message_id=reply_to_message_id)
                         except Exception:
                             try:
-                                _tg_send_document(token, chat_id, img_path, caption)
+                                _tg_send_document(token, chat_id, img_path, caption, reply_to_message_id=reply_to_message_id)
                             except Exception:
-                                _tg_send_message(token, chat_id, reply)
+                                _tg_send_message(token, chat_id, reply, reply_to_message_id=reply_to_message_id)
                     elif video_path:
                         try:
                             too_large = False
@@ -1376,21 +1415,21 @@ class TelegramPoller:
                             except Exception:
                                 too_large = False
                             if too_large:
-                                _tg_send_document(token, chat_id, video_path, caption)
+                                _tg_send_document(token, chat_id, video_path, caption, reply_to_message_id=reply_to_message_id)
                             else:
-                                _tg_send_video(token, chat_id, video_path, caption)
+                                _tg_send_video(token, chat_id, video_path, caption, reply_to_message_id=reply_to_message_id)
                         except Exception:
                             try:
-                                _tg_send_document(token, chat_id, video_path, caption)
+                                _tg_send_document(token, chat_id, video_path, caption, reply_to_message_id=reply_to_message_id)
                             except Exception:
-                                _tg_send_message(token, chat_id, reply)
+                                _tg_send_message(token, chat_id, reply, reply_to_message_id=reply_to_message_id)
                     elif file_path:
                         try:
-                            _tg_send_document(token, chat_id, file_path, caption)
+                            _tg_send_document(token, chat_id, file_path, caption, reply_to_message_id=reply_to_message_id)
                         except Exception:
-                            _tg_send_message(token, chat_id, reply)
+                            _tg_send_message(token, chat_id, reply, reply_to_message_id=reply_to_message_id)
                     else:
-                        _tg_send_message(token, chat_id, reply)
+                        _tg_send_message(token, chat_id, reply, reply_to_message_id=reply_to_message_id)
                 except Exception as e:
                     now = time.time()
                     if now - last_send_err_ts >= 5.0:

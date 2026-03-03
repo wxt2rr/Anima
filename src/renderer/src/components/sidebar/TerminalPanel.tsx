@@ -30,9 +30,12 @@ export const TerminalPanel: React.FC = () => {
 
     const term = new Terminal({
       cursorBlink: true,
+      convertEol: true,
       fontSize: 12,
-      fontFamily: "'JetBrains Mono', monospace",
-      theme: { background: '#1e1e1e' }
+      fontFamily:
+        "'JetBrainsMono Nerd Font', 'JetBrainsMono Nerd Font Mono', 'MesloLGS NF', 'MesloLGS Nerd Font', 'Symbols Nerd Font', 'Symbols Nerd Font Mono', 'JetBrains Mono', 'Menlo', monospace",
+      theme: { background: '#1e1e1e' },
+      allowProposedApi: false
     })
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)

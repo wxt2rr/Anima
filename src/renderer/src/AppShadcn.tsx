@@ -2153,7 +2153,7 @@ function AppLoaded(): JSX.Element {
                                         return (
                                           <button
                                             type="button"
-                                            className="rounded bg-muted px-1.5 py-0.5 font-mono text-[12px] text-foreground hover:underline cursor-pointer"
+                                            className="rounded bg-muted px-1.5 py-0.5 font-mono text-[12px] text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 cursor-pointer"
                                             onClick={(e) => {
                                               e.preventDefault()
                                               e.stopPropagation()
@@ -2189,14 +2189,46 @@ function AppLoaded(): JSX.Element {
                                         return null
                                       }
 
+                                      const isLikelyUrl = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw)
+                                      const isRelativePath = raw && !isLikelyUrl && !raw.startsWith('/') && !raw.startsWith('\\')
+                                      if (isRelativePath) {
+                                        const name = raw.split('/').pop() || raw
+                                        return (
+                                          <button
+                                            type="button"
+                                            className="text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                                            onClick={(e) => {
+                                              e.preventDefault()
+                                              e.stopPropagation()
+                                              openLinkTarget(raw)
+                                            }}
+                                            title={raw}
+                                          >
+                                            {name}
+                                          </button>
+                                        )
+                                      }
+
                                       return <img src={raw} alt={String(alt || '')} {...props} />
                                     },
-                                    a({ href, children, ...props }: any) {
+                                    a({ href, children, className, ...props }: any) {
                                       const target = String(href || '').trim()
+                                      const isFileLike =
+                                        target.startsWith('file://') ||
+                                        target.startsWith('/') ||
+                                        target.startsWith('\\') ||
+                                        target.startsWith('./') ||
+                                        target.startsWith('../') ||
+                                        target.startsWith('~/') ||
+                                        /\.(ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)$/i.test(target)
+                                      const linkClass = isFileLike
+                                        ? 'text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300'
+                                        : ''
                                       return (
                                         <a
                                           {...props}
                                           href={target}
+                                          className={[className, linkClass].filter(Boolean).join(' ')}
                                           onClick={(e) => {
                                             if (!target) return
                                             e.preventDefault()

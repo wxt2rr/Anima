@@ -2691,6 +2691,9 @@ function ImSettings() {
         allowGroupsHint: 'Default off for safety.',
         pollingIntervalMs: 'Polling Interval (ms)',
         pollingIntervalHint: 'Lower is more responsive but uses more requests.',
+        telegramProject: 'Project',
+        telegramProjectHint: 'Bind Telegram to a project workspace directory.',
+        telegramProjectAll: 'All projects (use default workspace)',
         chatProvider: 'Chat Provider',
         chatProviderHint: 'Optional. Use a specific provider/model for Telegram.',
         chatModel: 'Chat Model',
@@ -2717,6 +2720,9 @@ function ImSettings() {
         allowGroupsHint: '默认关闭以保证安全。',
         pollingIntervalMs: '轮询间隔（毫秒）',
         pollingIntervalHint: '越小越及时，但请求次数更多。',
+        telegramProject: '项目',
+        telegramProjectHint: '为 Telegram 绑定一个项目的工作目录。',
+        telegramProjectAll: '所有项目（使用默认工作区）',
         chatProvider: '聊天提供商',
         chatProviderHint: '可选。为 Telegram 单独指定 provider / model。',
         chatModel: '聊天模型',
@@ -2743,6 +2749,9 @@ function ImSettings() {
         allowGroupsHint: '安全のため既定はオフ。',
         pollingIntervalMs: 'ポーリング間隔（ms）',
         pollingIntervalHint: '小さいほど応答が速いが、リクエストが増えます。',
+        telegramProject: 'プロジェクト',
+        telegramProjectHint: 'Telegram 用のプロジェクト作業ディレクトリを設定します。',
+        telegramProjectAll: '全プロジェクト（既定ワークスペースを使用）',
         chatProvider: 'チャットプロバイダー',
         chatProviderHint: '任意。Telegram 用に provider/model を指定できます。',
         chatModel: 'チャットモデル',
@@ -2768,8 +2777,10 @@ function ImSettings() {
   const allowedUserIds = Array.isArray(tg.allowedUserIds) ? tg.allowedUserIds.map(String) : []
   const allowGroups = Boolean(tg.allowGroups)
   const pollingIntervalMs = Number.isFinite(tg.pollingIntervalMs as any) ? Number(tg.pollingIntervalMs) : 1500
+  const telegramProjectId = String((tg as any).projectId || '').trim()
   const telegramProviderOverrideId = String((tg as any).providerOverrideId || '').trim()
   const telegramModelOverride = String((tg as any).modelOverride || '').trim()
+  const projects = Array.isArray(settings.projects) ? settings.projects : []
 
   const availableProviders = useMemo(() => {
     const list = Array.isArray(providers) ? providers.filter((p) => p && p.isEnabled) : []
@@ -2907,6 +2918,27 @@ function ImSettings() {
             onChange={(e) => updateTelegram({ pollingIntervalMs: Number(e.target.value) })}
           />
           <div className="text-xs text-muted-foreground">{t.pollingIntervalHint}</div>
+        </div>
+
+        <div className="space-y-2">
+          <Label>{t.telegramProject}</Label>
+          <Select
+            value={telegramProjectId ? telegramProjectId : ' '}
+            onValueChange={(val) => updateTelegram({ projectId: val.trim() ? val : '' } as any)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder={t.telegramProjectAll} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value=" ">{t.telegramProjectAll}</SelectItem>
+              {projects.map((p: any) => (
+                <SelectItem key={String(p.id || '')} value={String(p.id || '')}>
+                  {String(p.name || p.id || '')}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="text-xs text-muted-foreground">{t.telegramProjectHint}</div>
         </div>
 
         <div className="space-y-2">

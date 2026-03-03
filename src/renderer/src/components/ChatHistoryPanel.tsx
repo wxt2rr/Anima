@@ -560,16 +560,6 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
               <button
                 className="w-full flex items-center gap-2 px-2 py-1.5 rounded-sm text-sm hover:bg-accent hover:text-accent-foreground transition-colors text-left focus:outline-none focus-visible:outline-none"
                 onClick={() => {
-                  void pickAndAddProject()
-                  setIsSettingsOpen(false)
-                }}
-              >
-                <FolderPlus className="w-4 h-4" />
-                <span>{t.addProject}</span>
-              </button>
-              <button
-                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-sm text-sm hover:bg-accent hover:text-accent-foreground transition-colors text-left focus:outline-none focus-visible:outline-none"
-                onClick={() => {
                   onOpenSettings?.()
                   setIsSettingsOpen(false)
                 }}

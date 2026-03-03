@@ -81,6 +81,10 @@ function buildEnv(): NodeJS.ProcessEnv {
   const defaultPath = '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin';
   env.PATH = env.PATH && String(env.PATH).trim() ? env.PATH : defaultPath;
   env.TERM = env.TERM || 'xterm-256color';
+  env.COLORTERM = env.COLORTERM || 'truecolor';
+  if (!env.LANG || !String(env.LANG).trim()) env.LANG = 'en_US.UTF-8';
+  if (!env.LC_CTYPE || !String(env.LC_CTYPE).trim()) env.LC_CTYPE = env.LANG;
+  if (!env.LC_ALL || !String(env.LC_ALL).trim()) env.LC_ALL = env.LANG;
   return env;
 }
 
@@ -141,7 +145,8 @@ export function registerTerminalService() {
         cols: 80,
         rows: 30,
         cwd: resolveCwd(cwd),
-        env: buildEnv() as any
+        env: buildEnv() as any,
+        encoding: 'utf8'
       });
 
       const id = Math.random().toString(36).substring(7);

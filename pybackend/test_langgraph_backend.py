@@ -286,6 +286,20 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
             self.assertTrue(isinstance(caption, str))
             self.assertNotIn(img, caption)
 
+    def test_telegram_send_message_supports_reply_to(self) -> None:
+        from anima_backend_lg import telegram_integration as tg
+
+        calls = []
+
+        def _fake_post_form(_token: str, method: str, params: dict):
+            calls.append((method, dict(params)))
+            return {"ok": True, "result": {}}
+
+        with patch.object(tg, "_tg_api_post_form", side_effect=_fake_post_form):
+            tg._tg_send_message("t", "123", "hello", reply_to_message_id=99)
+
+        self.assertTrue(any(m == "sendMessage" and int(p.get("reply_to_message_id") or 0) == 99 for m, p in calls))
+
     def test_default_composer_for_telegram_supports_provider_model_override(self) -> None:
         from anima_backend_lg.telegram_integration import _default_composer_for_telegram
 

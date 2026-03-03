@@ -411,7 +411,7 @@ def _execute_job_payload(job: Dict[str, Any]) -> Tuple[bool, str, Optional[str]]
                 try:
                     from anima_backend_lg.telegram_integration import _tg_send_message
 
-                    _tg_send_message(token, chat_id, content or "(empty)")
+                    _tg_send_message(token, chat_id, content or "(empty)", reply_to_message_id=None)
                 except Exception:
                     pass
 
