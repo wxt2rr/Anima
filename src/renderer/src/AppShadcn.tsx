@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
-import { Send, StopCircle, Paperclip, PanelLeftOpen, SquarePen, FolderOpen, Wrench, Sparkles, X, ChevronDown, Terminal, Mic, MicOff, Folder, Search, PenLine, Compass, Eye } from 'lucide-react'
+import { Send, StopCircle, Paperclip, PanelLeftOpen, SquarePen, Wrench, Sparkles, X, ChevronDown, Terminal, Mic, MicOff, Folder, Search, PenLine, Compass, Eye } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -193,7 +193,7 @@ function AppLoaded(): JSX.Element {
   const [skillsStatus, setSkillsStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle')
 
   // Use a single state for mutually exclusive popovers
-  const [popoverPanel, setPopoverPanel] = useState<'' | 'attachments' | 'workspace' | 'tools' | 'skills' | 'model'>('')
+  const [popoverPanel, setPopoverPanel] = useState<'' | 'attachments' | 'tools' | 'skills' | 'model'>('')
   
   const [traceDetailOpenByKey, setTraceDetailOpenByKey] = useState<Record<string, boolean>>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -403,6 +403,11 @@ function AppLoaded(): JSX.Element {
   }
 
   const composer = ui.composer
+  const projects = Array.isArray(settings.projects) ? settings.projects : []
+  const activeProjectId = String(ui.activeProjectId || '').trim()
+  const activeProject = activeProjectId ? projects.find((p: any) => String(p?.id || '').trim() === activeProjectId) || null : null
+  const activeProjectDir = String((activeProject as any)?.dir || '').trim()
+  const activeProjectName = String((activeProject as any)?.name || '').trim()
 
   const formatTokenCount = (n?: number) => {
     if (n == null || Number.isNaN(n)) return '—'
@@ -736,7 +741,7 @@ function AppLoaded(): JSX.Element {
   }
 
   const buildComposerPayload = () => {
-    const workspaceDir = (composer.workspaceDir || settings.workspaceDir || '').trim()
+    const workspaceDir = resolveWorkspaceDir()
     const enabledToolIds = composer.enabledToolIds.length ? composer.enabledToolIds : settings.toolsEnabledIds
     const enabledMcpServerIds = composer.enabledMcpServerIds.length ? composer.enabledMcpServerIds : settings.mcpEnabledServerIds
     const enabledSkillIds = composer.enabledSkillIds.length ? composer.enabledSkillIds : settings.skillsEnabledIds
@@ -747,7 +752,7 @@ function AppLoaded(): JSX.Element {
 
     return {
       attachments: composer.attachments.map((a) => ({ path: a.path, mode: a.mode })),
-      chatId: activeChatId || '',
+      chatId: String(useStore.getState().activeChatId || activeChatId || '').trim(),
       workspaceDir,
       toolMode: composer.toolMode || settings.defaultToolMode,
       enabledToolIds,
@@ -763,7 +768,16 @@ function AppLoaded(): JSX.Element {
     }
   }
 
-  const resolveWorkspaceDir = () => (composer.workspaceDir || settings.workspaceDir || '').trim()
+  const resolveWorkspaceDir = () => {
+    const st = useStore.getState()
+    const s = st.settings as any
+    const projects = Array.isArray(s?.projects) ? s.projects : []
+    const pid = String(st.ui?.activeProjectId || '').trim()
+    const p = pid ? projects.find((x: any) => String(x?.id || '').trim() === pid) : null
+    const dir = String(p?.dir || '').trim()
+    if (dir) return dir
+    return String(s?.workspaceDir || '').trim()
+  }
 
   const normalizeAttachmentPath = (filePath: string, workspaceDir: string) => {
     const fp = String(filePath || '').trim()
@@ -798,15 +812,6 @@ function AppLoaded(): JSX.Element {
     addAttachments(paths)
   }
 
-  const handlePickDirectory = async () => {
-    const res = await window.anima?.window?.pickDirectory?.()
-    if (!res?.ok || res.canceled) return
-    const dir = String(res.path || '').trim()
-    if (!dir) return
-    updateComposer({ workspaceDir: dir })
-    updateSettings({ workspaceDir: dir })
-  }
-
   const toggleId = (arr: string[], id: string, enabled: boolean) => {
     const set = new Set(arr)
     if (enabled) set.add(id)
@@ -833,6 +838,7 @@ function AppLoaded(): JSX.Element {
         typeMessage: 'Type a message...',
         noProviderActive: 'No Provider Active',
         settings: 'Settings',
+        noProject: 'No project selected',
         proxyOrKeyError: (msg: string) => `Error: ${msg}\n\nPlease check your API Key and Network settings.`,
         composer: {
           attachments: 'Attachments',
@@ -893,6 +899,7 @@ function AppLoaded(): JSX.Element {
         typeMessage: '输入消息…',
         noProviderActive: '未启用提供商',
         settings: '设置',
+        noProject: '未选择项目',
         proxyOrKeyError: (msg: string) => `错误：${msg}\n\n请检查 API Key 与网络代理设置。`,
         composer: {
           attachments: '附件',
@@ -953,6 +960,7 @@ function AppLoaded(): JSX.Element {
         typeMessage: 'メッセージを入力…',
         noProviderActive: 'プロバイダー未有効',
         settings: '設定',
+        noProject: 'プロジェクト未選択',
         proxyOrKeyError: (msg: string) => `エラー: ${msg}\n\nAPI Key とネットワーク設定を確認してください。`,
         composer: {
           attachments: '添付',
@@ -1104,6 +1112,23 @@ function AppLoaded(): JSX.Element {
       return
     }
 
+    let ensuredProjectId = String(useStore.getState().ui.activeProjectId || '').trim()
+    if (!ensuredProjectId) {
+      const res = await window.anima?.window?.pickDirectory?.()
+      if (!res?.ok || res.canceled) return
+      const dir = String(res.path || '').trim()
+      if (!dir) return
+      ensuredProjectId = await useStore.getState().addProject(dir)
+      if (ensuredProjectId) await useStore.getState().createChatInProject(ensuredProjectId)
+    }
+
+    if (ensuredProjectId && !String(useStore.getState().activeChatId || '').trim()) {
+      await useStore.getState().createChatInProject(ensuredProjectId)
+    }
+
+    const ensuredChatId = String(useStore.getState().activeChatId || '').trim()
+    if (!ensuredChatId) return
+
       const userMessage = inputValue.trim()
       const userAttachments = composer.attachments.map((a) => ({ path: a.path }))
       const userAttachmentsWorkspaceDir = resolveWorkspaceDir()
@@ -1143,7 +1168,7 @@ function AppLoaded(): JSX.Element {
         } as any)
 
         const runMessages = [{ role: 'user' as const, content: userMessage }]
-        const threadId = activeChatId || turnId
+        const threadId = ensuredChatId || turnId
 
       if (settings.enableStreamingResponse) {
         let fullContent = ''
@@ -1604,11 +1629,11 @@ function AppLoaded(): JSX.Element {
                     <Tooltip delayDuration={300}>
                       <TooltipTrigger asChild>
                         <span className="max-w-[300px] truncate pointer-events-auto cursor-help font-medium">
-                          {resolveWorkspaceDir() ? resolveWorkspaceDir().split(/[\\/]/).pop() : 'Default Workspace'}
+                          {activeProjectName || t.noProject}
                         </span>
                       </TooltipTrigger>
                       <TooltipContent>
-                        {resolveWorkspaceDir() || 'Default Workspace'}
+                        {activeProjectDir || t.noProject}
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
@@ -2278,34 +2303,6 @@ function AppLoaded(): JSX.Element {
                       >
                         <Paperclip className="w-4 h-4" />
                       </Button>
-
-                      {/* Workspace */}
-                      <Popover open={popoverPanel === 'workspace'} onOpenChange={(open) => handlePopoverOpenChange('workspace', open)}>
-                        <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('workspace')} onMouseLeave={handleInputPanelMouseLeave}>
-                           <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full shrink-0 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0">
-                             <FolderOpen className="w-4 h-4" />
-                           </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-80" align="start" onMouseEnter={() => handleMouseEnter('workspace')} onMouseLeave={handleMouseLeave}>
-                          <div className="space-y-3">
-                             <h4 className="font-medium text-xs leading-none">{t.composer.workspace}</h4>
-                             <div className="space-y-2">
-                                <Button variant="outline" className={`w-full justify-start h-auto py-2 px-3 ${!composer.workspaceDir ? 'border-primary' : ''}`} onClick={() => updateComposer({ workspaceDir: '' })}>
-                                   <div className="flex flex-col items-start gap-1">
-                                      <span className="text-xs font-medium">Default</span>
-                                      <span className="text-[10px] text-muted-foreground truncate max-w-[240px]">{settings.workspaceDir || '—'}</span>
-                                   </div>
-                                </Button>
-                                <Button variant="outline" className="w-full justify-start text-xs" onClick={() => void handlePickDirectory()}>
-                                   <span className="mr-2">＋</span> {t.composer.selectFolder}
-                                </Button>
-                                <div className="text-[10px] text-muted-foreground break-all px-1">
-                                  Current: {resolveWorkspaceDir() || 'Default'}
-                                </div>
-                             </div>
-                          </div>
-                        </PopoverContent>
-                      </Popover>
 
                       {/* Tools */}
                       <Popover open={popoverPanel === 'tools'} onOpenChange={(open) => handlePopoverOpenChange('tools', open)}>
