@@ -233,18 +233,20 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
             settings_obj = {"settings": {"openclaw": {"enabled": True}, "systemPromptMode": "openclaw"}}
             prompt = build_system_prompt_text(settings_obj, {"workspaceDir": td, "isMainSession": True}, "hi")
             self.assertIn("AGENTS.md", prompt)
-            self.assertTrue(os.path.isfile(os.path.join(td, "AGENTS.md")))
-            self.assertTrue(os.path.isfile(os.path.join(td, "SOUL.md")))
-            self.assertTrue(os.path.isfile(os.path.join(td, "USER.md")))
-            self.assertTrue(os.path.isfile(os.path.join(td, "TOOLS.md")))
-            self.assertTrue(os.path.isfile(os.path.join(td, "IDENTITY.md")))
-            self.assertTrue(os.path.isfile(os.path.join(td, "HEARTBEAT.md")))
+            base = os.path.join(td, ".anima")
+            self.assertTrue(os.path.isfile(os.path.join(base, "AGENTS.md")))
+            self.assertTrue(os.path.isfile(os.path.join(base, "SOUL.md")))
+            self.assertTrue(os.path.isfile(os.path.join(base, "USER.md")))
+            self.assertTrue(os.path.isfile(os.path.join(base, "TOOLS.md")))
+            self.assertTrue(os.path.isfile(os.path.join(base, "IDENTITY.md")))
+            self.assertTrue(os.path.isfile(os.path.join(base, "HEARTBEAT.md")))
 
     def test_openclaw_prompt_does_not_include_memory_md_when_not_main_session(self) -> None:
         from anima_backend_lg.runtime.graph import build_system_prompt_text
 
         with tempfile.TemporaryDirectory() as td:
-            with open(os.path.join(td, "MEMORY.md"), "w", encoding="utf-8") as f:
+            os.makedirs(os.path.join(td, ".anima"), exist_ok=True)
+            with open(os.path.join(td, ".anima", "MEMORY.md"), "w", encoding="utf-8") as f:
                 f.write("MEMORY_SECRET_123")
             settings_obj = {"settings": {"openclaw": {"enabled": True}, "systemPromptMode": "openclaw"}}
             prompt = build_system_prompt_text(settings_obj, {"workspaceDir": td, "isMainSession": False}, "hi")
@@ -377,7 +379,8 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         from anima_backend_lg.cron import _execute_job_payload
 
         with tempfile.TemporaryDirectory() as td:
-            with open(os.path.join(td, "HEARTBEAT.md"), "w", encoding="utf-8") as f:
+            os.makedirs(os.path.join(td, ".anima"), exist_ok=True)
+            with open(os.path.join(td, ".anima", "HEARTBEAT.md"), "w", encoding="utf-8") as f:
                 f.write("# Heartbeat\n")
 
             job = {

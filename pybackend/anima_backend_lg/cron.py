@@ -346,9 +346,12 @@ def _execute_job_payload(job: Dict[str, Any]) -> Tuple[bool, str, Optional[str]]
         hb_path = ""
         if workspace_dir:
             try:
-                target = norm_abs(str(Path(workspace_dir) / "HEARTBEAT.md"))
-                if is_within(workspace_dir, target):
-                    hb_path = target
+                base = Path(workspace_dir)
+                hb_base = base if base.name == ".anima" else Path(norm_abs(str(base / ".anima")))
+                if is_within(workspace_dir, str(hb_base)):
+                    target = norm_abs(str(hb_base / "HEARTBEAT.md"))
+                    if is_within(str(hb_base), target):
+                        hb_path = target
             except Exception:
                 hb_path = ""
 

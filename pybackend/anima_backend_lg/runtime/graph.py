@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from langgraph.graph import END, StateGraph
 
@@ -132,6 +132,22 @@ def _get_workspace_dir(settings_obj: Dict[str, Any], composer: Dict[str, Any]) -
         return ""
     try:
         return norm_abs(d)
+    except Exception:
+        return ""
+
+
+def _openclaw_workspace_dir(workspace_dir: str) -> str:
+    ws = str(workspace_dir or "").strip()
+    if not ws:
+        return ""
+    try:
+        root = Path(ws)
+        if root.name == ".anima":
+            return ws
+        target = norm_abs(str(root / ".anima"))
+        if is_within(ws, target):
+            return target
+        return ""
     except Exception:
         return ""
 
@@ -394,7 +410,8 @@ def _read_workspace_file(workspace_dir: str, rel_path: str, max_bytes: int) -> s
 def _ensure_openclaw_workspace_bootstrap(workspace_dir: str) -> None:
     if not workspace_dir:
         return
-    root = Path(workspace_dir)
+    base = _openclaw_workspace_dir(workspace_dir) or workspace_dir
+    root = Path(base)
     root.mkdir(parents=True, exist_ok=True)
     items = {
         "AGENTS.md": _OPENCLAW_TEMPLATE_AGENTS,
@@ -448,17 +465,19 @@ def _openclaw_workspace_prompt(settings_obj: Dict[str, Any], composer: Dict[str,
     if not ws_dir:
         return ""
 
+    openclaw_dir = _openclaw_workspace_dir(ws_dir) or ws_dir
+
     if openclaw.get("bootstrap") is not False:
-        _ensure_openclaw_workspace_bootstrap(ws_dir)
+        _ensure_openclaw_workspace_bootstrap(openclaw_dir)
 
     include_memory_md = bool(composer.get("isMainSession"))
     blocks: List[str] = []
     for fp in ["AGENTS.md", "SOUL.md", "USER.md", "IDENTITY.md", "TOOLS.md"]:
-        txt = _read_workspace_file(ws_dir, fp, max_bytes=200_000)
+        txt = _read_workspace_file(openclaw_dir, fp, max_bytes=200_000)
         if txt.strip():
             blocks.append(f"{fp}\n{txt.strip()}")
     if include_memory_md:
-        txt = _read_workspace_file(ws_dir, "MEMORY.md", max_bytes=200_000)
+        txt = _read_workspace_file(openclaw_dir, "MEMORY.md", max_bytes=200_000)
         if txt.strip():
             blocks.append(f"MEMORY.md\n{txt.strip()}")
     return "\n\n".join(blocks)
