@@ -405,6 +405,37 @@ def get_chat(chat_id: str) -> Optional[Dict[str, Any]]:
     return res
 
 
+def get_chat_meta(chat_id: str) -> Optional[Dict[str, Any]]:
+    conn = get_db_connection()
+    chat = conn.execute("SELECT meta FROM chats WHERE id = ?", (chat_id,)).fetchone()
+    if not chat:
+        return None
+    raw = chat["meta"]
+    if not raw:
+        return {}
+    try:
+        v = json.loads(raw)
+        return v if isinstance(v, dict) else {}
+    except Exception:
+        return {}
+
+
+def _deep_merge_meta(dst: Any, src: Any) -> Any:
+    if isinstance(dst, dict) and isinstance(src, dict):
+        for k, v in src.items():
+            dst[k] = _deep_merge_meta(dst.get(k), v)
+        return dst
+    return src
+
+
+def merge_chat_meta(chat_id: str, patch: Dict[str, Any]) -> Dict[str, Any]:
+    current = get_chat_meta(chat_id)
+    base: Dict[str, Any] = current if isinstance(current, dict) else {}
+    merged = _deep_merge_meta(dict(base), patch)
+    update_chat(chat_id, {"meta": merged})
+    return merged if isinstance(merged, dict) else {}
+
+
 def create_chat(title: str = "New Chat") -> Dict[str, Any]:
     conn = get_db_connection()
     now = int(time.time() * 1000)

@@ -9,7 +9,12 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { useStore } from '@/store/useStore';
 
 export const GitPanel: React.FC = () => {
-  const { settings, updateSettings } = useStore();
+  const { settings, updateSettings, ui } = useStore();
+  const projects = Array.isArray(settings?.projects) ? (settings!.projects as any[]) : []
+  const activeProjectId = String(ui?.activeProjectId || '').trim()
+  const activeProjectDir = activeProjectId
+    ? String((projects.find((p) => String(p?.id || '').trim() === activeProjectId) as any)?.dir || '').trim()
+    : ''
   const [cwd, setCwd] = useState<string>('');
   const [isRepo, setIsRepo] = useState(false);
   const [status, setStatus] = useState<any>(null);
@@ -52,9 +57,10 @@ export const GitPanel: React.FC = () => {
   // Initialize: Check if current opened directory is a repo
   useEffect(() => {
     const init = async () => {
-        if (settings?.workspaceDir) {
-            setCwd(settings.workspaceDir);
-            refreshAll(settings.workspaceDir);
+        const base = String(activeProjectDir || settings?.workspaceDir || '').trim()
+        if (base) {
+            setCwd(base);
+            refreshAll(base);
         } else {
              // Try to auto-detect if not set
             try {
@@ -70,7 +76,7 @@ export const GitPanel: React.FC = () => {
         }
     };
     init();
-  }, [settings?.workspaceDir, updateSettings]);
+  }, [activeProjectDir, settings?.workspaceDir, updateSettings]);
 
   const handlePickRepo = async () => {
     const res = await window.anima.window.pickDirectory();
@@ -133,7 +139,7 @@ export const GitPanel: React.FC = () => {
                 <p className="text-sm text-muted-foreground">The current folder is not a git repository.</p>
             </div>
             <Button onClick={handleInit}>Initialize Repository</Button>
-            <Button variant="ghost" size="sm" onClick={handlePickRepo}>Open Different Folder</Button>
+            {!activeProjectDir && <Button variant="ghost" size="sm" onClick={handlePickRepo}>Open Different Folder</Button>}
         </div>
       );
   }

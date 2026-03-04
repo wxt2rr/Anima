@@ -6,12 +6,238 @@ from http import HTTPStatus
 from typing import Any, Dict, List, Optional, Tuple
 
 from anima_backend_shared.chat import apply_attachments_inline
-from anima_backend_shared.database import create_run, get_chat, get_run, update_run
+from anima_backend_shared.database import create_run, get_chat, get_chat_meta, merge_chat_meta, get_run, update_run
 from anima_backend_shared.http import json_response, read_body_json
 from anima_backend_shared.settings import load_settings
 
 from ..llm.adapter import create_provider
-from ..runtime.graph import build_run_graph, inject_system_message
+from ..runtime.graph import build_run_graph, build_system_prompt_text, inject_system_message
+
+
+def _estimate_tokens_text(text: str) -> int:
+    s = str(text or "")
+    if not s:
+        return 0
+    ascii_count = sum(1 for ch in s if ord(ch) < 128)
+    non_ascii = max(0, len(s) - ascii_count)
+    return int(ascii_count / 4) + int(non_ascii / 1.6) + 4
+
+
+def _estimate_message_tokens(msg: Dict[str, Any]) -> int:
+    if not isinstance(msg, dict):
+        return 0
+    content = msg.get("content")
+    if isinstance(content, str):
+        return _estimate_tokens_text(content)
+    try:
+        import json
+
+        return _estimate_tokens_text(json.dumps(content, ensure_ascii=False))
+    except Exception:
+        return _estimate_tokens_text(str(content))
+
+
+def _find_message_index_by_id(messages: List[Dict[str, Any]], msg_id: str) -> int:
+    target = str(msg_id or "").strip()
+    if not target:
+        return -1
+    for i, m in enumerate(messages):
+        if isinstance(m, dict) and str(m.get("id") or "").strip() == target:
+            return i
+    return -1
+
+
+def _summarize_incremental(
+    *,
+    provider: Any,
+    composer: Dict[str, Any],
+    extra_body: Optional[Dict[str, Any]],
+    prev_summary: str,
+    chunk: List[Dict[str, Any]],
+    focus: str = "",
+    max_tokens: int = 800,
+) -> str:
+    lines: List[str] = []
+    for m in chunk:
+        if not isinstance(m, dict):
+            continue
+        role = str(m.get("role") or "").strip() or "unknown"
+        c = m.get("content")
+        if isinstance(c, str):
+            txt = c
+        else:
+            try:
+                import json
+
+                txt = json.dumps(c, ensure_ascii=False)
+            except Exception:
+                txt = str(c)
+        txt = str(txt).replace("\r\n", "\n").replace("\r", "\n").strip()
+        if len(txt) > 4000:
+            txt = txt[:4000] + "…"
+        if txt:
+            lines.append(f"{role}: {txt}")
+    transcript = "\n".join(lines).strip()
+    if not transcript:
+        return ""
+
+    focus_line = f"额外要求：{focus}" if str(focus or "").strip() else ""
+    sys_text = (
+        "你正在为一个长对话做增量压缩摘要。要求："
+        "1) 只保留关键事实/决定/约束/用户偏好/未完成事项；"
+        "2) 不要编造；"
+        "3) 尽量结构化（要点/列表）；"
+        "4) 长度控制在 400-800 字。"
+        + (f"\n{focus_line}" if focus_line else "")
+    )
+    user_text = (f"已有摘要：\n{prev_summary}\n\n" if prev_summary else "") + "新增对话片段：\n" + transcript
+    summary_messages = [{"role": "system", "content": sys_text}, {"role": "user", "content": user_text}]
+
+    from ..llm.adapter import call_chat_completion
+
+    mo = str(composer.get("modelOverride") or "").strip() or None
+    res = call_chat_completion(
+        provider,
+        summary_messages,
+        temperature=0.2,
+        max_tokens=max_tokens,
+        tools=None,
+        tool_choice=None,
+        model_override=mo,
+        extra_body=extra_body if isinstance(extra_body, dict) else None,
+    )
+    choice = ((res.get("choices") or [{}])[0]) if isinstance(res, dict) else {}
+    msg = (choice.get("message") or {}) if isinstance(choice, dict) else {}
+    return str(msg.get("content") or "").strip()
+
+
+def _apply_persistent_compression(
+    *,
+    chat_id: str,
+    messages: List[Dict[str, Any]],
+    settings_obj: Dict[str, Any],
+    provider: Any,
+    composer: Dict[str, Any],
+    extra_body: Optional[Dict[str, Any]],
+    is_manual: bool = False,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Optional[Dict[str, Any]]]:
+    s = settings_obj.get("settings") if isinstance(settings_obj, dict) else {}
+    s = s if isinstance(s, dict) else {}
+
+    enabled = bool(s.get("enableAutoCompression"))
+    if not enabled and not is_manual:
+        return messages, composer, None
+
+    try:
+        threshold_pct = int(s.get("compressionThreshold") if s.get("compressionThreshold") is not None else 80)
+    except Exception:
+        threshold_pct = 80
+    threshold_pct = max(0, min(threshold_pct, 100))
+
+    try:
+        keep_recent = int(s.get("keepRecentMessages") if s.get("keepRecentMessages") is not None else 6)
+    except Exception:
+        keep_recent = 6
+    keep_recent = max(2, min(keep_recent, 20))
+
+    try:
+        context_window = int(composer.get("contextWindowOverride") or 0)
+    except Exception:
+        context_window = 0
+    if context_window <= 0:
+        context_window = 8192
+    context_window = max(1024, min(context_window, 400000))
+    target_tokens = int(context_window * (threshold_pct / 100.0))
+    target_tokens = max(512, min(target_tokens, context_window))
+
+    chat_meta = get_chat_meta(chat_id) or {}
+    comp = chat_meta.get("compression") if isinstance(chat_meta.get("compression"), dict) else {}
+    prev_summary = str(comp.get("summary") or "").strip()
+    summarized_until = str(comp.get("summarizedUntilMessageId") or "").strip()
+
+    usable = [m for m in messages if isinstance(m, dict) and str(m.get("role") or "") not in ("system", "tool")]
+    start_idx = _find_message_index_by_id(usable, summarized_until)
+    window_msgs = usable[start_idx + 1 :] if start_idx >= 0 else usable
+
+    working_composer = dict(composer)
+    if prev_summary and enabled:
+        working_composer["historySummary"] = prev_summary
+    else:
+        working_composer.pop("historySummary", None)
+
+    user_msg = ""
+    for m in reversed(window_msgs):
+        if str(m.get("role") or "") == "user" and isinstance(m.get("content"), str) and str(m.get("content") or "").strip():
+            user_msg = str(m.get("content") or "").strip()
+            break
+    sys_text = build_system_prompt_text(settings_obj, working_composer, user_msg)
+    sys_tokens = _estimate_tokens_text(sys_text)
+    msg_tokens = sum(_estimate_message_tokens(m) for m in window_msgs)
+    total = sys_tokens + msg_tokens
+
+    if total <= target_tokens and not is_manual:
+        return window_msgs, working_composer, None
+
+    if len(window_msgs) <= keep_recent:
+        return window_msgs, working_composer, None
+
+    dropped: List[Dict[str, Any]] = []
+    remaining = list(window_msgs)
+    while remaining and len(remaining) > keep_recent:
+        if sys_tokens + sum(_estimate_message_tokens(m) for m in remaining) <= target_tokens and not is_manual:
+            break
+        dropped.append(remaining.pop(0))
+        if is_manual and len(remaining) <= keep_recent:
+            break
+
+    if not dropped:
+        return remaining, working_composer, None
+
+    cap = 80
+    chunk = dropped[-cap:] if len(dropped) > cap else dropped
+    omitted = max(0, len(dropped) - len(chunk))
+    if omitted:
+        chunk = [{"role": "system", "content": f"(更早的 {omitted} 条消息已省略)", "id": ""}] + chunk  # type: ignore[list-item]
+
+    summary_max_tokens = 800
+    try:
+        summary_max_tokens = int(s.get("maxTokens") or 800)
+    except Exception:
+        summary_max_tokens = 800
+    summary_max_tokens = min(1200, max(256, summary_max_tokens))
+
+    new_summary = _summarize_incremental(
+        provider=provider,
+        composer=working_composer,
+        extra_body=extra_body,
+        prev_summary=prev_summary,
+        chunk=chunk,
+        max_tokens=summary_max_tokens,
+    )
+    if not new_summary:
+        return remaining, working_composer, None
+
+    last_dropped_id = str((dropped[-1] or {}).get("id") or "").strip()
+    now_ms = int(__import__("time").time() * 1000)
+    next_comp = {
+        "enabled": True,
+        "summary": new_summary,
+        "summaryUpdatedAt": now_ms,
+        "summarizedUntilMessageId": last_dropped_id,
+        "keepRecentMessages": keep_recent,
+        "lastCompactReason": "manual" if is_manual else "auto",
+    }
+    merged = merge_chat_meta(chat_id, {"compression": next_comp})
+    out_comp = merged.get("compression") if isinstance(merged.get("compression"), dict) else next_comp
+    working_composer["historySummary"] = new_summary
+
+    evt = {
+        "mode": "manual" if is_manual else "auto",
+        "summaryUpdatedAt": out_comp.get("summaryUpdatedAt"),
+        "summarizedUntilMessageId": out_comp.get("summarizedUntilMessageId"),
+        "summaryPreview": str(new_summary[:240]),
+    }
+    return remaining, working_composer, evt
 
 
 def _apply_thinking_level(provider: Any, composer: Dict[str, Any], extra_body: Optional[Dict[str, Any]], max_tokens: int) -> tuple[Optional[Dict[str, Any]], int]:
@@ -90,6 +316,11 @@ def handle_post_runs_non_stream(body: Dict[str, Any]) -> Tuple[int, Dict[str, An
         extra_body = None
     extra_body, max_tokens = _apply_thinking_level(provider, composer, extra_body, max_tokens)
 
+    compression_evt = None
+    if use_thread_messages and thread_id:
+        messages, composer, compression_evt = _apply_persistent_compression(
+            chat_id=thread_id, messages=messages, settings_obj=settings_obj, provider=provider, composer=composer, extra_body=extra_body
+        )
     messages = inject_system_message(messages, settings_obj, composer)
     prepared = apply_attachments_inline(messages, composer)
 
@@ -158,6 +389,8 @@ def handle_post_runs_non_stream(body: Dict[str, Any]) -> Tuple[int, Dict[str, An
             "reasoning": reasoning,
             "backendImpl": "langgraph",
         }
+        if isinstance(compression_evt, dict) and compression_evt:
+            payload["compression"] = compression_evt
         if isinstance(rate_limit, dict) and rate_limit:
             payload["rateLimit"] = rate_limit
         return int(HTTPStatus.OK), payload
@@ -244,6 +477,11 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
 
         has_system = any(isinstance(m, dict) and m.get("role") == "system" for m in messages)
         if not has_system:
+            compression_evt = None
+            if thread_id:
+                messages, composer, compression_evt = _apply_persistent_compression(
+                    chat_id=thread_id, messages=messages, settings_obj=settings_obj, provider=provider, composer=composer, extra_body=extra_body
+                )
             messages = inject_system_message(messages, settings_obj, composer)
         prepared = apply_attachments_inline(messages, composer)
 

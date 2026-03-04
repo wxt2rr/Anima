@@ -3114,7 +3114,7 @@ function SkillsSettings() {
           isValid?: boolean
           errors?: string[]
         }>
-      }>('/skills/list', { method: 'GET' })
+      }>(`/skills/list?t=${Date.now()}`, { method: 'GET', cache: 'no-store' })
       if (!res?.ok) {
         setStatus({ type: 'error', text: 'Failed' })
         return

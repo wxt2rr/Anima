@@ -828,6 +828,9 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
             if picked:
                 memory_block = "User memory:\n" + "\n".join([f"- {x}" for x in picked])
 
+    history_summary = str(composer.get("historySummary") or "").strip()
+    history_block = f"对话摘要（自动压缩）:\n{history_summary}" if history_summary else ""
+
     plugins = s.get("plugins")
     if not isinstance(plugins, list):
         plugins = []
@@ -902,7 +905,7 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
             "不要只输出命令/脚本代码块并声称已执行；应先调用工具获得结果，再基于结果回复。"
         )
 
-    parts = [active_system_prompt, memory_block, skills_block, plugins_block, tool_guidance, env_block, date_block]
+    parts = [active_system_prompt, history_block, memory_block, skills_block, plugins_block, tool_guidance, env_block, date_block]
     return "\n\n".join([p for p in parts if str(p).strip()])
 
 

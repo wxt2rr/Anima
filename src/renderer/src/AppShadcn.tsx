@@ -23,6 +23,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { RightSidebar } from './components/sidebar/RightSidebar'
 import { useUpdateStore } from './store/useUpdateStore'
 
@@ -208,9 +209,11 @@ function AppLoaded(): JSX.Element {
   
   const { 
     messages, 
+    chats,
     addMessage, 
     persistLastMessage, 
     activeChatId,
+    updateChat,
     settings: settings0, 
     providers: providers0,
     voiceModelsInstalled,
@@ -241,12 +244,37 @@ function AppLoaded(): JSX.Element {
   const [isResizingLeft, setIsResizingLeft] = useState(false)
   const [isResizingRight, setIsResizingRight] = useState(false)
   const [backendBaseUrl, setBackendBaseUrl] = useState('')
+  const [summaryOpen, setSummaryOpen] = useState(false)
+  const [summaryLoading, setSummaryLoading] = useState(false)
+  const [summaryText, setSummaryText] = useState('')
+  const [summaryUpdatedAt, setSummaryUpdatedAt] = useState<number | null>(null)
+  const [compressionNotice, setCompressionNotice] = useState<{ text: string; at: number } | null>(null)
 
   useEffect(() => {
     void resolveBackendBaseUrl()
       .then((url) => setBackendBaseUrl(String(url || '').trim()))
       .catch(() => {})
   }, [])
+
+  const activeChat = useMemo(() => chats.find((c) => c.id === activeChatId), [chats, activeChatId])
+  const chatCompression = (activeChat as any)?.meta?.compression as any
+  const hasChatSummary = Boolean(String(chatCompression?.summary || '').trim())
+
+  const loadChatSummary = async () => {
+    const chatId = String(activeChatId || '').trim()
+    if (!chatId) return
+    setSummaryLoading(true)
+    try {
+      const res = await fetchBackendJson<{ ok: boolean; compression?: any }>(`/api/chats/${chatId}/summary?t=${Date.now()}`, { method: 'GET', cache: 'no-store' })
+      const comp = (res as any)?.compression
+      const text = String(comp?.summary || '').trim()
+      setSummaryText(text)
+      const ts = comp?.summaryUpdatedAt != null ? Number(comp.summaryUpdatedAt) : null
+      setSummaryUpdatedAt(Number.isFinite(ts as any) ? (ts as number) : null)
+    } finally {
+      setSummaryLoading(false)
+    }
+  }
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -280,6 +308,12 @@ function AppLoaded(): JSX.Element {
       document.body.style.userSelect = ''
     }
   }, [isResizingLeft, isResizingRight])
+
+  useEffect(() => {
+    if (!compressionNotice) return
+    const t = window.setTimeout(() => setCompressionNotice(null), 4500)
+    return () => window.clearTimeout(t)
+  }, [compressionNotice])
 
   useEffect(() => {
     void initApp()
@@ -471,9 +505,10 @@ function AppLoaded(): JSX.Element {
           const name = String(a.title || '').trim() || p.split('/').pop() || 'artifact'
           const isImage = a.kind === 'image' || String(a.mime || '').toLowerCase().startsWith('image/')
           const isVideo = a.kind === 'video' || String(a.mime || '').toLowerCase().startsWith('video/')
+          const ws = resolveWorkspaceDir()
           const src =
-            backendBaseUrl && settings?.workspaceDir
-              ? `${backendBaseUrl}/api/artifacts/file?path=${encodeURIComponent(p)}&workspaceDir=${encodeURIComponent(settings.workspaceDir)}`
+            backendBaseUrl && ws
+              ? `${backendBaseUrl}/api/artifacts/file?path=${encodeURIComponent(p)}&workspaceDir=${encodeURIComponent(ws)}`
               : `file://${p}`
           if (isImage) {
             return (
@@ -678,7 +713,7 @@ function AppLoaded(): JSX.Element {
     if (skillsStatus === 'loading') return
     setSkillsStatus('loading')
     try {
-      const res = await fetchBackendJson<{ ok: boolean; skills?: SkillEntry[] }>('/skills/list', { method: 'GET' })
+      const res = await fetchBackendJson<{ ok: boolean; skills?: SkillEntry[] }>(`/skills/list?t=${Date.now()}`, { method: 'GET', cache: 'no-store' })
       const next = Array.isArray(res.skills) ? res.skills : []
       setSkillsCache(next)
       setSkillsStatus('ok')
@@ -1366,6 +1401,10 @@ function AppLoaded(): JSX.Element {
                 traces?: ToolTrace[]
                 artifacts?: Artifact[]
                 trace?: ToolTrace
+                mode?: string
+                summaryPreview?: string
+                summaryUpdatedAt?: number
+                summarizedUntilMessageId?: string
               }
               if (evt.type === 'delta' && typeof evt.content === 'string' && evt.content) {
                 pendingContent += evt.content
@@ -1385,6 +1424,22 @@ function AppLoaded(): JSX.Element {
                 updateLastMessage(fullContent, assistantMeta)
               } else if (evt.type === 'trace' && evt.trace) {
                 upsertTrace(evt.trace)
+              } else if (evt.type === 'compression') {
+                const ts = Date.now()
+                setCompressionNotice({ text: '已自动压缩对话历史', at: ts })
+                const cid = String(activeChatId || '').trim()
+                if (cid) {
+                  void (async () => {
+                    try {
+                      const res = await fetchBackendJson<{ ok: boolean; compression?: any }>(`/api/chats/${cid}/summary?t=${Date.now()}`, { method: 'GET', cache: 'no-store' })
+                      if (res && (res as any).compression) {
+                        updateChat(cid, { meta: { compression: (res as any).compression } })
+                      }
+                    } catch {
+                      return
+                    }
+                  })()
+                }
               } else if (evt.type === 'done') {
                 usage = evt.usage || null
                 if (evt.rateLimit && Object.keys(evt.rateLimit).length) {
@@ -1580,6 +1635,67 @@ function AppLoaded(): JSX.Element {
       <div className={`flex h-full w-full overflow-hidden p-2 ${ui.sidebarCollapsed ? 'gap-0' : 'gap-2'}`}>
         <SettingsDialog />
         <UpdateDialog />
+        <Dialog
+          open={summaryOpen}
+          onOpenChange={(open) => {
+            setSummaryOpen(open)
+            if (open) void loadChatSummary().catch(() => {})
+          }}
+        >
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>对话摘要</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              {summaryUpdatedAt != null && (
+                <div className="text-xs text-muted-foreground">
+                  更新时间：{new Date(summaryUpdatedAt).toLocaleString()}
+                </div>
+              )}
+              <ScrollArea className="h-[420px] rounded-md border p-3">
+                <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                  {summaryLoading ? '加载中…' : (summaryText || '暂无摘要。')}
+                </div>
+              </ScrollArea>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                disabled={summaryLoading || !activeChatId}
+                onClick={async () => {
+                  const chatId = String(activeChatId || '').trim()
+                  if (!chatId) return
+                  setSummaryLoading(true)
+                  try {
+                    const res = await fetchBackendJson<{ ok: boolean; compression?: any }>(`/api/chats/${chatId}/compact`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({})
+                    })
+                    const comp = (res as any)?.compression
+                    if (comp) {
+                      updateChat(chatId, { meta: { compression: comp } })
+                      const text = String(comp?.summary || '').trim()
+                      setSummaryText(text)
+                      const ts = comp?.summaryUpdatedAt != null ? Number(comp.summaryUpdatedAt) : null
+                      setSummaryUpdatedAt(Number.isFinite(ts as any) ? (ts as number) : null)
+                      setCompressionNotice({ text: '已手动压缩对话历史', at: Date.now() })
+                    }
+                  } finally {
+                    setSummaryLoading(false)
+                  }
+                }}
+              >
+                立即压缩
+              </Button>
+              <Button
+                onClick={() => setSummaryOpen(false)}
+              >
+                关闭
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {isSettingsWindow ? (
           <SettingsWindow />
@@ -1637,6 +1753,29 @@ function AppLoaded(): JSX.Element {
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
+                  {(hasChatSummary || compressionNotice) && (
+                    <>
+                      <span>·</span>
+                      <TooltipProvider>
+                        <Tooltip delayDuration={100}>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              className="h-6 px-2 text-xs pointer-events-auto hover:bg-primary/10"
+                              onClick={() => {
+                                setSummaryOpen(true)
+                                void loadChatSummary().catch(() => {})
+                              }}
+                            >
+                              <Eye className="w-3.5 h-3.5 mr-1" />
+                              摘要
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{compressionNotice ? compressionNotice.text : '查看对话摘要'}</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </>
+                  )}
                 </div>
               </div>
             </header>
@@ -2179,7 +2318,7 @@ function AppLoaded(): JSX.Element {
                                       if (hasArtifacts && isGeneratedPath) return null
 
                                       if (raw.startsWith('sandbox:')) {
-                                        const ws = String((settings as any)?.workspaceDir || '').trim()
+                                        const ws = resolveWorkspaceDir()
                                         const rel = raw.replace(/^sandbox:/, '')
                                         if (backendBaseUrl && ws && rel.startsWith('/')) {
                                           const abs = `${ws.replace(/\/$/, '')}${rel}`

@@ -5,10 +5,12 @@ from typing import Any
 from .chats import (
     handle_delete_chat,
     handle_get_chat,
+    handle_get_chat_summary,
     handle_get_chats,
     handle_patch_chat,
     handle_patch_chat_message,
     handle_post_chat_message,
+    handle_post_chat_compact,
     handle_post_chats,
     handle_post_chats_sync,
 )
@@ -56,6 +58,9 @@ def dispatch(handler: Any, method: str, path: str) -> bool:
         if len(parts) == 4 and parts[1] == "api" and parts[2] == "chats":
             handle_get_chat(handler, parts[3])
             return True
+        if len(parts) == 5 and parts[1] == "api" and parts[2] == "chats" and parts[4] == "summary":
+            handle_get_chat_summary(handler, parts[3])
+            return True
 
     if m == "POST" and path == "/api/chats":
         handle_post_chats(handler)
@@ -64,6 +69,11 @@ def dispatch(handler: Any, method: str, path: str) -> bool:
         parts = path.split("/")
         if len(parts) == 5 and parts[1] == "api" and parts[2] == "chats" and parts[4] == "messages":
             handle_post_chat_message(handler, parts[3])
+            return True
+    if m == "POST" and path.endswith("/compact") and path.startswith("/api/chats/"):
+        parts = path.split("/")
+        if len(parts) == 5 and parts[1] == "api" and parts[2] == "chats" and parts[4] == "compact":
+            handle_post_chat_compact(handler, parts[3])
             return True
     if m == "POST" and path == "/api/chats/sync":
         handle_post_chats_sync(handler)

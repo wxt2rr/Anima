@@ -12,8 +12,18 @@ type TerminalTab = {
 }
 
 export const TerminalPanel: React.FC = () => {
-  const { settings } = useStore()
-  const workspaceDir = useMemo(() => settings?.workspaceDir || undefined, [settings?.workspaceDir])
+  const { settings, ui } = useStore()
+  const projects = settings?.projects
+  const workspaceDirSetting = settings?.workspaceDir
+  const activeProjectId = ui?.activeProjectId
+  const workspaceDir = useMemo(() => {
+    const list = Array.isArray(projects) ? (projects as any[]) : []
+    const pid = String(activeProjectId || '').trim()
+    const activeProjectDir = pid
+      ? String((list.find((p) => String(p?.id || '').trim() === pid) as any)?.dir || '').trim()
+      : ''
+    return activeProjectDir || workspaceDirSetting || undefined
+  }, [activeProjectId, projects, workspaceDirSetting])
 
   const [tabs, setTabs] = useState<TerminalTab[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)

@@ -94,6 +94,7 @@ export interface ChatThread {
   createdAt: number
   updatedAt: number
   messages: Message[]
+  meta?: any
   todoState?: {
     items: TodoItem[]
     lastUpdated: number

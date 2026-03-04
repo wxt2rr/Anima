@@ -110,6 +110,11 @@ const getLanguage = (filename: string) => {
 
 export const FileExplorer: React.FC = () => {
   const { settings, updateSettings, ui } = useStore();
+  const projects = Array.isArray(settings?.projects) ? (settings!.projects as any[]) : []
+  const activeProjectId = String(ui?.activeProjectId || '').trim()
+  const activeProjectDir = activeProjectId
+    ? String((projects.find((p) => String(p?.id || '').trim() === activeProjectId) as any)?.dir || '').trim()
+    : ''
   const [rootPath, setRootPath] = useState<string>('');
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
@@ -185,8 +190,9 @@ export const FileExplorer: React.FC = () => {
 
   useEffect(() => {
     const init = async () => {
-      if (settings?.workspaceDir) {
-        setRootPath(settings.workspaceDir);
+      const base = String(activeProjectDir || settings?.workspaceDir || '').trim()
+      if (base) {
+        setRootPath(base);
       } else {
         try {
           const res = await window.anima.fs.getCwd();
@@ -200,7 +206,16 @@ export const FileExplorer: React.FC = () => {
       }
     };
     init();
-  }, [settings?.workspaceDir, updateSettings]);
+  }, [activeProjectDir, settings?.workspaceDir, updateSettings]);
+
+  useEffect(() => {
+    const base = String(activeProjectDir || '').trim()
+    if (!base) return
+    if (rootPath === base) return
+    setRootPath(base)
+    setRefreshKey((k) => k + 1)
+    clearSelectedFile()
+  }, [activeProjectDir, rootPath]);
 
   const handlePickRoot = async () => {
     const res = await window.anima.window.pickDirectory();
@@ -223,7 +238,7 @@ export const FileExplorer: React.FC = () => {
   }
 
   const handleOpenInFinder = async () => {
-    const p = String(rootPath || settings?.workspaceDir || '').trim()
+    const p = String(activeProjectDir || rootPath || settings?.workspaceDir || '').trim()
     if (!p) return
     await window.anima.shell.openPath(p)
   }
@@ -294,18 +309,12 @@ export const FileExplorer: React.FC = () => {
     if (!raw) return;
     const withoutScheme = raw.startsWith('file://') ? raw.slice('file://'.length) : raw;
     const withoutFragment = withoutScheme.replace(/[?#].*$/, '');
-    const base = rootPath || settings?.workspaceDir || '';
+    const base = activeProjectDir || rootPath || settings?.workspaceDir || '';
     const fullPath = withoutFragment.startsWith('/')
       ? withoutFragment
       : (base ? `${base.replace(/\/$/, '')}/${withoutFragment.replace(/^\//, '')}` : withoutFragment);
-    const dir = fullPath.split('/').slice(0, -1).join('/');
-    if (dir && settings?.workspaceDir !== dir && !fullPath.startsWith((settings?.workspaceDir || '').replace(/\/$/, '') + '/')) {
-      updateSettings({ workspaceDir: dir });
-      setRootPath(dir);
-      setRefreshKey((k) => k + 1);
-    }
     void openFilePath(fullPath);
-  }, [rootPath, settings?.workspaceDir, ui.fileExplorerRequest, updateSettings]);
+  }, [activeProjectDir, rootPath, settings?.workspaceDir, ui.fileExplorerRequest]);
 
   if (!rootPath) {
     return (
