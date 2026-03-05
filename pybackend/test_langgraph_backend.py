@@ -129,7 +129,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
 
         td = tempfile.TemporaryDirectory()
         p = td.name
-        env = {"ANIMA_CONFIG_ROOT": p}
+        env = {"ANIMA_CONFIG_ROOT": p, "ANIMA_SKILLS_DIR": os.path.join(p, "skills")}
         return td, env, db, settings
 
     def test_graph_runs_tools_and_sanitizes_history(self) -> None:
@@ -421,7 +421,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         import anima_backend_shared.settings as settings
 
         td = tempfile.TemporaryDirectory()
-        env = {"ANIMA_CONFIG_ROOT": td.name}
+        env = {"ANIMA_CONFIG_ROOT": td.name, "ANIMA_SKILLS_DIR": os.path.join(td.name, "skills")}
         with td:
             with patch.dict(os.environ, env):
                 with patch.object(db, "_CONFIG_ROOT", None):
@@ -1154,7 +1154,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
 
         h = _Handler()
         with tempfile.TemporaryDirectory() as d:
-            with patch.dict(os.environ, {"ANIMA_CONFIG_ROOT": d}):
+            with patch.dict(os.environ, {"ANIMA_CONFIG_ROOT": d, "ANIMA_SKILLS_DIR": os.path.join(d, "skills")}):
                 with patch.object(settings, "_CONFIG_ROOT", None):
                     handle_get_voice_models_base_dir(h)
         out = h.wfile.buf.decode("utf-8")

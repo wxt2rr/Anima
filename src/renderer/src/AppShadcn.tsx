@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { Send, StopCircle, Paperclip, PanelLeftOpen, SquarePen, Wrench, Sparkles, X, ChevronDown, Terminal, Mic, MicOff, Folder, Search, PenLine, Compass, Eye } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -206,6 +206,23 @@ function AppLoaded(): JSX.Element {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const recordingChunksRef = useRef<Blob[]>([])
+  const chatScrollRef = useRef<HTMLElement | null>(null)
+  const scrollAnimRef = useRef<number | null>(null)
+  const scrollVelRef = useRef(0)
+  const isAutoScrollActiveRef = useRef(false)
+  const chatIsAtBottomRef = useRef(true)
+  const isLoadingRef = useRef(false)
+  const userScrollLockedRef = useRef(false)
+  const programmaticScrollRef = useRef(false)
+  const programmaticScrollTimerRef = useRef<number | null>(null)
+  const lastScrollTopRef = useRef(0)
+  const lastMessageKeyRef = useRef('')
+  const lastSeenMessageKeyRef = useRef('')
+  const userMsgElMapRef = useRef<Map<string, HTMLElement>>(new Map())
+  const highlightUserMsgTimerRef = useRef<number | null>(null)
+  const [highlightUserMsgId, setHighlightUserMsgId] = useState('')
+  const [userNavItems, setUserNavItems] = useState<Array<{ id: string; topRatio: number; widthPx: number; content: string }>>([])
+  const [navHover, setNavHover] = useState<{ id: string; topRatio: number; content: string } | null>(null)
   
   const { 
     messages, 
@@ -249,6 +266,8 @@ function AppLoaded(): JSX.Element {
   const [summaryText, setSummaryText] = useState('')
   const [summaryUpdatedAt, setSummaryUpdatedAt] = useState<number | null>(null)
   const [compressionNotice, setCompressionNotice] = useState<{ text: string; at: number } | null>(null)
+  const [chatIsAtBottom, setChatIsAtBottom] = useState(true)
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false)
 
   useEffect(() => {
     void resolveBackendBaseUrl()
@@ -1056,13 +1075,232 @@ function AppLoaded(): JSX.Element {
     return `${t.trace.toolCount(traces.length)}`
   }
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
+  const lastMessageKey = useMemo(() => {
+    const last = messages[messages.length - 1] as any
+    const id = String(last?.id || '')
+    const len = typeof last?.content === 'string' ? last.content.length : 0
+    return `${messages.length}:${id}:${len}`
+  }, [messages])
 
   useEffect(() => {
-    scrollToBottom()
-  }, [messages])
+    lastMessageKeyRef.current = lastMessageKey
+  }, [lastMessageKey])
+
+  const cancelScrollAnim = useCallback(() => {
+    if (scrollAnimRef.current != null) {
+      window.cancelAnimationFrame(scrollAnimRef.current)
+      scrollAnimRef.current = null
+    }
+  }, [])
+
+  const stopAutoScroll = useCallback(() => {
+    isAutoScrollActiveRef.current = false
+    scrollVelRef.current = 0
+    cancelScrollAnim()
+  }, [cancelScrollAnim])
+
+  const markProgrammaticScroll = useCallback(() => {
+    programmaticScrollRef.current = true
+    if (programmaticScrollTimerRef.current != null) {
+      window.clearTimeout(programmaticScrollTimerRef.current)
+      programmaticScrollTimerRef.current = null
+    }
+    programmaticScrollTimerRef.current = window.setTimeout(() => {
+      programmaticScrollRef.current = false
+      programmaticScrollTimerRef.current = null
+    }, 80)
+  }, [])
+
+  const startAutoScroll = useCallback((opts?: { force?: boolean }) => {
+    const el = chatScrollRef.current
+    if (!el) return
+    if (!opts?.force && userScrollLockedRef.current) return
+    if (isAutoScrollActiveRef.current) return
+    isAutoScrollActiveRef.current = true
+
+    let lastTs = performance.now()
+
+    const tick = (ts: number) => {
+      if (!isAutoScrollActiveRef.current) {
+        scrollAnimRef.current = null
+        return
+      }
+      const shouldFollow = opts?.force || !userScrollLockedRef.current
+      if (!shouldFollow) {
+        stopAutoScroll()
+        return
+      }
+
+      const dt = Math.max(0, Math.min(64, ts - lastTs))
+      lastTs = ts
+
+      const target = Math.max(0, el.scrollHeight - el.clientHeight)
+      const x = el.scrollTop
+      const err = target - x
+
+      const k = 0.0022
+      const damping = 0.86
+      const v0 = scrollVelRef.current
+      const v1 = (v0 + err * (k * dt)) * Math.pow(damping, dt / 16)
+      scrollVelRef.current = v1
+
+      const next = x + v1
+      markProgrammaticScroll()
+      el.scrollTop = next
+
+      const near = Math.abs(err) < 0.8 && Math.abs(v1) < 0.15
+      if (near && !isLoadingRef.current) {
+        stopAutoScroll()
+        return
+      }
+
+      scrollAnimRef.current = window.requestAnimationFrame(tick)
+    }
+
+    scrollAnimRef.current = window.requestAnimationFrame(tick)
+  }, [markProgrammaticScroll, stopAutoScroll])
+
+  const handleChatScroll = useCallback(() => {
+    const el = chatScrollRef.current
+    if (!el) return
+    const prevTop = lastScrollTopRef.current
+    const currTop = el.scrollTop
+    lastScrollTopRef.current = currTop
+    const gap = el.scrollHeight - (el.scrollTop + el.clientHeight)
+    if (programmaticScrollRef.current) {
+      if (currTop < prevTop - 2) {
+        userScrollLockedRef.current = true
+        chatIsAtBottomRef.current = false
+        setChatIsAtBottom(false)
+        stopAutoScroll()
+        return
+      }
+      if (gap <= 24) {
+        userScrollLockedRef.current = false
+        chatIsAtBottomRef.current = true
+        setChatIsAtBottom(true)
+        setShowScrollToBottom(false)
+        lastSeenMessageKeyRef.current = lastMessageKeyRef.current
+      }
+      return
+    }
+
+    if (gap <= 24) {
+      userScrollLockedRef.current = false
+      chatIsAtBottomRef.current = true
+      setChatIsAtBottom(true)
+      setShowScrollToBottom(false)
+      lastSeenMessageKeyRef.current = lastMessageKeyRef.current
+      return
+    }
+
+    userScrollLockedRef.current = true
+    chatIsAtBottomRef.current = false
+    setChatIsAtBottom(false)
+    stopAutoScroll()
+  }, [stopAutoScroll])
+
+  const scrollToTop = useCallback(() => {
+    const el = chatScrollRef.current
+    if (!el) return
+    userScrollLockedRef.current = true
+    stopAutoScroll()
+    el.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [stopAutoScroll])
+
+  const scrollToBottom = useCallback(() => {
+    const el = chatScrollRef.current
+    if (!el) return
+    userScrollLockedRef.current = false
+    setShowScrollToBottom(false)
+    setChatIsAtBottom(true)
+    chatIsAtBottomRef.current = true
+    markProgrammaticScroll()
+    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
+    startAutoScroll({ force: true })
+  }, [markProgrammaticScroll, startAutoScroll])
+
+  const scrollToUserMessage = useCallback(
+    (id: string) => {
+      const el = chatScrollRef.current
+      const target = userMsgElMapRef.current.get(id)
+      if (!el || !target) return
+      userScrollLockedRef.current = true
+      stopAutoScroll()
+      const top = Math.max(0, target.offsetTop - 24)
+      el.scrollTo({ top, behavior: 'smooth' })
+      if (highlightUserMsgTimerRef.current != null) window.clearTimeout(highlightUserMsgTimerRef.current)
+      setHighlightUserMsgId(id)
+      highlightUserMsgTimerRef.current = window.setTimeout(() => {
+        setHighlightUserMsgId('')
+        highlightUserMsgTimerRef.current = null
+      }, 900)
+    },
+    [stopAutoScroll]
+  )
+
+  useEffect(() => {
+    const el = chatScrollRef.current
+    if (!el) return
+    const userMsgs = messages.filter((m) => m.role === 'user')
+    if (!userMsgs.length) {
+      setUserNavItems([])
+      return
+    }
+    const maxLen = Math.max(1, ...userMsgs.map((m) => (typeof m.content === 'string' ? m.content.length : 0)))
+    const denom = Math.log(1 + maxLen)
+    const next: Array<{ id: string; topRatio: number; widthPx: number; content: string }> = []
+    const sh = Math.max(1, el.scrollHeight)
+    for (const m of userMsgs) {
+      const id = String(m.id || '').trim()
+      if (!id) continue
+      const node = userMsgElMapRef.current.get(id)
+      if (!node) continue
+      const content = typeof m.content === 'string' ? m.content : ''
+      const len = content.length
+      const norm = denom > 0 ? Math.log(1 + Math.max(0, len)) / denom : 0
+      const widthPx = 4 + norm * (18 - 4)
+      const topRatio = Math.max(0, Math.min(1, node.offsetTop / sh))
+      next.push({ id, topRatio, widthPx, content })
+    }
+    next.sort((a, b) => a.topRatio - b.topRatio)
+    setUserNavItems(next)
+  }, [lastMessageKey, messages])
+
+  useEffect(() => {
+    isLoadingRef.current = Boolean(isLoading)
+  }, [isLoading])
+
+  useEffect(() => {
+    chatIsAtBottomRef.current = Boolean(chatIsAtBottom)
+  }, [chatIsAtBottom])
+
+  useEffect(() => {
+    setChatIsAtBottom(true)
+    chatIsAtBottomRef.current = true
+    userScrollLockedRef.current = false
+    setShowScrollToBottom(false)
+    lastSeenMessageKeyRef.current = lastMessageKeyRef.current
+    window.setTimeout(() => {
+      const el = chatScrollRef.current
+      if (!el) return
+      markProgrammaticScroll()
+      el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
+      startAutoScroll({ force: true })
+    }, 0)
+  }, [activeChatId, markProgrammaticScroll, startAutoScroll])
+
+  useEffect(() => {
+    if (!userScrollLockedRef.current) {
+      lastSeenMessageKeyRef.current = lastMessageKey
+      setShowScrollToBottom(false)
+      startAutoScroll()
+      return
+    }
+    if (lastMessageKey !== lastSeenMessageKeyRef.current) {
+      setShowScrollToBottom(true)
+    }
+  }, [lastMessageKey, startAutoScroll])
 
   useEffect(() => {
     const root = document.documentElement
@@ -1191,6 +1429,18 @@ function AppLoaded(): JSX.Element {
       meta: userAttachments.length ? { userAttachments, userAttachmentsWorkspaceDir } : undefined
     } as any)
     if (composer.attachments.length) updateComposer({ attachments: [] })
+    userScrollLockedRef.current = false
+    chatIsAtBottomRef.current = true
+    setChatIsAtBottom(true)
+    setShowScrollToBottom(false)
+    window.requestAnimationFrame(() => {
+      const el = chatScrollRef.current
+      if (el) {
+        markProgrammaticScroll()
+        el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
+      }
+      startAutoScroll({ force: true })
+    })
 
       try {
         // Add placeholder for assistant
@@ -1216,6 +1466,8 @@ function AppLoaded(): JSX.Element {
         let assistantMeta: NonNullable<Message['meta']> = shouldShowAnalysis ? { reasoningStatus: 'pending', reasoningText: '' } : {}
         let reasoningText = ''
         let gotDone = false
+        let compressionMsgId: string | null = null
+        let compressionSeenStart = false
         const traceMessageIds: Record<string, string> = {}
 
         const stopTyping = () => {
@@ -1341,6 +1593,26 @@ function AppLoaded(): JSX.Element {
           updateLastMessage(fullContent, assistantMeta)
         }
 
+        const ensureCompressionMsg = (state: 'running' | 'done', content?: string) => {
+          const { insertMessageBefore, updateMessageById, activeChatId, messages } = useStore.getState()
+          const cid = String(activeChatId || '').trim()
+          if (!cid) return
+          if (!compressionMsgId) {
+            compressionMsgId = crypto.randomUUID()
+            insertMessageBefore(currentAssistantId, {
+              id: compressionMsgId,
+              role: 'assistant',
+              content: content || '',
+              turnId,
+              meta: { compressionState: state }
+            } as any)
+            return
+          }
+          const existing = messages.find((m) => m.id === compressionMsgId)
+          const nextMeta = { ...(existing?.meta || {}), compressionState: state }
+          updateMessageById(cid, compressionMsgId, { content: typeof content === 'string' ? content : existing?.content || '', meta: nextMeta } as any)
+        }
+
         const baseUrl = await resolveBackendBaseUrl()
         const res = await fetch(`${baseUrl}/api/runs?stream=1`, {
                 method: 'POST',
@@ -1424,7 +1696,11 @@ function AppLoaded(): JSX.Element {
                 updateLastMessage(fullContent, assistantMeta)
               } else if (evt.type === 'trace' && evt.trace) {
                 upsertTrace(evt.trace)
+              } else if (evt.type === 'compression_start') {
+                compressionSeenStart = true
+                ensureCompressionMsg('running')
               } else if (evt.type === 'compression') {
+                ensureCompressionMsg('done', '已压缩对话历史')
                 const ts = Date.now()
                 setCompressionNotice({ text: '已自动压缩对话历史', at: ts })
                 const cid = String(activeChatId || '').trim()
@@ -1441,6 +1717,7 @@ function AppLoaded(): JSX.Element {
                   })()
                 }
               } else if (evt.type === 'done') {
+                if (compressionSeenStart) ensureCompressionMsg('done', '已压缩对话历史')
                 usage = evt.usage || null
                 if (evt.rateLimit && Object.keys(evt.rateLimit).length) {
                   assistantMeta = { ...assistantMeta, rateLimit: evt.rateLimit }
@@ -1470,6 +1747,7 @@ function AppLoaded(): JSX.Element {
             }
           }
         }
+        if (compressionSeenStart) ensureCompressionMsg('done', '已压缩对话历史')
         if (gotDone) {
           await reader.cancel().catch(() => {})
         } else {
@@ -1781,8 +2059,12 @@ function AppLoaded(): JSX.Element {
             </header>
 
             <div className="flex flex-1 overflow-hidden">
-            <div className="flex flex-col flex-1 overflow-hidden min-w-0">
-            <main className="flex-1 overflow-y-auto pt-4 pl-6 pr-6 pb-4 no-drag scroll-smooth">
+            <div className="flex flex-col flex-1 overflow-hidden min-w-0 relative">
+            <main
+              ref={chatScrollRef as any}
+              onScroll={handleChatScroll}
+              className="flex-1 overflow-y-auto pt-4 pl-6 pr-6 pb-4 no-drag"
+            >
               {messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-4">
                   <p className="font-medium text-lg text-foreground">{t.helloTitle}</p>
@@ -1813,7 +2095,16 @@ function AppLoaded(): JSX.Element {
                       {msg.role === 'user' ? (
                         <div className={`py-2 flex justify-end ${msg.id === lastUserMessageId ? 'sticky top-0 z-20' : ''}`}>
                            <div className="flex flex-col items-end gap-2">
-                              <div className="w-fit max-w-[520px] rounded-2xl border border-border/60 bg-black/5 dark:bg-white/10 px-4 py-2 text-[14px] leading-relaxed whitespace-pre-wrap break-words text-foreground/90">
+                              <div
+                                ref={(el) => {
+                                  const id = String(msg.id || '').trim()
+                                  if (!id) return
+                                  const map = userMsgElMapRef.current
+                                  if (el) map.set(id, el)
+                                  else map.delete(id)
+                                }}
+                                className={`w-fit max-w-[520px] rounded-2xl border border-border/60 bg-black/5 dark:bg-white/10 px-4 py-2 text-[14px] leading-relaxed whitespace-pre-wrap break-words text-foreground/90 transition-shadow ${msg.id === highlightUserMsgId ? 'ring-2 ring-primary/35 shadow-sm' : ''}`}
+                              >
                                 {msg.content}
                               </div>
                               {(() => {
@@ -2249,7 +2540,24 @@ function AppLoaded(): JSX.Element {
                               <TodoProgressCard todos={msg.meta.todoSnapshot} />
                             )}
 
-                            {settings.enableMarkdown ? (
+                            {(msg.meta as any)?.compressionState === 'running' ? (
+                              <div className="pl-6">
+                                <div className="inline-flex items-center gap-2 text-[14px] leading-relaxed text-foreground/80">
+                                  <span>压缩中</span>
+                                  <span className="inline-flex items-center gap-1 translate-y-[1px]">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60 animate-bounce" style={{ animationDelay: '0ms' }} />
+                                    <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60 animate-bounce" style={{ animationDelay: '120ms' }} />
+                                    <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60 animate-bounce" style={{ animationDelay: '240ms' }} />
+                                  </span>
+                                </div>
+                                <div className="mt-2 space-y-2 max-w-[520px]">
+                                  <div className="h-3 rounded bg-muted/40 animate-pulse" />
+                                  <div className="h-3 w-2/3 rounded bg-muted/30 animate-pulse" />
+                                </div>
+                              </div>
+                            ) : null}
+
+                            {(msg.meta as any)?.compressionState === 'running' ? null : settings.enableMarkdown ? (
                               <div className="pl-6">
                                 <ReactMarkdown
                                   remarkPlugins={[remarkGfm, remarkMath]}
@@ -2413,6 +2721,84 @@ function AppLoaded(): JSX.Element {
                 </div>
               )}
             </main>
+            {userNavItems.length > 0 && (
+              <div className="absolute right-2 top-1/2 -translate-y-1/2 h-[260px] w-6 z-20 no-drag group pointer-events-auto">
+                <div className="flex flex-col h-full items-center select-none">
+                  <button
+                    type="button"
+                    className="h-6 w-6 rounded-md bg-background/60 backdrop-blur text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity hover:text-foreground hover:bg-background/80"
+                    onClick={scrollToTop}
+                  >
+                    <ChevronDown className="w-3.5 h-3.5 rotate-180 mx-auto" />
+                  </button>
+                  <div
+                    className="relative flex-1 w-3 my-2 rounded-full overflow-visible"
+                    onMouseLeave={() => setNavHover(null)}
+                  >
+                    <div className="absolute inset-0 rounded-full bg-muted/10 opacity-0 group-hover:opacity-100 transition-opacity" />
+
+                    {userNavItems.map((it) => (
+                      <button
+                        key={it.id}
+                        type="button"
+                        className={`absolute right-0 h-1 rounded-full bg-muted-foreground/45 hover:bg-primary opacity-35 hover:opacity-100 group-hover:opacity-90 transition-opacity transition-colors ${it.id === highlightUserMsgId ? 'bg-primary opacity-100' : ''}`}
+                        style={{ top: `${it.topRatio * 100}%`, width: `${it.widthPx}px`, transform: 'translateY(-50%)' }}
+                        onClick={() => scrollToUserMessage(it.id)}
+                        onMouseEnter={() => setNavHover({ id: it.id, topRatio: it.topRatio, content: it.content })}
+                        title={String(it.content || '').slice(0, 80)}
+                      />
+                    ))}
+
+                    {navHover && (
+                      <div
+                        className="absolute right-full mr-2 w-[320px] max-w-[320px] max-h-[220px] overflow-auto px-3 py-2 rounded-xl bg-background/90 backdrop-blur border border-border/60 text-[12px] text-foreground shadow-sm whitespace-pre-wrap break-words"
+                        style={{ top: `${navHover.topRatio * 100}%`, transform: 'translateY(-50%)' }}
+                      >
+                        {navHover.content || '—'}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="h-6 w-6 rounded-md bg-background/60 backdrop-blur text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity hover:text-foreground hover:bg-background/80"
+                    onClick={scrollToBottom}
+                  >
+                    <ChevronDown className="w-3.5 h-3.5 mx-auto" />
+                  </button>
+                </div>
+              </div>
+            )}
+            {showScrollToBottom && (
+              <div className="absolute bottom-28 left-1/2 -translate-x-1/2 z-30 no-drag">
+                <TooltipProvider>
+                  <Tooltip delayDuration={150}>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 rounded-full bg-transparent hover:bg-muted/40 text-primary/80 hover:text-primary transition-colors"
+                        onClick={() => {
+                          lastSeenMessageKeyRef.current = lastMessageKey
+                          setShowScrollToBottom(false)
+                          setChatIsAtBottom(true)
+                          chatIsAtBottomRef.current = true
+                          userScrollLockedRef.current = false
+                          const el = chatScrollRef.current
+                          if (el) {
+                            markProgrammaticScroll()
+                            el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
+                          }
+                          startAutoScroll({ force: true })
+                        }}
+                      >
+                        <ChevronDown className="w-4 h-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>下方有新内容</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+            )}
 
             <footer className="pl-6 pr-6 pt-6 pb-0 no-drag overflow-visible">
               <div className="max-w-3xl mx-auto relative bg-background rounded-xl shadow-sm border border-black/5 dark:border-white/10 p-3 transition-all duration-200">

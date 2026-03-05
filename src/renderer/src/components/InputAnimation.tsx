@@ -25,7 +25,7 @@ export const InputAnimation = React.forwardRef<HTMLTextAreaElement, InputAnimati
     )
 
     return (
-      <div className="grid w-full relative" style={{ maxHeight: '120px' }}>
+      <div className="grid w-full relative overflow-hidden" style={{ maxHeight: '120px' }}>
         <div
           aria-hidden="true"
           className={cn(commonClasses, "invisible whitespace-pre-wrap break-words pointer-events-none overflow-hidden")}
@@ -38,8 +38,8 @@ export const InputAnimation = React.forwardRef<HTMLTextAreaElement, InputAnimati
           ref={innerRef}
           value={value}
           onChange={onChange}
-          className={cn(commonClasses, "overflow-y-auto")}
-          style={{ fontFamily: 'inherit' }}
+          className={cn(commonClasses, "overflow-y-auto overflow-x-hidden break-words")}
+          style={{ fontFamily: 'inherit', maxHeight: '120px' }}
           rows={1}
           {...props}
         />

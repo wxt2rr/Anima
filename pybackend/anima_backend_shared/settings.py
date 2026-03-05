@@ -71,7 +71,10 @@ def config_root() -> Path:
 
 
 def skills_dir() -> Path:
-    return config_root() / "skills"
+    raw = str(os.environ.get("ANIMA_SKILLS_DIR") or "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".config" / APP_NAME / "skills"
 
 
 def project_skills_dir() -> Path:
@@ -145,12 +148,6 @@ def list_skills() -> Tuple[str, List[Dict[str, Any]]]:
     dir_path.mkdir(parents=True, exist_ok=True)
     skills: List[Dict[str, Any]] = []
     roots = [dir_path]
-    proj_dir = project_skills_dir()
-    if proj_dir != dir_path and proj_dir.exists():
-        roots.append(proj_dir)
-    bundled_dir = bundled_skills_dir()
-    if bundled_dir and bundled_dir != dir_path and bundled_dir != proj_dir and bundled_dir.exists():
-        roots.append(bundled_dir)
     seen: Dict[str, Dict[str, Any]] = {}
     for base in roots:
         for entry in base.iterdir():
@@ -193,12 +190,6 @@ def get_skills_content(ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     wanted = set([str(x).strip() for x in (ids or []) if str(x).strip()])
     skills: List[Dict[str, Any]] = []
     roots = [dir_path]
-    proj_dir = project_skills_dir()
-    if proj_dir != dir_path and proj_dir.exists():
-        roots.append(proj_dir)
-    bundled_dir = bundled_skills_dir()
-    if bundled_dir and bundled_dir != dir_path and bundled_dir != proj_dir and bundled_dir.exists():
-        roots.append(bundled_dir)
     seen: Dict[str, Dict[str, Any]] = {}
     for base in roots:
         for entry in base.iterdir():

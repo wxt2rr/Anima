@@ -142,6 +142,7 @@ def _apply_persistent_compression(
     provider: Any,
     composer: Dict[str, Any],
     extra_body: Optional[Dict[str, Any]],
+    emit_event: Optional[Callable[[Any], None]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Optional[Dict[str, Any]]]:
     s = settings_obj.get("settings") if isinstance(settings_obj, dict) else {}
     s = s if isinstance(s, dict) else {}
@@ -225,6 +226,12 @@ def _apply_persistent_compression(
     except Exception:
         summary_max_tokens = 800
     summary_max_tokens = min(1200, max(256, summary_max_tokens))
+
+    if emit_event is not None:
+        try:
+            emit_event({"type": "compression_start", "at": now_ms(), "thresholdPct": threshold_pct, "keepRecent": keep_recent})
+        except Exception:
+            pass
 
     new_summary = _summarize_incremental(
         provider=provider,
@@ -739,25 +746,6 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
 
     from anima_backend_shared.chat import apply_attachments_inline
 
-    compression_evt = None
-    if use_thread_messages and thread_id:
-        messages, composer, compression_evt = _apply_persistent_compression(
-            chat_id=thread_id, messages=messages, settings_obj=settings_obj, provider=provider, composer=composer, extra_body=extra_body
-        )
-    messages = inject_system_message(messages, settings_obj, composer)
-    prepared = apply_attachments_inline(messages, composer)
-    create_run(
-        run_id,
-        thread_id,
-        {
-            "messages": prepared,
-            "composer": composer,
-            "temperature": temperature,
-            "maxTokens": max_tokens,
-            "extraBody": extra_body,
-        },
-    )
-
     handler.send_response(HTTPStatus.OK)
     handler.send_header("Access-Control-Allow-Origin", "*")
     handler.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
@@ -778,6 +766,31 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
             handler.wfile.flush()
         except Exception as e:
             raise ClientDisconnected() from e
+
+    compression_evt = None
+    if use_thread_messages and thread_id:
+        messages, composer, compression_evt = _apply_persistent_compression(
+            chat_id=thread_id,
+            messages=messages,
+            settings_obj=settings_obj,
+            provider=provider,
+            composer=composer,
+            extra_body=extra_body,
+            emit_event=emit,
+        )
+    messages = inject_system_message(messages, settings_obj, composer)
+    prepared = apply_attachments_inline(messages, composer)
+    create_run(
+        run_id,
+        thread_id,
+        {
+            "messages": prepared,
+            "composer": composer,
+            "temperature": temperature,
+            "maxTokens": max_tokens,
+            "extraBody": extra_body,
+        },
+    )
 
     if isinstance(compression_evt, dict) and compression_evt:
         try:

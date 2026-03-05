@@ -1,10 +1,11 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, globalShortcut, nativeImage, Menu, type MenuItemConstructorOptions, type OpenDialogOptions } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, globalShortcut, nativeImage, Menu, screen, type MenuItemConstructorOptions, type OpenDialogOptions } from 'electron'
 import { join } from 'path'
-import { existsSync } from 'fs'
+import { existsSync, readdirSync, statSync, mkdirSync, copyFileSync } from 'fs'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import * as net from 'net'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { autoUpdater } from 'electron-updater'
+import Store from 'electron-store'
 import { registerFileService } from './services/fileService'
 import { registerGitService } from './services/gitService'
 import { registerTerminalService } from './services/terminalService'
@@ -12,6 +13,69 @@ import { registerTerminalService } from './services/terminalService'
 let mainWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
 let backendProcess: ChildProcessWithoutNullStreams | null = null
+
+type WindowState = {
+  bounds?: { x?: number; y?: number; width: number; height: number }
+  isMaximized?: boolean
+}
+
+const windowStore = new Store<{ mainWindow: WindowState; settingsWindow: WindowState }>({ name: 'window-state' })
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n))
+}
+
+function getDefaultBounds(kind: 'main' | 'settings'): { width: number; height: number } {
+  const work = screen.getPrimaryDisplay().workAreaSize
+  const maxW = Math.max(800, work.width - 80)
+  const maxH = Math.max(600, work.height - 80)
+  const base = kind === 'settings' ? { width: 1080, height: 720 } : { width: 1280, height: 820 }
+  return {
+    width: clamp(base.width, 800, maxW),
+    height: clamp(base.height, 600, maxH)
+  }
+}
+
+function restoreWindowState(kind: 'main' | 'settings'): { bounds: { width: number; height: number; x?: number; y?: number }; isMaximized: boolean } {
+  const key = kind === 'main' ? 'mainWindow' : 'settingsWindow'
+  const saved = (windowStore.get(key) || {}) as WindowState
+  const def = getDefaultBounds(kind)
+  const b = saved.bounds
+  const bounds = {
+    width: clamp(Number(b?.width || def.width), 800, 10000),
+    height: clamp(Number(b?.height || def.height), 600, 10000),
+    x: typeof b?.x === 'number' ? b.x : undefined,
+    y: typeof b?.y === 'number' ? b.y : undefined
+  }
+  return { bounds, isMaximized: Boolean(saved.isMaximized) }
+}
+
+function attachWindowStatePersistence(win: BrowserWindow, kind: 'main' | 'settings'): void {
+  const key = kind === 'main' ? 'mainWindow' : 'settingsWindow'
+  let t: NodeJS.Timeout | null = null
+
+  const save = () => {
+    if (win.isDestroyed()) return
+    const isMaximized = win.isMaximized()
+    const bounds = isMaximized ? win.getNormalBounds() : win.getBounds()
+    windowStore.set(key, { bounds, isMaximized })
+  }
+
+  const scheduleSave = () => {
+    if (t) clearTimeout(t)
+    t = setTimeout(() => {
+      t = null
+      save()
+    }, 250)
+  }
+
+  win.on('resize', scheduleSave)
+  win.on('move', scheduleSave)
+  win.on('close', () => {
+    if (t) clearTimeout(t)
+    save()
+  })
+}
 
 type UpdateStatus = 'disabled' | 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
 type UpdateProgress = { percent?: number; bytesPerSecond?: number; transferred?: number; total?: number }
@@ -70,14 +134,67 @@ function startBackend(port: number): ChildProcessWithoutNullStreams {
   const python = resolvePythonExecutable()
   const configRoot = process.env.ANIMA_CONFIG_ROOT || join(app.getPath('userData'), 'pybackend')
   const bundledSkillsDir = process.env.ANIMA_BUNDLED_SKILLS_DIR || (app.isPackaged ? join(process.resourcesPath, 'skills') : join(app.getAppPath(), 'skills'))
+  const homeDir = app.getPath('home')
+  const userSkillsDir = process.env.ANIMA_SKILLS_DIR || join(homeDir, '.config', 'anima', 'skills')
+
+  const ensureDir = (p: string) => {
+    try {
+      mkdirSync(p, { recursive: true })
+    } catch (e) {
+      return
+    }
+  }
+
+  const copyDirRecursive = (src: string, dst: string) => {
+    ensureDir(dst)
+    const entries = readdirSync(src, { withFileTypes: true })
+    for (const ent of entries) {
+      const s = join(src, ent.name)
+      const d = join(dst, ent.name)
+      if (ent.isDirectory()) {
+        copyDirRecursive(s, d)
+      } else if (ent.isFile()) {
+        if (existsSync(d)) continue
+        try {
+          copyFileSync(s, d)
+        } catch (e) {
+          continue
+        }
+      }
+    }
+  }
+
+  const installBundledSkills = (srcRoot: string, dstRoot: string) => {
+    if (!srcRoot || !existsSync(srcRoot)) return
+    ensureDir(dstRoot)
+    let entries: string[] = []
+    try {
+      entries = readdirSync(srcRoot)
+    } catch {
+      entries = []
+    }
+    for (const name of entries) {
+      const src = join(srcRoot, name)
+      const dst = join(dstRoot, name)
+      try {
+        if (!statSync(src).isDirectory()) continue
+      } catch {
+        continue
+      }
+      if (!existsSync(join(src, 'SKILL.md'))) continue
+      if (existsSync(dst)) continue
+      copyDirRecursive(src, dst)
+    }
+  }
+
+  installBundledSkills(bundledSkillsDir, userSkillsDir)
+
   const extraEnv: Record<string, string> = { PYTHONUNBUFFERED: '1', ANIMA_CONFIG_ROOT: configRoot }
-  extraEnv.ANIMA_BUNDLED_SKILLS_DIR = bundledSkillsDir
+  extraEnv.ANIMA_SKILLS_DIR = userSkillsDir
   if (is.dev) {
     if (!process.env.ANIMA_VOICE_DEBUG) extraEnv.ANIMA_VOICE_DEBUG = '1'
     if (!process.env.ANIMA_TG_DEBUG) extraEnv.ANIMA_TG_DEBUG = '1'
   }
-
-  const homeDir = app.getPath('home')
   const extraPaths = [
     '/opt/anaconda3/bin',
     '/usr/local/anaconda3/bin',
@@ -245,9 +362,9 @@ function registerIpcHandlers(): void {
       return { ok: true }
     }
 
+    const restored = restoreWindowState('settings')
     settingsWindow = new BrowserWindow({
-      width: 1080,
-      height: 720,
+      ...restored.bounds,
       show: false,
       titleBarStyle: 'hiddenInset',
       trafficLightPosition: { x: 20, y: 18 },
@@ -262,6 +379,8 @@ function registerIpcHandlers(): void {
       icon: getDevIconPath()
     })
     const win = settingsWindow
+    if (restored.isMaximized) win.maximize()
+    attachWindowStatePersistence(win, 'settings')
 
     settingsWindow.on('ready-to-show', () => {
       if (!win.isDestroyed()) win.show()
@@ -482,9 +601,9 @@ function setupAutoUpdates(): void {
 }
 
 async function createWindow(): Promise<void> {
+  const restored = restoreWindowState('main')
   mainWindow = new BrowserWindow({
-    width: 1000,
-    height: 700,
+    ...restored.bounds,
     show: false,
     titleBarStyle: 'hiddenInset', // Use hiddenInset to show traffic lights inside the window content area
     trafficLightPosition: { x: 20, y: 18 }, // Adjust traffic light position
@@ -498,6 +617,8 @@ async function createWindow(): Promise<void> {
     },
     icon: getDevIconPath()
   })
+  if (restored.isMaximized) mainWindow.maximize()
+  attachWindowStatePersistence(mainWindow, 'main')
   
   // We want native traffic lights, so do NOT hide them
   // if (process.platform === 'darwin') {
