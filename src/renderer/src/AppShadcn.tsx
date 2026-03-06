@@ -9,8 +9,7 @@ import { CodeBlock } from './components/markdown/CodeBlock'
 import { MermaidBlock } from './components/markdown/MermaidBlock'
 import 'katex/dist/katex.min.css'
 import { DiffView } from './components/DiffView'
-import { TodoProgressCard } from './components/TodoProgressCard'
-import { resolveBackendBaseUrl, useStore, type Message, type ToolTrace, type TodoItem, type ProviderModel, type Artifact } from './store/useStore'
+import { resolveBackendBaseUrl, useStore, type Message, type ToolTrace, type ProviderModel, type Artifact } from './store/useStore'
 import { THEMES } from './lib/themes'
 import { SettingsDialog, SettingsWindow } from './components/SettingsDialog'
 import { ChatHistoryPanel } from './components/ChatHistoryPanel'
@@ -202,6 +201,7 @@ function AppLoaded(): JSX.Element {
   const lastSoundAtRef = useRef(0)
   const abortControllerRef = useRef<AbortController | null>(null)
   const typingTimerRef = useRef<number | null>(null)
+  const compressionTypingTimerRef = useRef<number | null>(null)
   const [isRecording, setIsRecording] = useState(false)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
@@ -265,19 +265,46 @@ function AppLoaded(): JSX.Element {
   const [summaryLoading, setSummaryLoading] = useState(false)
   const [summaryText, setSummaryText] = useState('')
   const [summaryUpdatedAt, setSummaryUpdatedAt] = useState<number | null>(null)
-  const [compressionNotice, setCompressionNotice] = useState<{ text: string; at: number } | null>(null)
   const [chatIsAtBottom, setChatIsAtBottom] = useState(true)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
+
+  const activeChat = useMemo(() => chats.find((c) => c.id === activeChatId), [chats, activeChatId])
+  const persistedCompression = useMemo(() => ((activeChat as any)?.meta?.compression as any) || null, [activeChat])
+  const persistedCompressionSummary = useMemo(() => String(persistedCompression?.summary || '').trim(), [persistedCompression])
+  const persistedCompressionUntilId = useMemo(() => String(persistedCompression?.summarizedUntilMessageId || '').trim(), [persistedCompression])
+  const hasRuntimeCompression = useMemo(() => {
+    return messages.some((m) => {
+      const cs = (m as any)?.meta?.compressionState
+      return cs === 'running' || cs === 'done'
+    })
+  }, [messages])
+  const displayMessages = useMemo(() => {
+    if (hasRuntimeCompression) return messages
+    if (!persistedCompressionSummary) return messages
+
+    const synthetic = {
+      id: `compression:${activeChatId || 'unknown'}`,
+      role: 'assistant',
+      content: persistedCompressionSummary,
+      meta: { compressionState: 'done', source: 'persisted' }
+    } as any
+
+    const untilId = String(persistedCompressionUntilId || '').trim()
+    if (!untilId) return [...messages, synthetic]
+
+    const idx = messages.findIndex((m: any) => String(m?.id || '').trim() === untilId)
+    if (idx < 0) return [...messages, synthetic]
+
+    const next = [...messages]
+    next.splice(idx + 1, 0, synthetic)
+    return next
+  }, [messages, hasRuntimeCompression, persistedCompressionSummary, persistedCompressionUntilId, activeChatId])
 
   useEffect(() => {
     void resolveBackendBaseUrl()
       .then((url) => setBackendBaseUrl(String(url || '').trim()))
       .catch(() => {})
   }, [])
-
-  const activeChat = useMemo(() => chats.find((c) => c.id === activeChatId), [chats, activeChatId])
-  const chatCompression = (activeChat as any)?.meta?.compression as any
-  const hasChatSummary = Boolean(String(chatCompression?.summary || '').trim())
 
   const loadChatSummary = async () => {
     const chatId = String(activeChatId || '').trim()
@@ -329,14 +356,66 @@ function AppLoaded(): JSX.Element {
   }, [isResizingLeft, isResizingRight])
 
   useEffect(() => {
-    if (!compressionNotice) return
-    const t = window.setTimeout(() => setCompressionNotice(null), 4500)
-    return () => window.clearTimeout(t)
-  }, [compressionNotice])
-
-  useEffect(() => {
     void initApp()
   }, [initApp])
+
+  const CompressionCard = ({
+    state,
+    content
+  }: {
+    state: 'running' | 'done'
+    content: string
+  }) => {
+    const [collapsed, setCollapsed] = useState(state === 'done')
+    const viewportRef = useRef<HTMLDivElement | null>(null)
+    const showBody = !collapsed && Boolean(String(content || '').trim())
+
+    useEffect(() => {
+      if (state === 'done') setCollapsed(true)
+      else setCollapsed(false)
+    }, [state])
+
+    useEffect(() => {
+      if (!showBody) return
+      const el = viewportRef.current
+      if (!el) return
+      el.scrollTop = el.scrollHeight
+    }, [content, showBody])
+
+    const title = state === 'running' ? '在压缩对话历史以节省上下文…' : '已压缩对话历史'
+    const canToggle = state === 'done'
+    return (
+      <div className="w-full">
+        <div className="rounded-xl border border-black/5 dark:border-white/10 bg-background/60 backdrop-blur-sm overflow-hidden">
+          <button
+            type="button"
+            className={`w-full px-3 py-2 flex items-center justify-between gap-3 text-left ${canToggle ? 'cursor-pointer group' : 'cursor-default'}`}
+            onClick={() => {
+              if (!canToggle) return
+              setCollapsed((v) => !v)
+            }}
+          >
+            <div className={`text-[13px] leading-relaxed font-medium ${state === 'running' ? 'anima-flow-text' : 'text-foreground/80'}`}>{title}</div>
+            {canToggle ? (
+              <ChevronDown
+                className={`w-4 h-4 text-muted-foreground transition-all opacity-0 group-hover:opacity-100 ${collapsed ? '' : 'rotate-180'}`}
+              />
+            ) : (
+              <div className="w-4 h-4" />
+            )}
+          </button>
+
+          {showBody ? (
+            <div ref={viewportRef} className="h-[150px] overflow-y-auto px-3 py-2 custom-scrollbar">
+              <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-foreground/90">
+                {content}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    )
+  }
 
   const setUpdateState = useUpdateStore((s) => s.setState)
 
@@ -1375,6 +1454,10 @@ function AppLoaded(): JSX.Element {
       window.clearInterval(typingTimerRef.current)
       typingTimerRef.current = null
     }
+    if (compressionTypingTimerRef.current) {
+      window.clearInterval(compressionTypingTimerRef.current)
+      compressionTypingTimerRef.current = null
+    }
   }
 
   const handleSend = async () => {
@@ -1468,6 +1551,9 @@ function AppLoaded(): JSX.Element {
         let gotDone = false
         let compressionMsgId: string | null = null
         let compressionSeenStart = false
+        let compressionEnded = false
+        let compressionFullContent = ''
+        let compressionPendingContent = ''
         const traceMessageIds: Record<string, string> = {}
 
         const stopTyping = () => {
@@ -1500,6 +1586,28 @@ function AppLoaded(): JSX.Element {
             fullContent += part
             playStreamingTick()
             updateLastMessage(fullContent)
+          }, 12)
+        }
+
+        const stopCompressionTyping = () => {
+          if (compressionTypingTimerRef.current != null) {
+            window.clearInterval(compressionTypingTimerRef.current)
+            compressionTypingTimerRef.current = null
+          }
+        }
+
+        const startCompressionTyping = () => {
+          if (compressionTypingTimerRef.current != null) return
+          compressionTypingTimerRef.current = window.setInterval(() => {
+            if (!compressionPendingContent) {
+              stopCompressionTyping()
+              return
+            }
+            const charsPerTick = compressionEnded ? 10 : 2
+            const part = compressionPendingContent.slice(0, charsPerTick)
+            compressionPendingContent = compressionPendingContent.slice(charsPerTick)
+            compressionFullContent += part
+            ensureCompressionMsg('running', compressionFullContent)
           }, 12)
         }
 
@@ -1550,44 +1658,6 @@ function AppLoaded(): JSX.Element {
                turnId,
                meta: assistantMeta
              } as any)
-          }
-
-          if (trace.name === 'TodoWrite' && trace.status === 'succeeded') {
-            try {
-              const resultText = trace.resultPreview?.text || (trace as any).result || '{}'
-              const result = JSON.parse(resultText)
-
-              if (result.ok && Array.isArray(result.todos)) {
-                const { updateChat, chats, activeChatId } = useStore.getState()
-                const currentChat = chats.find((c) => c.id === activeChatId)
-                const currentTodos = currentChat?.todoState?.items || []
-
-                let nextTodos = [...currentTodos]
-                if (result.merge) {
-                  for (const todo of result.todos) {
-                    const idx = nextTodos.findIndex((t) => t.id === todo.id)
-                    if (idx >= 0) {
-                      nextTodos[idx] = { ...nextTodos[idx], ...todo }
-                    } else {
-                      nextTodos.push(todo)
-                    }
-                  }
-                } else {
-                  nextTodos = result.todos
-                }
-
-                if (activeChatId) {
-                  updateChat(activeChatId, { todoState: { items: nextTodos, lastUpdated: Date.now() } })
-                }
-
-                assistantMeta = {
-                  ...assistantMeta,
-                  todoSnapshot: nextTodos
-                }
-              }
-            } catch (e) {
-              console.error('Failed to process TodoWrite result', e)
-            }
           }
 
           updateLastMessage(fullContent, assistantMeta)
@@ -1677,6 +1747,9 @@ function AppLoaded(): JSX.Element {
                 summaryPreview?: string
                 summaryUpdatedAt?: number
                 summarizedUntilMessageId?: string
+                summary?: string
+                ok?: boolean
+                error?: string
               }
               if (evt.type === 'delta' && typeof evt.content === 'string' && evt.content) {
                 pendingContent += evt.content
@@ -1698,26 +1771,43 @@ function AppLoaded(): JSX.Element {
                 upsertTrace(evt.trace)
               } else if (evt.type === 'compression_start') {
                 compressionSeenStart = true
-                ensureCompressionMsg('running')
-              } else if (evt.type === 'compression') {
-                ensureCompressionMsg('done', '已压缩对话历史')
-                const ts = Date.now()
-                setCompressionNotice({ text: '已自动压缩对话历史', at: ts })
-                const cid = String(activeChatId || '').trim()
-                if (cid) {
-                  void (async () => {
-                    try {
-                      const res = await fetchBackendJson<{ ok: boolean; compression?: any }>(`/api/chats/${cid}/summary?t=${Date.now()}`, { method: 'GET', cache: 'no-store' })
-                      if (res && (res as any).compression) {
-                        updateChat(cid, { meta: { compression: (res as any).compression } })
+                compressionEnded = false
+                compressionFullContent = ''
+                compressionPendingContent = ''
+                stopCompressionTyping()
+                ensureCompressionMsg('running', '')
+              } else if (evt.type === 'compression_delta' && typeof evt.content === 'string' && evt.content) {
+                compressionPendingContent += evt.content
+                startCompressionTyping()
+              } else if (evt.type === 'compression_end') {
+                compressionEnded = true
+                stopCompressionTyping()
+                compressionPendingContent = ''
+                const ok = evt.ok !== false
+                if (ok) {
+                  if (typeof evt.summary === 'string') compressionFullContent = evt.summary
+                } else {
+                  const err = typeof evt.error === 'string' && evt.error.trim() ? evt.error.trim() : '未知错误'
+                  compressionFullContent = `压缩失败：${err}`
+                }
+                ensureCompressionMsg('done', compressionFullContent)
+                if (ok) {
+                  const cid = String(activeChatId || '').trim()
+                  if (cid) {
+                    void (async () => {
+                      try {
+                        const res = await fetchBackendJson<{ ok: boolean; compression?: any }>(`/api/chats/${cid}/summary?t=${Date.now()}`, { method: 'GET', cache: 'no-store' })
+                        if (res && (res as any).compression) {
+                          updateChat(cid, { meta: { compression: (res as any).compression } })
+                        }
+                      } catch {
+                        return
                       }
-                    } catch {
-                      return
-                    }
-                  })()
+                    })()
+                  }
                 }
               } else if (evt.type === 'done') {
-                if (compressionSeenStart) ensureCompressionMsg('done', '已压缩对话历史')
+                if (compressionSeenStart && !compressionEnded) ensureCompressionMsg('done', compressionFullContent)
                 usage = evt.usage || null
                 if (evt.rateLimit && Object.keys(evt.rateLimit).length) {
                   assistantMeta = { ...assistantMeta, rateLimit: evt.rateLimit }
@@ -1747,7 +1837,8 @@ function AppLoaded(): JSX.Element {
             }
           }
         }
-        if (compressionSeenStart) ensureCompressionMsg('done', '已压缩对话历史')
+        stopCompressionTyping()
+        if (compressionSeenStart && !compressionEnded) ensureCompressionMsg('done', compressionFullContent)
         if (gotDone) {
           await reader.cancel().catch(() => {})
         } else {
@@ -1811,46 +1902,6 @@ function AppLoaded(): JSX.Element {
         const traces = Array.isArray(data.traces) ? data.traces : []
         const artifacts = Array.isArray(data.artifacts) ? data.artifacts : []
         
-        let todoSnapshot: TodoItem[] | undefined
-        let todosUpdated = false
-        const { updateChat, chats, activeChatId } = useStore.getState()
-        const currentChat = chats.find((c) => c.id === activeChatId)
-        let nextTodos = currentChat?.todoState?.items || []
-        
-        for (const trace of traces) {
-          if (trace.name === 'TodoWrite' && trace.status === 'succeeded') {
-            try {
-              const resultText = trace.resultPreview?.text || (trace as any).result || '{}'
-              const result = JSON.parse(resultText)
-              
-              if (result.ok && Array.isArray(result.todos)) {
-                let mergedTodos = [...nextTodos]
-                if (result.merge) {
-                  for (const todo of result.todos) {
-                    const idx = mergedTodos.findIndex((t) => t.id === todo.id)
-                    if (idx >= 0) {
-                      mergedTodos[idx] = { ...mergedTodos[idx], ...todo }
-                    } else {
-                      mergedTodos.push(todo)
-                    }
-                  }
-                } else {
-                  mergedTodos = result.todos
-                }
-                nextTodos = mergedTodos
-                todosUpdated = true
-              }
-            } catch (e) {
-              console.error('Failed to process TodoWrite result', e)
-            }
-          }
-        }
-        
-        if (todosUpdated && activeChatId) {
-          updateChat(activeChatId, { todoState: { items: nextTodos, lastUpdated: Date.now() } })
-          todoSnapshot = nextTodos
-        }
-
         // Insert tool messages for non-streaming response
         const { insertMessageBefore } = useStore.getState()
         for (const trace of traces) {
@@ -1866,7 +1917,7 @@ function AppLoaded(): JSX.Element {
 
         const reasoning = typeof data.reasoning === 'string' && data.reasoning.trim() ? data.reasoning : undefined
         const assistantMeta: Message['meta'] | undefined =
-          usage || (rateLimit && Object.keys(rateLimit).length) || Boolean(reasoning) || shouldShowAnalysis || todoSnapshot || artifacts.length > 0
+          usage || (rateLimit && Object.keys(rateLimit).length) || Boolean(reasoning) || shouldShowAnalysis || artifacts.length > 0
             ? {
                 promptTokens: usage ? usage?.prompt_tokens ?? 0 : undefined,
                 completionTokens: usage ? usage?.completion_tokens ?? 0 : undefined,
@@ -1875,7 +1926,6 @@ function AppLoaded(): JSX.Element {
                 reasoningSummary: deriveReasoningSummaryFromTraces(traces),
                 reasoningText: reasoning,
                 reasoningStatus: shouldShowAnalysis ? 'done' : reasoning ? 'done' : undefined,
-                todoSnapshot,
                 artifacts: artifacts.length ? artifacts : undefined
               }
             : undefined
@@ -1957,7 +2007,6 @@ function AppLoaded(): JSX.Element {
                       setSummaryText(text)
                       const ts = comp?.summaryUpdatedAt != null ? Number(comp.summaryUpdatedAt) : null
                       setSummaryUpdatedAt(Number.isFinite(ts as any) ? (ts as number) : null)
-                      setCompressionNotice({ text: '已手动压缩对话历史', at: Date.now() })
                     }
                   } finally {
                     setSummaryLoading(false)
@@ -2031,29 +2080,6 @@ function AppLoaded(): JSX.Element {
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
-                  {(hasChatSummary || compressionNotice) && (
-                    <>
-                      <span>·</span>
-                      <TooltipProvider>
-                        <Tooltip delayDuration={100}>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              className="h-6 px-2 text-xs pointer-events-auto hover:bg-primary/10"
-                              onClick={() => {
-                                setSummaryOpen(true)
-                                void loadChatSummary().catch(() => {})
-                              }}
-                            >
-                              <Eye className="w-3.5 h-3.5 mr-1" />
-                              摘要
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>{compressionNotice ? compressionNotice.text : '查看对话摘要'}</TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    </>
-                  )}
                 </div>
               </div>
             </header>
@@ -2065,7 +2091,7 @@ function AppLoaded(): JSX.Element {
               onScroll={handleChatScroll}
               className="flex-1 overflow-y-auto pt-4 pl-6 pr-6 pb-4 no-drag"
             >
-              {messages.length === 0 ? (
+              {displayMessages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-4">
                   <p className="font-medium text-lg text-foreground">{t.helloTitle}</p>
                   <p className="text-sm text-muted-foreground">
@@ -2079,15 +2105,15 @@ function AppLoaded(): JSX.Element {
                 </div>
               ) : (
                 <div className="flex flex-col gap-1.5 pb-2 max-w-3xl mx-auto w-full">
-                  {messages.map((msg) => {
+                  {displayMessages.map((msg) => {
                     if (msg.role !== 'user' && msg.role !== 'tool') {
                       const meta: any = msg.meta || {}
                       const hasReasoning = typeof meta.reasoningText === 'string' && meta.reasoningText.trim().length > 0
-                      const hasTodos = Array.isArray(meta.todoSnapshot) && meta.todoSnapshot.length > 0
                       const hasTokens = Boolean(settings.showTokenUsage && meta.totalTokens != null)
                       const hasContent = typeof msg.content === 'string' && msg.content.trim().length > 0
+                      const hasCompression = meta.compressionState === 'running' || meta.compressionState === 'done'
 
-                      if (!hasContent && !hasReasoning && !hasTodos && !hasTokens) return null
+                      if (!hasContent && !hasReasoning && !hasTokens && !hasCompression) return null
                     }
 
                     return (
@@ -2142,8 +2168,8 @@ function AppLoaded(): JSX.Element {
                               const traces = msg.meta?.toolTraces || []
 
                               return (
-                                <div className="space-y-1 ml-1 pl-4 border-l-2 border-muted/20">
-                                  {traces.map((tr) => {
+                                <div className="space-y-1">
+                                  {traces.map((tr: any) => {
                                     const detailKey = `${msg.id}:${tr.id}`
                                     const detailOpen = !!traceDetailOpenByKey[detailKey]
                                     const isRunning = tr.status === 'running'
@@ -2152,6 +2178,13 @@ function AppLoaded(): JSX.Element {
                                     const iconClass = `w-3.5 h-3.5 ${isRunning ? 'text-blue-500 animate-pulse' : isFailed ? 'text-red-500' : 'text-muted-foreground'}`
                                     let icon = <Compass className={iconClass} />
                                     let entity = tr.name
+                                    const displayTraceName = (() => {
+                                      const raw = String(tr.name || '').trim()
+                                      const n = raw.replace(/^tool_start:/, '').replace(/^tool_done:/, '').replace(/^tool_end:/, '').trim()
+                                      if (!n) return ''
+                                      if (n === 'model_call' || n === 'tool_call') return ''
+                                      return n
+                                    })()
                                     const normalizeValue = (val: any) => String(val ?? '').replace(/\\`/g, '`').replace(/`/g, '').trim()
                                     const stripCodeFences = (raw: string) => {
                                       const trimmed = String(raw || '').trim()
@@ -2393,7 +2426,9 @@ function AppLoaded(): JSX.Element {
                                           </div>
                                           
                                           <div className="min-w-0 flex-1 flex items-center gap-2">
-                                            <span className="font-mono text-[12px] text-foreground hover:text-foreground/80 cursor-pointer">{tr.name}</span>
+                                            {displayTraceName ? (
+                                              <span className="font-mono text-[12px] text-foreground hover:text-foreground/80 cursor-pointer">{displayTraceName}</span>
+                                            ) : null}
                                             {canOpenEntityInFiles ? (
                                               <button
                                                 type="button"
@@ -2424,7 +2459,7 @@ function AppLoaded(): JSX.Element {
                                         </div>
 
                                         {detailOpen && hasDetail && (
-                                          <div className={tr.name === 'WebSearch' ? 'mt-2 space-y-2 pb-1' : 'mt-2 ml-3 space-y-2 pb-1 border-l-2 border-muted pl-2'}>
+                                          <div className="mt-2 space-y-2 pb-1">
                                             {Array.isArray((tr as any).artifacts) && (tr as any).artifacts.length > 0 && (
                                               <div className="space-y-1">
                                                 <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Artifacts</div>
@@ -2495,7 +2530,7 @@ function AppLoaded(): JSX.Element {
                                               <div className="space-y-1">
                                                 <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Changes</div>
                                                 <div className="space-y-2">
-                                                  {tr.diffs.map((d, i) => (
+                                                  {tr.diffs.map((d: any, i: number) => (
                                                     <DiffView key={i} oldContent={d.oldContent} newContent={d.newContent} fileName={d.path} />
                                                   ))}
                                                 </div>
@@ -2529,36 +2564,29 @@ function AppLoaded(): JSX.Element {
                               if (!text) return null
                               const isThinking = status === 'pending' || status === 'streaming'
                               return (
-                                <div className="ml-1 pl-4 border-l-2 border-muted/20 text-[13px] leading-relaxed text-muted-foreground py-0.5">
-                                   {text}
-                                   {isThinking && <span className="inline-block w-1.5 h-3 bg-muted-foreground/50 ml-1 animate-pulse align-middle"/>}
+                                <div className="border-l-2 border-muted/20 text-[13px] leading-relaxed text-muted-foreground py-0.5">
+                                  {text}
+                                  {isThinking && <span className="inline-block w-1.5 h-3 bg-muted-foreground/50 ml-1 animate-pulse align-middle"/>}
                                 </div>
                               )
                             })()}
 
-                            {msg.meta?.todoSnapshot && msg.meta.todoSnapshot.length > 0 && (
-                              <TodoProgressCard todos={msg.meta.todoSnapshot} />
-                            )}
+                            {(() => {
+                              const cs = (msg.meta as any)?.compressionState
+                              if (cs !== 'running' && cs !== 'done') return null
+                              return (
+                                <CompressionCard
+                                  state={cs}
+                                  content={typeof msg.content === 'string' ? msg.content : String(msg.content || '')}
+                                />
+                              )
+                            })()}
 
-                            {(msg.meta as any)?.compressionState === 'running' ? (
-                              <div className="pl-6">
-                                <div className="inline-flex items-center gap-2 text-[14px] leading-relaxed text-foreground/80">
-                                  <span>压缩中</span>
-                                  <span className="inline-flex items-center gap-1 translate-y-[1px]">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60 animate-bounce" style={{ animationDelay: '0ms' }} />
-                                    <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60 animate-bounce" style={{ animationDelay: '120ms' }} />
-                                    <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60 animate-bounce" style={{ animationDelay: '240ms' }} />
-                                  </span>
-                                </div>
-                                <div className="mt-2 space-y-2 max-w-[520px]">
-                                  <div className="h-3 rounded bg-muted/40 animate-pulse" />
-                                  <div className="h-3 w-2/3 rounded bg-muted/30 animate-pulse" />
-                                </div>
-                              </div>
-                            ) : null}
-
-                            {(msg.meta as any)?.compressionState === 'running' ? null : settings.enableMarkdown ? (
-                              <div className="pl-6">
+                            {(() => {
+                              const cs = (msg.meta as any)?.compressionState
+                              return cs === 'running' || cs === 'done'
+                            })() ? null : settings.enableMarkdown ? (
+                              <div>
                                 <ReactMarkdown
                                   remarkPlugins={[remarkGfm, remarkMath]}
                                   rehypePlugins={[rehypeKatex, rehypeRaw]}
@@ -2692,20 +2720,26 @@ function AppLoaded(): JSX.Element {
                                 </ReactMarkdown>
                               </div>
                             ) : (
-                              <p className="whitespace-pre-wrap pl-6 text-foreground/90">{msg.content || ''}</p>
+                              <p className="whitespace-pre-wrap text-foreground/90">{msg.content || ''}</p>
                             )}
-                            {typeof (msg.meta as any)?.stage === 'string' && String((msg.meta as any).stage || '').trim() && (
-                              <div className="text-[11px] text-muted-foreground pl-6 pt-1">
-                                {String((msg.meta as any).stage)}
-                              </div>
-                            )}
+                            {(() => {
+                              const st = String((msg.meta as any)?.stage || '').trim()
+                              if (!st) return null
+                              if (st === 'model_call' || st === 'tool_call') return null
+                              if (st.startsWith('tool_start:') || st.startsWith('tool_done:') || st.startsWith('tool_end:')) return null
+                              return (
+                                <div className="text-[11px] text-muted-foreground pt-1">
+                                  {st}
+                                </div>
+                              )
+                            })()}
                             {Array.isArray(msg.meta?.artifacts) && msg.meta?.artifacts.length > 0 && (
-                              <div className="pl-6 pt-1">
+                              <div className="pt-1">
                                 {renderArtifacts(msg.meta.artifacts, 'md')}
                               </div>
                             )}
                             {settings.showTokenUsage && msg.meta?.totalTokens != null && (
-                              <div className="text-[11px] text-muted-foreground pl-6">
+                              <div className="text-[11px] text-muted-foreground">
                                 Tokens: {msg.meta.promptTokens ?? 0} + {msg.meta.completionTokens ?? 0} ={' '}
                                 {msg.meta.totalTokens}
                               </div>

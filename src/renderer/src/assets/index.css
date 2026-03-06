@@ -86,3 +86,29 @@
     background: hsl(var(--muted-foreground) / 0.4);
   }
 }
+
+@keyframes anima-flow-text {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}
+
+@layer utilities {
+  .anima-flow-text {
+    background-image: linear-gradient(
+      90deg,
+      hsl(var(--foreground) / 0.55),
+      hsl(var(--foreground) / 0.95),
+      hsl(var(--foreground) / 0.55)
+    );
+    background-size: 200% 100%;
+    background-position: 0% 50%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: anima-flow-text 1.6s linear infinite;
+  }
+}

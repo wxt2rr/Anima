@@ -444,37 +444,6 @@ def builtin_tools() -> List[Dict[str, Any]]:
                 },
             },
         },
-        {
-            "type": "function",
-            "function": {
-                "name": "TodoWrite",
-                "description": "Manage your (the assistant's) internal plan and progress. Use this to track your own execution steps. Do NOT use this to manage the user's personal todo list.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "todos": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "id": {"type": "string", "description": "Unique identifier for the todo item"},
-                                    "content": {"type": "string", "description": "Description of the todo item"},
-                                    "status": {"type": "string", "enum": ["pending", "in_progress", "completed"], "description": "Current status"},
-                                    "priority": {"type": "string", "enum": ["high", "medium", "low"], "description": "Priority level"},
-                                },
-                                "required": ["id", "content", "status", "priority"],
-                            },
-                            "description": "Array of todo items",
-                        },
-                        "merge": {
-                            "type": "boolean",
-                            "description": "Whether to merge with existing todos based on id. If false, replaces the list.",
-                        },
-                    },
-                    "required": ["todos", "merge"],
-                },
-            },
-        },
     ]
 
 
@@ -1141,13 +1110,6 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         config = args.get("config")
         ui = args.get("ui")
         return json.dumps({"ok": True, "config": config, "ui": ui}, ensure_ascii=False)
-
-    if name == "TodoWrite":
-        todos = args.get("todos")
-        if not isinstance(todos, list):
-            raise RuntimeError("todos must be a list")
-        merge = bool(args.get("merge"))
-        return json.dumps({"ok": True, "todos": todos, "merge": merge}, ensure_ascii=False)
 
     raise RuntimeError("Unknown tool")
 

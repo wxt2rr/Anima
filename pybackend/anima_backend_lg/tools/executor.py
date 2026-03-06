@@ -181,20 +181,6 @@ def execute_tool(
             pass
         return tool_content, trace
     except Exception as e:
-        if tool_name == "TodoWrite" and "Chat ID missing in tool context" in str(e):
-            todos = args.get("todos") if isinstance(args.get("todos"), list) else []
-            tool_content = json.dumps({"ok": True, "todos": todos, "merge": bool(args.get("merge"))}, ensure_ascii=False)
-            ended_at = now_ms()
-            trace.update(
-                {
-                    "status": "succeeded",
-                    "endedAt": ended_at,
-                    "durationMs": max(0, ended_at - started_at),
-                    "resultPreview": preview_tool_result(tool_content, max_chars=1200),
-                }
-            )
-            return tool_content, trace
-
         tool_content = json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
         ended_at = now_ms()
         trace.update(

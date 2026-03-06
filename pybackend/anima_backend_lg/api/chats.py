@@ -160,11 +160,39 @@ def handle_post_chat_compact(handler: Any, chat_id: str) -> None:
             max_tokens = 800
         max_tokens = min(1200, max(256, int(max_tokens)))
 
-        mo = str(composer.get("modelOverride") or "").strip() or None
+        mo = str(s.get("memoryToolModelId") or "").strip() or (str(composer.get("modelOverride") or "").strip() or None)
         res = call_chat_completion(provider, summary_messages, temperature=0.2, max_tokens=max_tokens, tools=None, tool_choice=None, model_override=mo)
-        choice = ((res.get("choices") or [{}])[0]) if isinstance(res, dict) else {}
-        msg = (choice.get("message") or {}) if isinstance(choice, dict) else {}
-        summary_text = str(msg.get("content") or "").strip()
+        summary_text = ""
+        if isinstance(res, dict):
+            if isinstance(res.get("output_text"), str):
+                summary_text = str(res.get("output_text") or "").strip()
+            elif isinstance(res.get("output"), list):
+                parts = []
+                for it in res.get("output") or []:
+                    if not isinstance(it, dict):
+                        continue
+                    if str(it.get("type") or "").strip() != "message":
+                        continue
+                    content = it.get("content")
+                    if isinstance(content, str):
+                        if content.strip():
+                            parts.append(content.strip())
+                        continue
+                    if isinstance(content, list):
+                        for blk in content:
+                            if not isinstance(blk, dict):
+                                continue
+                            t = str(blk.get("type") or "").strip()
+                            if t not in ("output_text", "text"):
+                                continue
+                            txt = blk.get("text")
+                            if isinstance(txt, str) and txt.strip():
+                                parts.append(txt)
+                summary_text = "\n".join(parts).strip()
+            else:
+                choice = ((res.get("choices") or [{}])[0]) if isinstance(res.get("choices"), list) else {}
+                msg = (choice.get("message") or {}) if isinstance(choice, dict) else {}
+                summary_text = str(msg.get("content") or "").strip()
         if not summary_text:
             json_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": "Failed to generate summary"})
             return

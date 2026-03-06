@@ -25,6 +25,28 @@ class MockProvider:
         extra_body=None,
     ):
         self._calls += 1
+        return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+
+class MockProviderListDirToolCall:
+    include_reasoning_content_in_messages = False
+
+    def __init__(self) -> None:
+        self._calls = 0
+        self.last_rate_limit = None
+
+    def chat_completion(
+        self,
+        messages,
+        *,
+        temperature,
+        max_tokens,
+        tools=None,
+        tool_choice=None,
+        model_override=None,
+        extra_body=None,
+    ):
+        self._calls += 1
         if self._calls == 1:
             return {
                 "choices": [
@@ -35,10 +57,7 @@ class MockProvider:
                             "tool_calls": [
                                 {
                                     "type": "function",
-                                    "function": {
-                                        "name": "TodoWrite",
-                                        "arguments": '{"todos":[{"id":"t1","content":"x","status":"pending","priority":"low"}],"merge":true}',
-                                    },
+                                    "function": {"name": "list_dir", "arguments": '{"path":"","maxEntries":5}'},
                                 }
                             ],
                         }
@@ -73,7 +92,7 @@ class MockProviderLegacyToolMarkup:
                     {
                         "message": {
                             "role": "assistant",
-                            "content": '<tool_call>{"name":"TodoWrite","arguments":{"todos":[{"id":"t1","content":"x","status":"pending","priority":"low"}],"merge":true}}</tool_call>',
+                            "content": '<tool_call>{"name":"list_dir","arguments":{"path":"","maxEntries":5}}</tool_call>',
                         }
                     }
                 ]
@@ -135,28 +154,29 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
     def test_graph_runs_tools_and_sanitizes_history(self) -> None:
         from anima_backend_lg.runtime.graph import build_run_graph
 
-        provider = MockProvider()
-        graph = build_run_graph(provider)
+        with tempfile.TemporaryDirectory() as td:
+            provider = MockProviderListDirToolCall()
+            graph = build_run_graph(provider)
 
-        polluted_tool_message = {"role": "tool", "content": '{"ok": true}', "meta": {"toolTraces": []}}
-        init_state = {
-            "run_id": "r1",
-            "thread_id": "t1",
-            "messages": [{"role": "user", "content": "hi"}, polluted_tool_message],
-            "composer": {"toolMode": "all"},
-            "settings": {"settings": {"defaultToolMode": "all"}},
-            "temperature": 0.7,
-            "max_tokens": 128,
-            "extra_body": None,
-            "step": 0,
-            "traces": [],
-            "usage": None,
-            "rate_limit": None,
-            "reasoning": "",
-            "final_content": "",
-        }
+            polluted_tool_message = {"role": "tool", "content": '{"ok": true}', "meta": {"toolTraces": []}}
+            init_state = {
+                "run_id": "r1",
+                "thread_id": "t1",
+                "messages": [{"role": "user", "content": "hi"}, polluted_tool_message],
+                "composer": {"toolMode": "all", "workspaceDir": td},
+                "settings": {"settings": {"defaultToolMode": "all", "workspaceDir": td}},
+                "temperature": 0.7,
+                "max_tokens": 128,
+                "extra_body": None,
+                "step": 0,
+                "traces": [],
+                "usage": None,
+                "rate_limit": None,
+                "reasoning": "",
+                "final_content": "",
+            }
 
-        out = graph.invoke(init_state)
+            out = graph.invoke(init_state)
         self.assertEqual(str((out or {}).get("final_content") or ""), "ok")
 
         msgs = (out or {}).get("messages") or []
@@ -201,30 +221,31 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
     def test_telegram_legacy_tool_markup_is_executed(self) -> None:
         from anima_backend_lg.runtime.graph import build_run_graph
 
-        provider = MockProviderLegacyToolMarkup()
-        graph = build_run_graph(provider)
+        with tempfile.TemporaryDirectory() as td:
+            provider = MockProviderLegacyToolMarkup()
+            graph = build_run_graph(provider)
 
-        init_state = {
-            "run_id": "r1",
-            "thread_id": "t1",
-            "messages": [{"role": "user", "content": "hi"}],
-            "composer": {"toolMode": "all", "channel": "telegram"},
-            "settings": {"settings": {"defaultToolMode": "all"}},
-            "temperature": 0.7,
-            "max_tokens": 128,
-            "extra_body": None,
-            "step": 0,
-            "traces": [],
-            "usage": None,
-            "rate_limit": None,
-            "reasoning": "",
-            "final_content": "",
-        }
+            init_state = {
+                "run_id": "r1",
+                "thread_id": "t1",
+                "messages": [{"role": "user", "content": "hi"}],
+                "composer": {"toolMode": "all", "channel": "telegram", "workspaceDir": td},
+                "settings": {"settings": {"defaultToolMode": "all", "workspaceDir": td}},
+                "temperature": 0.7,
+                "max_tokens": 128,
+                "extra_body": None,
+                "step": 0,
+                "traces": [],
+                "usage": None,
+                "rate_limit": None,
+                "reasoning": "",
+                "final_content": "",
+            }
 
-        out = graph.invoke(init_state)
+            out = graph.invoke(init_state)
         self.assertEqual(str((out or {}).get("final_content") or ""), "ok")
         traces = (out or {}).get("traces") or []
-        self.assertTrue(any(isinstance(t, dict) and t.get("name") == "TodoWrite" and t.get("status") == "succeeded" for t in traces))
+        self.assertTrue(any(isinstance(t, dict) and t.get("name") == "list_dir" and t.get("status") == "succeeded" for t in traces))
 
     def test_openclaw_prompt_injects_workspace_files_and_bootstraps(self) -> None:
         from anima_backend_lg.runtime.graph import build_system_prompt_text
@@ -578,6 +599,117 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
             None,
         )
         self.assertTrue(isinstance(tr_evt, dict))
+
+    def test_runs_stream_emits_compression_delta_and_end(self) -> None:
+        from anima_backend_lg.api.runs_stream import handle_post_runs_stream
+
+        class _FakeProvider:
+            def chat_completion_stream(self, _messages, **_kwargs):
+                yield {"type": "response.output_text.delta", "delta": "摘要第一段。"}
+                yield {"type": "response.output_text.delta", "delta": "摘要第二段。"}
+                yield {"type": "response.completed"}
+
+            def chat_completion(self, _messages, **_kwargs):
+                return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+        def _fake_merge_chat_meta(_chat_id: str, updates: dict):
+            comp = {}
+            if isinstance(updates, dict):
+                meta = updates.get("compression") if isinstance(updates.get("compression"), dict) else {}
+                comp = dict(meta)
+            return {"compression": comp}
+
+        h = self._make_handler()
+        big = "x" * 4000
+        history = [
+            {"role": "user", "content": big, "id": "m1"},
+            {"role": "assistant", "content": big, "id": "m2"},
+            {"role": "user", "content": big, "id": "m3"},
+            {"role": "assistant", "content": big, "id": "m4"},
+            {"role": "user", "content": big, "id": "m5"},
+        ]
+        body = {
+            "threadId": "t1",
+            "useThreadMessages": True,
+            "messages": [{"role": "user", "content": big}],
+            "composer": {"workspaceDir": "/tmp", "contextWindowOverride": 256},
+        }
+        settings_obj = {"settings": {"enableAutoCompression": True, "compressionThreshold": 10, "keepRecentMessages": 2}}
+
+        with patch("anima_backend_lg.api.runs_stream.load_settings", return_value=settings_obj):
+            with patch("anima_backend_lg.api.runs_stream.create_provider", return_value=_FakeProvider()):
+                with patch("anima_backend_lg.api.runs_stream.select_tools", return_value=([], {}, None)):
+                    with patch("anima_backend_lg.api.runs_stream.create_run", return_value=None):
+                        with patch("anima_backend_lg.api.runs_stream.update_run", return_value=None):
+                            with patch("anima_backend_lg.api.runs_stream.get_chat", return_value={"messages": history}):
+                                with patch("anima_backend_lg.api.runs_stream.get_chat_meta", return_value={}):
+                                    with patch("anima_backend_lg.api.runs_stream.merge_chat_meta", side_effect=_fake_merge_chat_meta):
+                                        handle_post_runs_stream(h, body)
+
+        raw = h.wfile.buf.decode("utf-8")
+        events = []
+        for chunk in raw.split("\n\n"):
+            for line in chunk.split("\n"):
+                if not line.startswith("data: "):
+                    continue
+                events.append(json.loads(line[len("data: ") :]))
+        self.assertTrue(any(e.get("type") == "compression_delta" for e in events))
+        self.assertTrue(any(e.get("type") == "compression_end" for e in events))
+
+    def test_runs_stream_compression_reports_error_when_stream_empty(self) -> None:
+        from anima_backend_lg.api.runs_stream import handle_post_runs_stream
+
+        class _FakeProvider:
+            def chat_completion_stream(self, _messages, **_kwargs):
+                if False:
+                    yield {}
+
+            def chat_completion(self, _messages, **_kwargs):
+                return {"choices": [{"message": {"role": "assistant", "content": "fallback 摘要"}}]}
+
+        def _fake_merge_chat_meta(_chat_id: str, updates: dict):
+            comp = {}
+            if isinstance(updates, dict):
+                meta = updates.get("compression") if isinstance(updates.get("compression"), dict) else {}
+                comp = dict(meta)
+            return {"compression": comp}
+
+        h = self._make_handler()
+        big = "x" * 4000
+        history = [
+            {"role": "user", "content": big, "id": "m1"},
+            {"role": "assistant", "content": big, "id": "m2"},
+            {"role": "user", "content": big, "id": "m3"},
+            {"role": "assistant", "content": big, "id": "m4"},
+            {"role": "user", "content": big, "id": "m5"},
+        ]
+        body = {
+            "threadId": "t1",
+            "useThreadMessages": True,
+            "messages": [{"role": "user", "content": big}],
+            "composer": {"workspaceDir": "/tmp", "contextWindowOverride": 256},
+        }
+        settings_obj = {"settings": {"enableAutoCompression": True, "compressionThreshold": 10, "keepRecentMessages": 2}}
+
+        with patch("anima_backend_lg.api.runs_stream.load_settings", return_value=settings_obj):
+            with patch("anima_backend_lg.api.runs_stream.create_provider", return_value=_FakeProvider()):
+                with patch("anima_backend_lg.api.runs_stream.select_tools", return_value=([], {}, None)):
+                    with patch("anima_backend_lg.api.runs_stream.create_run", return_value=None):
+                        with patch("anima_backend_lg.api.runs_stream.update_run", return_value=None):
+                            with patch("anima_backend_lg.api.runs_stream.get_chat", return_value={"messages": history}):
+                                with patch("anima_backend_lg.api.runs_stream.get_chat_meta", return_value={}):
+                                    with patch("anima_backend_lg.api.runs_stream.merge_chat_meta", side_effect=_fake_merge_chat_meta):
+                                        handle_post_runs_stream(h, body)
+
+        raw = h.wfile.buf.decode("utf-8")
+        events = []
+        for chunk in raw.split("\n\n"):
+            for line in chunk.split("\n"):
+                if not line.startswith("data: "):
+                    continue
+                events.append(json.loads(line[len("data: ") :]))
+        end = next((e for e in events if e.get("type") == "compression_end"), None)
+        self.assertTrue(isinstance(end, dict) and end.get("ok") is False and "0 events" in str(end.get("error") or ""))
 
     def test_artifacts_file_serves_bytes(self) -> None:
         from anima_backend_lg.api.settings_tools import handle_get_artifact_file

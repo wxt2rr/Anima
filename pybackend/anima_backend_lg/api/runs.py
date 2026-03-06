@@ -47,6 +47,51 @@ def _find_message_index_by_id(messages: List[Dict[str, Any]], msg_id: str) -> in
     return -1
 
 
+def _extract_assistant_text(obj: Any) -> str:
+    if not isinstance(obj, dict):
+        return ""
+
+    choices = obj.get("choices")
+    if isinstance(choices, list) and choices:
+        c0 = choices[0] if isinstance(choices[0], dict) else {}
+        msg = c0.get("message") if isinstance(c0, dict) else None
+        if isinstance(msg, dict) and isinstance(msg.get("content"), str):
+            return str(msg.get("content") or "").strip()
+
+    if isinstance(obj.get("output_text"), str):
+        return str(obj.get("output_text") or "").strip()
+
+    out = obj.get("output")
+    if isinstance(out, list) and out:
+        parts: List[str] = []
+        for it in out:
+            if not isinstance(it, dict):
+                continue
+            if str(it.get("type") or "").strip() != "message":
+                continue
+            content = it.get("content")
+            if isinstance(content, str):
+                if content.strip():
+                    parts.append(content.strip())
+                continue
+            if isinstance(content, list):
+                for blk in content:
+                    if not isinstance(blk, dict):
+                        continue
+                    t = str(blk.get("type") or "").strip()
+                    if t not in ("output_text", "text"):
+                        continue
+                    txt = blk.get("text")
+                    if isinstance(txt, str) and txt.strip():
+                        parts.append(txt)
+        return "\n".join(parts).strip()
+
+    if isinstance(obj.get("content"), str):
+        return str(obj.get("content") or "").strip()
+
+    return ""
+
+
 def _summarize_incremental(
     *,
     provider: Any,
@@ -56,6 +101,7 @@ def _summarize_incremental(
     chunk: List[Dict[str, Any]],
     focus: str = "",
     max_tokens: int = 800,
+    model_override: Optional[str] = None,
 ) -> str:
     lines: List[str] = []
     for m in chunk:
@@ -95,7 +141,7 @@ def _summarize_incremental(
 
     from ..llm.adapter import call_chat_completion
 
-    mo = str(composer.get("modelOverride") or "").strip() or None
+    mo = str(model_override or "").strip() or (str(composer.get("modelOverride") or "").strip() or None)
     res = call_chat_completion(
         provider,
         summary_messages,
@@ -106,9 +152,7 @@ def _summarize_incremental(
         model_override=mo,
         extra_body=extra_body if isinstance(extra_body, dict) else None,
     )
-    choice = ((res.get("choices") or [{}])[0]) if isinstance(res, dict) else {}
-    msg = (choice.get("message") or {}) if isinstance(choice, dict) else {}
-    return str(msg.get("content") or "").strip()
+    return _extract_assistant_text(res)
 
 
 def _apply_persistent_compression(
@@ -206,6 +250,7 @@ def _apply_persistent_compression(
         summary_max_tokens = 800
     summary_max_tokens = min(1200, max(256, summary_max_tokens))
 
+    tool_model_override = str(s.get("memoryToolModelId") or "").strip() or None
     new_summary = _summarize_incremental(
         provider=provider,
         composer=working_composer,
@@ -213,6 +258,7 @@ def _apply_persistent_compression(
         prev_summary=prev_summary,
         chunk=chunk,
         max_tokens=summary_max_tokens,
+        model_override=tool_model_override,
     )
     if not new_summary:
         return remaining, working_composer, None

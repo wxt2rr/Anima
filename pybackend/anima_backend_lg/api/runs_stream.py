@@ -12,7 +12,7 @@ from anima_backend_shared.database import create_run, get_chat, get_chat_meta, m
 from anima_backend_shared.settings import load_settings
 from anima_backend_shared.util import extract_reasoning_text, now_ms, preview_json, preview_tool_result
 
-from ..llm.adapter import call_chat_completion, create_provider, get_last_rate_limit
+from ..llm.adapter import call_chat_completion, call_chat_completion_stream, create_provider, get_last_rate_limit
 from ..tools.executor import execute_tool, make_tool_message, select_tools
 from ..runtime.graph import build_system_prompt_text, inject_system_message
 from ..runtime.sanitize import sanitize_history_messages
@@ -74,6 +74,51 @@ def _find_message_index_by_id(messages: List[Dict[str, Any]], msg_id: str) -> in
     return -1
 
 
+def _extract_assistant_text(obj: Any) -> str:
+    if not isinstance(obj, dict):
+        return ""
+
+    choices = obj.get("choices")
+    if isinstance(choices, list) and choices:
+        c0 = choices[0] if isinstance(choices[0], dict) else {}
+        msg = c0.get("message") if isinstance(c0, dict) else None
+        if isinstance(msg, dict) and isinstance(msg.get("content"), str):
+            return str(msg.get("content") or "").strip()
+
+    if isinstance(obj.get("output_text"), str):
+        return str(obj.get("output_text") or "").strip()
+
+    out = obj.get("output")
+    if isinstance(out, list) and out:
+        parts: List[str] = []
+        for it in out:
+            if not isinstance(it, dict):
+                continue
+            if str(it.get("type") or "").strip() != "message":
+                continue
+            content = it.get("content")
+            if isinstance(content, str):
+                if content.strip():
+                    parts.append(content.strip())
+                continue
+            if isinstance(content, list):
+                for blk in content:
+                    if not isinstance(blk, dict):
+                        continue
+                    t = str(blk.get("type") or "").strip()
+                    if t not in ("output_text", "text"):
+                        continue
+                    txt = blk.get("text")
+                    if isinstance(txt, str) and txt.strip():
+                        parts.append(txt)
+        return "\n".join(parts).strip()
+
+    if isinstance(obj.get("content"), str):
+        return str(obj.get("content") or "").strip()
+
+    return ""
+
+
 def _summarize_incremental(
     *,
     provider: Any,
@@ -83,6 +128,7 @@ def _summarize_incremental(
     chunk: List[Dict[str, Any]],
     focus: str = "",
     max_tokens: int = 800,
+    model_override: Optional[str] = None,
 ) -> str:
     lines: List[str] = []
     for m in chunk:
@@ -118,7 +164,7 @@ def _summarize_incremental(
     user_text = (f"已有摘要：\n{prev_summary}\n\n" if prev_summary else "") + "新增对话片段：\n" + transcript
     summary_messages = [{"role": "system", "content": sys_text}, {"role": "user", "content": user_text}]
 
-    mo = str(composer.get("modelOverride") or "").strip() or None
+    mo = str(model_override or "").strip() or (str(composer.get("modelOverride") or "").strip() or None)
     res = call_chat_completion(
         provider,
         summary_messages,
@@ -129,9 +175,121 @@ def _summarize_incremental(
         model_override=mo,
         extra_body=extra_body if isinstance(extra_body, dict) else None,
     )
-    choice = ((res.get("choices") or [{}])[0]) if isinstance(res, dict) else {}
-    msg = (choice.get("message") or {}) if isinstance(choice, dict) else {}
-    return str(msg.get("content") or "").strip()
+    return _extract_assistant_text(res)
+
+
+def _summarize_incremental_stream(
+    *,
+    provider: Any,
+    composer: Dict[str, Any],
+    extra_body: Optional[Dict[str, Any]],
+    prev_summary: str,
+    chunk: List[Dict[str, Any]],
+    focus: str = "",
+    max_tokens: int = 800,
+    model_override: Optional[str] = None,
+    emit_delta: Optional[Callable[[str], None]] = None,
+) -> str:
+    lines: List[str] = []
+    for m in chunk:
+        if not isinstance(m, dict):
+            continue
+        role = str(m.get("role") or "").strip() or "unknown"
+        c = m.get("content")
+        if isinstance(c, str):
+            txt = c
+        else:
+            try:
+                txt = json.dumps(c, ensure_ascii=False)
+            except Exception:
+                txt = str(c)
+        txt = str(txt).replace("\r\n", "\n").replace("\r", "\n").strip()
+        if len(txt) > 4000:
+            txt = txt[:4000] + "…"
+        if txt:
+            lines.append(f"{role}: {txt}")
+    transcript = "\n".join(lines).strip()
+    if not transcript:
+        return ""
+
+    focus_line = f"额外要求：{focus}" if str(focus or "").strip() else ""
+    sys_text = (
+        "你正在为一个长对话做增量压缩摘要。要求："
+        "1) 只保留关键事实/决定/约束/用户偏好/未完成事项；"
+        "2) 不要编造；"
+        "3) 尽量结构化（要点/列表）；"
+        "4) 长度控制在 400-800 字。"
+        + (f"\n{focus_line}" if focus_line else "")
+    )
+    user_text = (f"已有摘要：\n{prev_summary}\n\n" if prev_summary else "") + "新增对话片段：\n" + transcript
+    summary_messages = [{"role": "system", "content": sys_text}, {"role": "user", "content": user_text}]
+
+    mo = str(model_override or "").strip() or (str(composer.get("modelOverride") or "").strip() or None)
+    acc: List[str] = []
+    seen_events = 0
+    sample: List[Dict[str, Any]] = []
+    stream = call_chat_completion_stream(
+        provider,
+        summary_messages,
+        temperature=0.2,
+        max_tokens=max_tokens,
+        tools=None,
+        tool_choice=None,
+        model_override=mo,
+        extra_body=extra_body if isinstance(extra_body, dict) else None,
+    )
+    for evt in stream:
+        if not isinstance(evt, dict):
+            continue
+        seen_events += 1
+        if len(sample) < 3:
+            try:
+                choices = evt.get("choices")
+                c0 = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+                d0 = c0.get("delta") if isinstance(c0, dict) else None
+                sample.append(
+                    {
+                        "keys": sorted([str(k) for k in evt.keys()])[:18],
+                        "type": str(evt.get("type") or ""),
+                        "choices0_keys": sorted([str(k) for k in c0.keys()])[:18] if isinstance(c0, dict) else [],
+                        "delta_keys": sorted([str(k) for k in d0.keys()])[:18] if isinstance(d0, dict) else [],
+                    }
+                )
+            except Exception:
+                pass
+
+        delta_text = ""
+        choices = evt.get("choices")
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            delta = choices[0].get("delta")
+            if isinstance(delta, dict):
+                if isinstance(delta.get("content"), str):
+                    delta_text = str(delta.get("content") or "")
+                elif isinstance(delta.get("text"), str):
+                    delta_text = str(delta.get("text") or "")
+        if not delta_text:
+            t = str(evt.get("type") or "").strip()
+            if t.endswith(".delta"):
+                if isinstance(evt.get("delta"), str):
+                    delta_text = str(evt.get("delta") or "")
+                elif isinstance(evt.get("delta"), dict) and isinstance(evt["delta"].get("text"), str):
+                    delta_text = str(evt["delta"].get("text") or "")
+            elif t.endswith(".done") and isinstance(evt.get("text"), str):
+                delta_text = str(evt.get("text") or "")
+        if delta_text:
+            acc.append(delta_text)
+            if emit_delta is not None:
+                try:
+                    emit_delta(delta_text)
+                except Exception:
+                    pass
+
+    if seen_events == 0:
+        raise RuntimeError(f"compression stream returned 0 events (model={mo or ''})")
+    if not acc:
+        raise RuntimeError(f"compression stream had {seen_events} events but no text delta (model={mo or ''}) sample={preview_json(sample, max_chars=1200)}")
+
+    return "".join(acc).strip()
 
 
 def _apply_persistent_compression(
@@ -233,16 +391,50 @@ def _apply_persistent_compression(
         except Exception:
             pass
 
-    new_summary = _summarize_incremental(
-        provider=provider,
-        composer=working_composer,
-        extra_body=extra_body,
-        prev_summary=prev_summary,
-        chunk=chunk,
-        max_tokens=summary_max_tokens,
-    )
-    if not new_summary:
-        return remaining, working_composer, None
+    tool_model_override = str(s.get("memoryToolModelId") or "").strip() or None
+    try:
+        if emit_event is not None:
+            def _emit_delta(txt: str) -> None:
+                emit_event({"type": "compression_delta", "content": txt, "at": now_ms()})
+
+            new_summary = _summarize_incremental_stream(
+                provider=provider,
+                composer=working_composer,
+                extra_body=extra_body,
+                prev_summary=prev_summary,
+                chunk=chunk,
+                max_tokens=summary_max_tokens,
+                model_override=tool_model_override,
+                emit_delta=_emit_delta,
+            )
+        else:
+            new_summary = _summarize_incremental(
+                provider=provider,
+                composer=working_composer,
+                extra_body=extra_body,
+                prev_summary=prev_summary,
+                chunk=chunk,
+                max_tokens=summary_max_tokens,
+                model_override=tool_model_override,
+            )
+        new_summary = str(new_summary or "").strip()
+        if not new_summary:
+            raise RuntimeError("compression summary is empty")
+    except Exception as e:
+        if emit_event is not None:
+            try:
+                emit_event(
+                    {
+                        "type": "compression_end",
+                        "at": now_ms(),
+                        "ok": False,
+                        "error": str(e),
+                        "mode": "auto",
+                    }
+                )
+            except Exception:
+                pass
+        return window_msgs, working_composer, None
 
     last_dropped_id = str((dropped[-1] or {}).get("id") or "").strip()
     now = int(__import__("time").time() * 1000)
@@ -264,6 +456,11 @@ def _apply_persistent_compression(
         "summarizedUntilMessageId": out_comp.get("summarizedUntilMessageId"),
         "summaryPreview": str(new_summary[:240]),
     }
+    if emit_event is not None:
+        try:
+            emit_event({"type": "compression_end", "at": now_ms(), "ok": True, "summary": new_summary, **evt})
+        except Exception:
+            pass
     return remaining, working_composer, evt
 
 
@@ -791,12 +988,6 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
             "extraBody": extra_body,
         },
     )
-
-    if isinstance(compression_evt, dict) and compression_evt:
-        try:
-            emit({"type": "compression", **compression_evt})
-        except Exception:
-            return
 
     def _to_sse_event(obj: Any) -> Any:
         if not isinstance(obj, dict):

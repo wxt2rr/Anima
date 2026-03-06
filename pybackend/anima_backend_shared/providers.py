@@ -246,12 +246,30 @@ class OpenAIChatProvider:
         try:
             with opener.open(req, timeout=120) as resp:
                 self.last_rate_limit = _extract_rate_limit(getattr(resp, "headers", None) or resp.info())
+                info = getattr(resp, "headers", None) or resp.info()
+                content_type = str((info.get("Content-Type") if info is not None else "") or "").lower()
+                if content_type and "text/event-stream" not in content_type:
+                    try:
+                        raw = resp.read(4096)
+                    except Exception:
+                        raw = b""
+                    body_preview = raw.decode("utf-8", errors="ignore") if isinstance(raw, (bytes, bytearray)) else str(raw)
+                    body_preview = body_preview.replace("\r\n", "\n").replace("\r", "\n").strip()
+                    raise RuntimeError(f"Upstream did not return text/event-stream (contentType={content_type}) bodyPreview={body_preview[:800]}")
+
+                saw_data = False
+                first_non_data: str | None = None
                 for raw_line in resp:
                     if not raw_line:
                         continue
                     line = raw_line.decode("utf-8", errors="ignore").strip()
-                    if not line or not line.startswith("data:"):
+                    if not line:
                         continue
+                    if not line.startswith("data:"):
+                        if first_non_data is None and line:
+                            first_non_data = line[:400]
+                        continue
+                    saw_data = True
                     data_text = line[len("data:") :].strip()
                     if not data_text:
                         continue
@@ -263,6 +281,8 @@ class OpenAIChatProvider:
                         continue
                     if isinstance(evt, dict):
                         yield evt
+                if not saw_data:
+                    raise RuntimeError(f"Upstream stream produced no SSE data lines (contentType={content_type or 'unknown'}) firstLine={first_non_data or ''}")
         except socket.timeout as e:
             raise RuntimeError("Upstream stream timed out") from e
         except urllib.error.HTTPError as e:
@@ -476,12 +496,30 @@ class AnthropicChatProvider(OpenAIChatProvider):
         try:
             with opener.open(req, timeout=120) as resp:
                 self.last_rate_limit = _extract_rate_limit(getattr(resp, "headers", None) or resp.info())
+                info = getattr(resp, "headers", None) or resp.info()
+                content_type = str((info.get("Content-Type") if info is not None else "") or "").lower()
+                if content_type and "text/event-stream" not in content_type:
+                    try:
+                        raw = resp.read(4096)
+                    except Exception:
+                        raw = b""
+                    body_preview = raw.decode("utf-8", errors="ignore") if isinstance(raw, (bytes, bytearray)) else str(raw)
+                    body_preview = body_preview.replace("\r\n", "\n").replace("\r", "\n").strip()
+                    raise RuntimeError(f"Upstream did not return text/event-stream (contentType={content_type}) bodyPreview={body_preview[:800]}")
+
+                saw_data = False
+                first_non_data: str | None = None
                 for raw_line in resp:
                     if not raw_line:
                         continue
                     line = raw_line.decode("utf-8", errors="ignore").strip()
-                    if not line or not line.startswith("data:"):
+                    if not line:
                         continue
+                    if not line.startswith("data:"):
+                        if first_non_data is None and line:
+                            first_non_data = line[:400]
+                        continue
+                    saw_data = True
                     data_text = line[len("data:") :].strip()
                     if not data_text:
                         continue
@@ -622,12 +660,30 @@ class DeepSeekChatProvider(OpenAIChatProvider):
         try:
             with opener.open(req, timeout=120) as resp:
                 self.last_rate_limit = _extract_rate_limit(getattr(resp, "headers", None) or resp.info())
+                info = getattr(resp, "headers", None) or resp.info()
+                content_type = str((info.get("Content-Type") if info is not None else "") or "").lower()
+                if content_type and "text/event-stream" not in content_type:
+                    try:
+                        raw = resp.read(4096)
+                    except Exception:
+                        raw = b""
+                    body_preview = raw.decode("utf-8", errors="ignore") if isinstance(raw, (bytes, bytearray)) else str(raw)
+                    body_preview = body_preview.replace("\r\n", "\n").replace("\r", "\n").strip()
+                    raise RuntimeError(f"Upstream did not return text/event-stream (contentType={content_type}) bodyPreview={body_preview[:800]}")
+
+                saw_data = False
+                first_non_data: str | None = None
                 for raw_line in resp:
                     if not raw_line:
                         continue
                     line = raw_line.decode("utf-8", errors="ignore").strip()
-                    if not line or not line.startswith("data:"):
+                    if not line:
                         continue
+                    if not line.startswith("data:"):
+                        if first_non_data is None and line:
+                            first_non_data = line[:400]
+                        continue
+                    saw_data = True
                     data_text = line[len("data:") :].strip()
                     if not data_text:
                         continue
@@ -639,6 +695,8 @@ class DeepSeekChatProvider(OpenAIChatProvider):
                         continue
                     if isinstance(evt, dict):
                         yield evt
+                if not saw_data:
+                    raise RuntimeError(f"Upstream stream produced no SSE data lines (contentType={content_type or 'unknown'}) firstLine={first_non_data or ''}")
         except socket.timeout as e:
             raise RuntimeError("Upstream stream timed out") from e
         except urllib.error.HTTPError as e:
