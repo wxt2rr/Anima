@@ -398,6 +398,34 @@ const DEFAULT_BACKEND_BASE_URL = 'http://127.0.0.1:17333'
 let cachedBackendBaseUrl: string | null = null
 let backendBaseUrlPromise: Promise<string> | null = null
 const voiceDownloadPollTimeoutByModelId: Record<string, number> = {}
+const SETTINGS_REV_KEY = 'anima:settings:rev'
+let loadRemoteConfigSeq = 0
+let settingsBroadcast: BroadcastChannel | null = null
+
+function getSettingsBroadcast(): BroadcastChannel | null {
+  try {
+    if (typeof BroadcastChannel === 'undefined') return null
+    if (!settingsBroadcast) settingsBroadcast = new BroadcastChannel('anima:settings')
+    return settingsBroadcast
+  } catch {
+    return null
+  }
+}
+
+function bumpSettingsRevision(): void {
+  const rev = String(Date.now())
+  try {
+    if (typeof localStorage === 'undefined') return
+    localStorage.setItem(SETTINGS_REV_KEY, rev)
+  } catch {
+    //
+  }
+  try {
+    getSettingsBroadcast()?.postMessage({ type: 'settings_rev', rev })
+  } catch {
+    //
+  }
+}
 
 export async function resolveBackendBaseUrl(): Promise<string> {
   if (cachedBackendBaseUrl != null) return cachedBackendBaseUrl
@@ -1061,8 +1089,10 @@ export const useStore = create<AppState>()(
         }),
 
       loadRemoteConfig: async () => {
+        const seq = ++loadRemoteConfigSeq
         try {
           const data = await fetchJson('/settings', { method: 'GET' })
+          if (seq !== loadRemoteConfigSeq) return
           const rawSettings = (data as any)?.settings
           const rawProviders = (data as any)?.providers
           const rawVoiceModelsInstalled = (data as any)?.voiceModelsInstalled
@@ -1126,6 +1156,7 @@ export const useStore = create<AppState>()(
             configError: ''
           })
         } catch (e) {
+          if (seq !== loadRemoteConfigSeq) return
           set({
             configLoaded: false,
             configError: e instanceof Error ? e.message : 'Failed to load remote config'
@@ -1331,7 +1362,31 @@ export const useStore = create<AppState>()(
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ settings: newSettings })
-        }).catch(() => {})
+        })
+          .then((merged: any) => {
+            const rawSettings = merged?.settings
+            const rawProviders = merged?.providers
+            if (rawSettings && typeof rawSettings === 'object' && Array.isArray(rawProviders)) {
+              loadRemoteConfigSeq++
+              set((s) => ({
+                ...s,
+                settings: { ...(rawSettings as any), themeColor: (rawSettings as any).themeColor || 'zinc' } as any,
+                providers: rawProviders as any,
+                voiceModelsInstalled: Array.isArray((merged as any)?.voiceModelsInstalled)
+                  ? ((merged as any).voiceModelsInstalled as any[])
+                      .map((m: any) => ({
+                        id: String(m?.id || '').trim(),
+                        name: String(m?.name || m?.id || '').trim(),
+                        source: (m?.source === 'local' ? 'local' : 'remote') as any,
+                        path: m?.path ? String(m.path) : undefined
+                      }))
+                      .filter((m: any) => Boolean(m.id))
+                  : s.voiceModelsInstalled
+              }))
+            }
+            bumpSettingsRevision()
+          })
+          .catch(() => {})
       },
 
       setSettingsOpen: (isOpen) => set({ isSettingsOpen: isOpen }),

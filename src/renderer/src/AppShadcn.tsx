@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, useCallback, type ReactNode } from 'react'
-import { Send, StopCircle, Paperclip, PanelLeftOpen, SquarePen, Wrench, Sparkles, X, ChevronDown, Terminal, Mic, Folder, Search, PenLine, Brain, Compass, Eye } from 'lucide-react'
+import { Send, StopCircle, Paperclip, PanelLeftOpen, MessageSquarePlus, Wrench, Sparkles, X, ChevronDown, Terminal, Mic, Folder, Search, PenLine, Brain, Compass, Eye } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -150,6 +150,7 @@ async function fetchBackendJson<T>(path: string, init?: RequestInit): Promise<T>
 
 function App(): JSX.Element {
   const { configLoaded, configError, loadRemoteConfig } = useStore()
+  const reduceMotion = useReducedMotion()
 
   useEffect(() => {
     void loadRemoteConfig().catch(() => {})
@@ -174,13 +175,49 @@ function App(): JSX.Element {
 
   if (!configLoaded) {
     return (
-      <div className="h-screen w-screen flex items-center justify-center bg-background text-foreground">
-        <div className="max-w-[520px] w-full px-6 space-y-3">
-          <div className="text-base font-semibold">Loading settings…</div>
-          {configError ? <div className="text-sm text-destructive">{configError}</div> : null}
-          <Button variant="outline" onClick={() => void loadRemoteConfig().catch(() => {})}>
-            Retry
-          </Button>
+      <div className="h-screen w-screen bg-background text-foreground relative overflow-hidden">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_45%,hsl(var(--primary)/0.08),transparent_55%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,hsl(var(--foreground)/0.06),transparent_55%)]" />
+
+        <div className="h-full w-full grid place-items-center p-6">
+          <motion.div
+            initial={reduceMotion ? false : { opacity: 0, y: 10, scale: 0.985 }}
+            animate={reduceMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
+            transition={reduceMotion ? undefined : { duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+            className="w-full max-w-[520px] text-center"
+          >
+            <div className="flex items-center justify-center gap-2">
+              <motion.span
+                aria-hidden="true"
+                className="inline-block h-2 w-2 rounded-full bg-foreground/50"
+                animate={reduceMotion ? undefined : { opacity: [0.25, 0.75, 0.25] }}
+                transition={reduceMotion ? undefined : { repeat: Infinity, duration: 1.1, ease: 'easeInOut' }}
+              />
+              <div className="text-sm font-semibold tracking-tight">
+                {configError ? 'Failed to load settings' : 'Loading settings…'}
+              </div>
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">Connecting to local backend</div>
+
+            {configError ? (
+              <motion.div
+                initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+                animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+                transition={reduceMotion ? undefined : { duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                className="mt-3 text-xs text-destructive/80 whitespace-pre-wrap break-words"
+              >
+                {configError}
+              </motion.div>
+            ) : null}
+
+            {configError ? (
+              <div className="mt-5 flex items-center justify-center">
+                <Button variant="outline" onClick={() => void loadRemoteConfig().catch(() => {})}>
+                  Retry
+                </Button>
+              </div>
+            ) : null}
+          </motion.div>
         </div>
       </div>
     )
@@ -326,6 +363,73 @@ function AppLoaded(): JSX.Element {
     void resolveBackendBaseUrl()
       .then((url) => setBackendBaseUrl(String(url || '').trim()))
       .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    const KEY = 'anima:settings:rev'
+    let lastSyncAt = 0
+    let lastSeenRev = ''
+    try {
+      lastSeenRev = typeof localStorage !== 'undefined' ? String(localStorage.getItem(KEY) || '') : ''
+    } catch {
+      lastSeenRev = ''
+    }
+    const sync = () => {
+      const now = Date.now()
+      if (now - lastSyncAt < 500) return
+      lastSyncAt = now
+      void useStore.getState().loadRemoteConfig().catch(() => {})
+    }
+    const onStorage = (e: StorageEvent) => {
+      if (!e) return
+      if (e.key !== KEY) return
+      const next = String(e.newValue || '')
+      if (next && next === lastSeenRev) return
+      lastSeenRev = next
+      sync()
+    }
+    const bc = (() => {
+      try {
+        if (typeof BroadcastChannel === 'undefined') return null
+        return new BroadcastChannel('anima:settings')
+      } catch {
+        return null
+      }
+    })()
+    const onBc = (e: MessageEvent) => {
+      const data = (e as any)?.data
+      if (!data || data.type !== 'settings_rev') return
+      const next = String(data.rev || '')
+      if (next && next === lastSeenRev) return
+      lastSeenRev = next
+      sync()
+    }
+    if (bc) bc.addEventListener('message', onBc as any)
+    const onFocus = () => {
+      let cur = ''
+      try {
+        cur = typeof localStorage !== 'undefined' ? String(localStorage.getItem(KEY) || '') : ''
+      } catch {
+        cur = ''
+      }
+      if (cur && cur === lastSeenRev) return
+      lastSeenRev = cur
+      sync()
+    }
+    window.addEventListener('storage', onStorage)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      window.removeEventListener('storage', onStorage)
+      window.removeEventListener('focus', onFocus)
+      try {
+        if (bc) {
+          bc.removeEventListener('message', onBc as any)
+          bc.close()
+        }
+      } catch {
+        //
+      }
+    }
   }, [])
 
   const loadChatSummary = async () => {
@@ -2492,7 +2596,7 @@ function AppLoaded(): JSX.Element {
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={createChat}>
-                            <SquarePen className="w-4 h-4" />
+                            <MessageSquarePlus className="w-4 h-4" />
                           </Button>
                         </TooltipTrigger>
                         <TooltipContent>New Chat</TooltipContent>

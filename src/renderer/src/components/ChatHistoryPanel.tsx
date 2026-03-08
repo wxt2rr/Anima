@@ -1,4 +1,4 @@
-import { Search, Trash2, SquarePen, PanelLeftClose, MoreHorizontal, Settings, RefreshCcw, Folder, FolderOpen, FolderPlus, ChevronDown, ChevronRight, Star, Pencil } from 'lucide-react'
+import { Search, Trash2, MessageSquarePlus, PanelLeftClose, MoreHorizontal, Settings, RefreshCcw, Folder, FolderOpen, FolderPlus, ChevronDown, ChevronRight, Star, Pencil } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, memo } from 'react'
 import { useStore } from '../store/useStore'
 import { useUpdateStore } from '../store/useUpdateStore'
@@ -351,25 +351,21 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
                       <TooltipContent>{p.pinned ? t.unpin : t.pin}</TooltipContent>
                     </Tooltip>
 
-                    {hasChats ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            className="p-1 rounded-lg transition-all text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10 hover:text-foreground"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              void createChatInProject(pid)
-                            }}
-                          >
-                            <SquarePen className="w-3.5 h-3.5" />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>{t.createChatTip}</TooltipContent>
-                      </Tooltip>
-                    ) : (
-                      <div className="w-6" />
-                    )}
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className="p-1 rounded-lg transition-all text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10 hover:text-foreground"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void createChatInProject(pid)
+                          }}
+                        >
+                          <MessageSquarePlus className="w-3.5 h-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>{t.createChatTip}</TooltipContent>
+                    </Tooltip>
 
                     <Popover open={projectMenuOpenId === pid} onOpenChange={(open) => setProjectMenuOpenId(open ? pid : null)}>
                       <PopoverTrigger
@@ -399,18 +395,16 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
                           <Star className="w-4 h-4" />
                           <span>{p.pinned ? t.unpin : t.pin}</span>
                         </button>
-                        {hasChats ? (
-                          <button
-                            className="w-full flex items-center gap-2 px-2 py-1.5 rounded-sm text-sm hover:bg-accent hover:text-accent-foreground transition-colors text-left"
-                            onClick={() => {
-                              setProjectMenuOpenId(null)
-                              void createChatInProject(pid)
-                            }}
-                          >
-                            <SquarePen className="w-4 h-4" />
-                            <span>{t.createChat}</span>
-                          </button>
-                        ) : null}
+                        <button
+                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-sm text-sm hover:bg-accent hover:text-accent-foreground transition-colors text-left"
+                          onClick={() => {
+                            setProjectMenuOpenId(null)
+                            void createChatInProject(pid)
+                          }}
+                        >
+                          <MessageSquarePlus className="w-4 h-4" />
+                          <span>{t.createChat}</span>
+                        </button>
                         <button
                           className="w-full flex items-center gap-2 px-2 py-1.5 rounded-sm text-sm hover:bg-accent hover:text-accent-foreground transition-colors text-left text-destructive"
                           onClick={() => {
