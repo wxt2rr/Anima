@@ -14,7 +14,15 @@ from anima_backend_shared.tools import builtin_tools, mcp_tools
 
 def handle_get_settings(handler: Any) -> None:
     try:
-        json_response(handler, HTTPStatus.OK, load_settings())
+        out = load_settings()
+        if isinstance(out, dict):
+            try:
+                from anima_backend_shared.voice import _get_installed_voice_models
+
+                out = {**out, "voiceModelsInstalled": _get_installed_voice_models()}
+            except Exception:
+                out = {**out, "voiceModelsInstalled": []}
+        json_response(handler, HTTPStatus.OK, out)
     except Exception as e:
         json_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(e)})
 
@@ -49,6 +57,13 @@ def handle_patch_settings(handler: Any) -> None:
                 reconcile_openclaw_from_settings(merged)
         except Exception:
             pass
+        if isinstance(merged, dict):
+            try:
+                from anima_backend_shared.voice import _get_installed_voice_models
+
+                merged = {**merged, "voiceModelsInstalled": _get_installed_voice_models()}
+            except Exception:
+                merged = {**merged, "voiceModelsInstalled": []}
         json_response(handler, HTTPStatus.OK, merged)
     except Exception as e:
         json_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(e)})
@@ -449,12 +464,21 @@ def handle_post_providers_fetch_models(handler: Any) -> None:
         if not isinstance(body, dict):
             json_response(handler, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Invalid JSON body"})
             return
-        base_url = body.get("baseUrl")
-        api_key = body.get("apiKey")
+        provider_id = str(body.get("providerId") or "").strip().lower()
+        base_url = str(body.get("baseUrl") or "").strip()
         if not base_url:
             json_response(handler, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "baseUrl is required"})
             return
-        models = fetch_provider_models(base_url, api_key or "")
+        use_qwen_oauth = bool(body.get("useQwenOAuth") is True)
+        profile_id = str(body.get("profileId") or "").strip() or "default"
+        if (provider_id and provider_id.startswith("qwen")) or use_qwen_oauth:
+            from anima_backend_shared.qwen_auth_runtime import resolve_qwen_access_token
+
+            token = resolve_qwen_access_token(provider_id, profile_id)
+            models = fetch_provider_models(base_url, token)
+        else:
+            api_key = body.get("apiKey")
+            models = fetch_provider_models(base_url, api_key or "")
         json_response(handler, HTTPStatus.OK, {"ok": True, "models": models})
     except Exception as e:
         json_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(e)})

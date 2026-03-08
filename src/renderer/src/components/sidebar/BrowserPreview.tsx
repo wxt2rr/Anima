@@ -5,9 +5,10 @@ import { Button } from '@/components/ui/button'
 
 type Props = {
   initialUrl?: string
+  active?: boolean
 }
 
-export const BrowserPreview: React.FC<Props> = ({ initialUrl }) => {
+export const BrowserPreview: React.FC<Props> = ({ initialUrl, active = true }) => {
   const [url, setUrl] = useState('')
   const [currentSrc, setCurrentSrc] = useState('')
   const [canBack, setCanBack] = useState(false)
@@ -98,15 +99,17 @@ export const BrowserPreview: React.FC<Props> = ({ initialUrl }) => {
 
   // Resize observer to handle auto-fit when sidebar resizes
   useEffect(() => {
+    if (!active) return
     if (!containerRef.current || !autoFit) return
     const ro = new ResizeObserver(() => {
       if (autoFit) handleFitWidth()
     })
     ro.observe(containerRef.current)
     return () => ro.disconnect()
-  }, [autoFit, handleFitWidth])
+  }, [active, autoFit, handleFitWidth])
 
   useEffect(() => {
+    if (!active) return
     const next = String(initialUrl || '').trim()
     if (!next) return
     const normalized = normalizeUrl(next)
@@ -119,9 +122,10 @@ export const BrowserPreview: React.FC<Props> = ({ initialUrl }) => {
         return
       }
     }
-  }, [initialUrl, normalizeUrl])
+  }, [active, initialUrl, normalizeUrl])
 
   useEffect(() => {
+    if (!active) return
     if (!webviewEl) return
     const wv = webviewEl
 
@@ -156,7 +160,32 @@ export const BrowserPreview: React.FC<Props> = ({ initialUrl }) => {
       wv.removeEventListener('did-navigate', handleNavigate)
       wv.removeEventListener('did-navigate-in-page', handleNavigate)
     }
-  }, [updateNavState, webviewEl, autoFit, handleFitWidth])
+  }, [active, updateNavState, webviewEl, autoFit, handleFitWidth])
+
+  useEffect(() => {
+    const wv = webviewRef.current
+    if (!wv) return
+    if (!active) {
+      try {
+        wv.setAudioMuted?.(true)
+      } catch {
+        return
+      }
+      try {
+        wv.stop?.()
+      } catch {
+        return
+      }
+      return
+    }
+    try {
+      wv.setAudioMuted?.(false)
+    } catch {
+      return
+    }
+    updateNavState()
+    if (autoFit) handleFitWidth()
+  }, [active, autoFit, handleFitWidth, updateNavState])
 
   const attachWebviewRef = useCallback((el: any | null) => {
     webviewRef.current = el

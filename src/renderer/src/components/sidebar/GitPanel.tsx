@@ -8,10 +8,12 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Checkbox } from '@/components/ui/checkbox';
 import { useStore } from '@/store/useStore';
 
-export const GitPanel: React.FC = () => {
-  const { settings, updateSettings, ui } = useStore();
-  const projects = Array.isArray(settings?.projects) ? (settings!.projects as any[]) : []
-  const activeProjectId = String(ui?.activeProjectId || '').trim()
+export const GitPanel: React.FC<{ active?: boolean }> = ({ active = true }) => {
+  const settings = useStore((s) => s.settings)
+  const ui = useStore((s) => s.ui)
+  const updateSettings = useStore((s) => s.updateSettings)
+  const projects = Array.isArray(settings?.projects) ? ((settings as any).projects as any[]) : []
+  const activeProjectId = String((ui as any)?.activeProjectId || '').trim()
   const activeProjectDir = activeProjectId
     ? String((projects.find((p) => String(p?.id || '').trim() === activeProjectId) as any)?.dir || '').trim()
     : ''
@@ -56,6 +58,7 @@ export const GitPanel: React.FC = () => {
 
   // Initialize: Check if current opened directory is a repo
   useEffect(() => {
+    if (!active) return
     const init = async () => {
         const base = String(activeProjectDir || settings?.workspaceDir || '').trim()
         if (base) {
@@ -76,7 +79,7 @@ export const GitPanel: React.FC = () => {
         }
     };
     init();
-  }, [activeProjectDir, settings?.workspaceDir, updateSettings]);
+  }, [active, activeProjectDir, settings?.workspaceDir, updateSettings]);
 
   const handlePickRepo = async () => {
     const res = await window.anima.window.pickDirectory();

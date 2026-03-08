@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
-import { Send, StopCircle, Paperclip, PanelLeftOpen, SquarePen, Wrench, Sparkles, X, ChevronDown, Terminal, Mic, MicOff, Folder, Search, PenLine, Compass, Eye } from 'lucide-react'
+import { useState, useRef, useEffect, useMemo, useCallback, type ReactNode } from 'react'
+import { Send, StopCircle, Paperclip, PanelLeftOpen, SquarePen, Wrench, Sparkles, X, ChevronDown, Terminal, Mic, Folder, Search, PenLine, Brain, Compass, Eye } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -15,6 +15,7 @@ import { SettingsDialog, SettingsWindow } from './components/SettingsDialog'
 import { ChatHistoryPanel } from './components/ChatHistoryPanel'
 import { InputAnimation } from './components/InputAnimation'
 import { UpdateDialog } from './components/UpdateDialog'
+import { VirtualizedList, type VirtualListApi } from './components/VirtualizedList'
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -25,6 +26,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { RightSidebar } from './components/sidebar/RightSidebar'
 import { useUpdateStore } from './store/useUpdateStore'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { SHORTCUTS, isMacLike, matchShortcut, normalizeBinding, type ShortcutId } from '@/lib/shortcuts'
 
 type BackendUsage = {
   prompt_tokens?: number
@@ -187,25 +190,43 @@ function App(): JSX.Element {
 }
 
 function AppLoaded(): JSX.Element {
-  const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [skillsCache, setSkillsCache] = useState<SkillEntry[]>([])
   const [skillsStatus, setSkillsStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle')
+  const reduceMotion = useReducedMotion()
 
   // Use a single state for mutually exclusive popovers
   const [popoverPanel, setPopoverPanel] = useState<'' | 'attachments' | 'tools' | 'skills' | 'model'>('')
   
   const [traceDetailOpenByKey, setTraceDetailOpenByKey] = useState<Record<string, boolean>>({})
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const [reasoningOpenByMsgId, setReasoningOpenByMsgId] = useState<Record<string, boolean>>({})
   const audioContextRef = useRef<AudioContext | null>(null)
   const lastSoundAtRef = useRef(0)
   const abortControllerRef = useRef<AbortController | null>(null)
   const typingTimerRef = useRef<number | null>(null)
   const compressionTypingTimerRef = useRef<number | null>(null)
+  const composerApiRef = useRef<{
+    appendText: (text: string) => void
+    setVoiceDraft: (finalText: string, interimText: string) => void
+    commitVoiceFinal: (text: string) => void
+    clearVoiceDraft: () => void
+  } | null>(null)
   const [isRecording, setIsRecording] = useState(false)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
-  const recordingChunksRef = useRef<Blob[]>([])
+  const voiceSessionIdRef = useRef<string | null>(null)
+  const voiceEventSourceRef = useRef<EventSource | null>(null)
+  const voiceBaseUrlRef = useRef<string>('')
+  const voiceLastDraftRef = useRef<string>('')
+  const voiceGotFinalRef = useRef(false)
+  const voiceStopWaiterRef = useRef<null | (() => void)>(null)
+  const toggleRecordingRef = useRef<null | (() => void)>(null)
+  const voiceAudioCtxRef = useRef<AudioContext | null>(null)
+  const voiceProcessorRef = useRef<ScriptProcessorNode | null>(null)
+  const voiceSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
+  const voiceGainRef = useRef<GainNode | null>(null)
+  const voicePendingRef = useRef<Uint8Array[]>([])
+  const voiceSendTimerRef = useRef<number | null>(null)
+  const voiceChunkInFlightRef = useRef(false)
   const chatScrollRef = useRef<HTMLElement | null>(null)
   const scrollAnimRef = useRef<number | null>(null)
   const scrollVelRef = useRef(0)
@@ -267,6 +288,7 @@ function AppLoaded(): JSX.Element {
   const [summaryUpdatedAt, setSummaryUpdatedAt] = useState<number | null>(null)
   const [chatIsAtBottom, setChatIsAtBottom] = useState(true)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
+  const [virtualApi, setVirtualApi] = useState<VirtualListApi | null>(null)
 
   const activeChat = useMemo(() => chats.find((c) => c.id === activeChatId), [chats, activeChatId])
   const persistedCompression = useMemo(() => ((activeChat as any)?.meta?.compression as any) || null, [activeChat])
@@ -449,21 +471,161 @@ function AppLoaded(): JSX.Element {
   const activeProvider = getActiveProvider()
   const isSettingsWindow = typeof window !== 'undefined' && window.location.hash.startsWith('#/settings')
 
-  const openSettings = () => {
+  const openSettings = useCallback(() => {
     const anima = window.anima
     if (anima?.window?.openSettings) {
       void anima.window.openSettings()
       return
     }
     setSettingsOpen(true)
+  }, [setSettingsOpen])
+
+  const downsampleToPcm16le = (input: Float32Array, inputRate: number, targetRate: number) => {
+    const inRate = Number(inputRate) || 0
+    const outRate = Number(targetRate) || 0
+    if (!inRate || !outRate || outRate > inRate) return new Uint8Array()
+    const ratio = inRate / outRate
+    const outLen = Math.floor(input.length / ratio)
+    if (outLen <= 0) return new Uint8Array()
+    const out = new Int16Array(outLen)
+    for (let i = 0; i < outLen; i++) {
+      const pos = i * ratio
+      const idx = Math.floor(pos)
+      const nextIdx = Math.min(input.length - 1, idx + 1)
+      const frac = pos - idx
+      const sample = input[idx] * (1 - frac) + input[nextIdx] * frac
+      const clamped = Math.max(-1, Math.min(1, sample))
+      out[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff
+    }
+    return new Uint8Array(out.buffer)
+  }
+
+  const cleanupVoiceCapture = async () => {
+    if (voiceSendTimerRef.current != null) {
+      window.clearInterval(voiceSendTimerRef.current)
+      voiceSendTimerRef.current = null
+    }
+    voicePendingRef.current = []
+    voiceChunkInFlightRef.current = false
+
+    const proc = voiceProcessorRef.current
+    voiceProcessorRef.current = null
+    if (proc) {
+      try {
+        proc.disconnect()
+      } catch {
+        //
+      }
+    }
+    const src = voiceSourceRef.current
+    voiceSourceRef.current = null
+    if (src) {
+      try {
+        src.disconnect()
+      } catch {
+        //
+      }
+    }
+    const gain = voiceGainRef.current
+    voiceGainRef.current = null
+    if (gain) {
+      try {
+        gain.disconnect()
+      } catch {
+        //
+      }
+    }
+
+    const ctx = voiceAudioCtxRef.current
+    voiceAudioCtxRef.current = null
+    if (ctx) {
+      try {
+        await ctx.close()
+      } catch {
+        //
+      }
+    }
+
+    const s = mediaStreamRef.current
+    if (s) s.getTracks().forEach((t) => t.stop())
+    mediaStreamRef.current = null
+  }
+
+  const cleanupVoiceSession = () => {
+    const es = voiceEventSourceRef.current
+    voiceEventSourceRef.current = null
+    if (es) {
+      try {
+        es.close()
+      } catch {
+        //
+      }
+    }
+    voiceSessionIdRef.current = null
+    voiceBaseUrlRef.current = ''
+    voiceStopWaiterRef.current = null
+    voiceGotFinalRef.current = false
+    voiceLastDraftRef.current = ''
+  }
+
+  const cleanupVoiceStreaming = async (opts?: { sendStop?: boolean }) => {
+    const sendStop = opts?.sendStop !== false
+    const sessionId = voiceSessionIdRef.current
+    await cleanupVoiceCapture()
+    cleanupVoiceSession()
+
+    if (sendStop && sessionId) {
+      try {
+        await fetchBackendJson<{ ok: boolean }>('/voice/stream/stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId })
+        })
+      } catch {
+        //
+      }
+    }
+  }
+
+  const waitForVoiceStopAck = (timeoutMs: number) => {
+    return new Promise<void>((resolve) => {
+      if (voiceGotFinalRef.current) return resolve()
+      const done = () => {
+        if (voiceStopWaiterRef.current === done) voiceStopWaiterRef.current = null
+        resolve()
+      }
+      voiceStopWaiterRef.current = done
+      window.setTimeout(() => {
+        if (voiceStopWaiterRef.current === done) voiceStopWaiterRef.current = null
+        resolve()
+      }, Math.max(200, timeoutMs))
+    })
   }
 
   const toggleRecording = async () => {
     if (isRecording) {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop()
-      }
       setIsRecording(false)
+      const sessionId = voiceSessionIdRef.current
+      const draftFallback = String(voiceLastDraftRef.current || '').trim()
+      await cleanupVoiceCapture()
+      const waitAck = waitForVoiceStopAck(2500)
+      if (sessionId) {
+        try {
+          await fetchBackendJson<{ ok: boolean }>('/voice/stream/stop', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId })
+          })
+        } catch {
+          //
+        }
+      }
+      await waitAck
+      if (!voiceGotFinalRef.current) {
+        if (draftFallback) composerApiRef.current?.commitVoiceFinal(draftFallback)
+        else composerApiRef.current?.clearVoiceDraft()
+      }
+      cleanupVoiceSession()
       return
     }
 
@@ -485,54 +647,206 @@ function AppLoaded(): JSX.Element {
     }
 
     try {
+      const startRes = await fetchBackendJson<{ ok: boolean; sessionId: string; sampleRate: number }>('/voice/stream/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sampleRate: 16000, updateIntervalMs: 1200, minUpdateBytes: 32000 })
+      })
+      if (!startRes.ok || !startRes.sessionId) {
+        throw new Error('Failed to start voice session')
+      }
+      voiceSessionIdRef.current = startRes.sessionId
+      voiceGotFinalRef.current = false
+      voiceLastDraftRef.current = ''
+
+      const voiceBaseUrl = String(backendBaseUrl || (await resolveBackendBaseUrl()) || '').trim()
+      voiceBaseUrlRef.current = voiceBaseUrl
+      const es = new EventSource(`${voiceBaseUrl}/voice/stream/events?sessionId=${encodeURIComponent(startRes.sessionId)}`)
+      voiceEventSourceRef.current = es
+      es.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(String((ev as any)?.data || '{}'))
+          const typ = String(data?.type || '')
+          if (typ === 'voice_update') {
+            const finalText = String(data?.finalText || '')
+            const interimText = String(data?.interimText || '')
+            composerApiRef.current?.setVoiceDraft(finalText, interimText)
+            const a = String(finalText || '').trim()
+            const b = String(interimText || '').trim()
+            const combined = a && b ? `${a}${a.endsWith(' ') || a.endsWith('\n') ? '' : ' '}${b}` : a || b
+            voiceLastDraftRef.current = combined
+            return
+          }
+          if (typ === 'voice_final') {
+            const text = String(data?.text || '')
+            composerApiRef.current?.commitVoiceFinal(text)
+            voiceGotFinalRef.current = true
+            voiceLastDraftRef.current = String(text || '').trim()
+            voiceStopWaiterRef.current?.()
+            return
+          }
+          if (typ === 'done') {
+            voiceStopWaiterRef.current?.()
+            return
+          }
+          if (typ === 'error') {
+            throw new Error(String(data?.error || 'Voice stream error'))
+          }
+        } catch (e) {
+          console.error('Voice stream event parse failed', e)
+        }
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       mediaStreamRef.current = stream
-      recordingChunksRef.current = []
 
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
-      mediaRecorderRef.current = mediaRecorder
+      const ctx = new AudioContext()
+      voiceAudioCtxRef.current = ctx
+      const source = ctx.createMediaStreamSource(stream)
+      voiceSourceRef.current = source
+      const processor = ctx.createScriptProcessor(4096, 1, 1)
+      voiceProcessorRef.current = processor
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) recordingChunksRef.current.push(event.data)
+      processor.onaudioprocess = (e) => {
+        const input = e.inputBuffer.getChannelData(0)
+        const pcm = downsampleToPcm16le(input, ctx.sampleRate, 16000)
+        if (pcm.byteLength > 0) voicePendingRef.current.push(pcm)
       }
 
-      mediaRecorder.onstop = async () => {
-        const chunks = recordingChunksRef.current
-        recordingChunksRef.current = []
-        const blob = new Blob(chunks, { type: 'audio/webm' })
-        if (blob.size > 0) {
-          try {
-            const res = await fetchBackendJson<{ ok: boolean; text: string }>('/voice/transcribe', {
-              method: 'POST',
-              body: blob,
-              headers: {
-                'Content-Type': blob.type || 'audio/webm'
-              }
-            })
-            if (res.ok && res.text) {
-              setInputValue((prev) => {
-                const spacer = prev && !prev.endsWith(' ') && !prev.endsWith('\n') ? ' ' : ''
-                return prev + spacer + res.text
-              })
-            }
-          } catch (e) {
-            console.error('Transcription failed', e)
-          }
+      source.connect(processor)
+      const gain = ctx.createGain()
+      gain.gain.value = 0
+      voiceGainRef.current = gain
+      processor.connect(gain)
+      gain.connect(ctx.destination)
+
+      voiceSendTimerRef.current = window.setInterval(() => {
+        if (!voiceSessionIdRef.current) return
+        if (voiceChunkInFlightRef.current) return
+        if (!voicePendingRef.current.length) return
+        const parts = voicePendingRef.current
+        voicePendingRef.current = []
+        const total = parts.reduce((acc, p) => acc + p.byteLength, 0)
+        if (!total) return
+        const buf = new Uint8Array(total)
+        let off = 0
+        for (const p of parts) {
+          buf.set(p, off)
+          off += p.byteLength
         }
+        voiceChunkInFlightRef.current = true
+        fetch(`${voiceBaseUrl}/voice/stream/chunk?sessionId=${encodeURIComponent(voiceSessionIdRef.current)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: buf
+        })
+          .catch(() => {})
+          .finally(() => {
+            voiceChunkInFlightRef.current = false
+          })
+      }, 400)
 
-        const s = mediaStreamRef.current
-        if (s) s.getTracks().forEach((t) => t.stop())
-        mediaStreamRef.current = null
-        mediaRecorderRef.current = null
-      }
-
-      mediaRecorder.start()
       setIsRecording(true)
     } catch (err) {
       console.error('Error accessing microphone:', err)
+      await cleanupVoiceStreaming({ sendStop: true })
       setIsRecording(false)
     }
   }
+  toggleRecordingRef.current = () => void toggleRecording()
+
+  useEffect(() => {
+    const isMac = isMacLike()
+    const shortcutById = new Map(SHORTCUTS.map((s) => [s.id, s]))
+    const isEditable = (target: EventTarget | null) => {
+      const el = target as any
+      if (!el) return false
+      const tag = String(el.tagName || '').toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return true
+      if (el.isContentEditable) return true
+      return false
+    }
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return
+      const primary = isMac ? e.metaKey : e.ctrlKey
+      if (!primary) return
+      if (isEditable(e.target) && !e.altKey && !e.shiftKey && String(e.key || '').toLowerCase() !== ',') {
+        return
+      }
+
+      const handle = (id: ShortcutId, fn: () => void) => {
+        const def = shortcutById.get(id as any)
+        if (!def) return false
+        const st = useStore.getState()
+        const overrides = (st.settings as any)?.shortcuts?.bindings as any
+        const raw = overrides && Object.prototype.hasOwnProperty.call(overrides, id) ? overrides[id] : undefined
+        if (raw === null) return false
+        const b = raw ? normalizeBinding(raw) : null
+        const binding = b || def.binding
+        if (!matchShortcut(e, binding, isMac)) return false
+        e.preventDefault()
+        fn()
+        return true
+      }
+
+      const openSettingsLocal = () => {
+        const anima = window.anima
+        if (anima?.window?.openSettings) {
+          void anima.window.openSettings()
+          return
+        }
+        useStore.getState().setSettingsOpen(true)
+      }
+
+      if (handle('openSettings', () => openSettingsLocal())) return
+      if (
+        handle('openShortcuts', () => {
+          useStore.getState().setActiveTab('shortcuts')
+          openSettingsLocal()
+        })
+      )
+        return
+
+      if (handle('toggleLeftSidebar', () => useStore.getState().toggleSidebarCollapsed())) return
+      if (
+        handle('openSidebarSearch', () => {
+          const st = useStore.getState()
+          if (!st.ui.sidebarSearchOpen) st.toggleSidebarSearch()
+        })
+      )
+        return
+      if (handle('toggleRightSidebar', () => useStore.getState().toggleRightSidebar())) return
+
+      if (handle('rightFiles', () => useStore.getState().setActiveRightPanel('files'))) return
+      if (handle('rightGit', () => useStore.getState().setActiveRightPanel('git'))) return
+      if (handle('rightTerminal', () => useStore.getState().setActiveRightPanel('terminal'))) return
+      if (handle('rightPreview', () => useStore.getState().setActiveRightPanel('preview'))) return
+
+      if (
+        handle('toggleVoice', () => {
+          toggleRecordingRef.current?.()
+        })
+      )
+        return
+      if (handle('newChat', () => void useStore.getState().createChat())) return
+      if (
+        handle('addProject', () => {
+          void (async () => {
+            const res = await window.anima?.window?.pickDirectory?.()
+            if (!res?.ok || res.canceled) return
+            const dir = String(res.path || '').trim()
+            if (!dir) return
+            await useStore.getState().addProject(dir)
+          })()
+        })
+      )
+        return
+    }
+
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [])
 
   const composer = ui.composer
   const projects = Array.isArray(settings.projects) ? settings.projects : []
@@ -1154,6 +1468,10 @@ function AppLoaded(): JSX.Element {
     return `${t.trace.toolCount(traces.length)}`
   }
 
+  useEffect(() => {
+    isLoadingRef.current = isLoading
+  }, [isLoading])
+
   const lastMessageKey = useMemo(() => {
     const last = messages[messages.length - 1] as any
     const id = String(last?.id || '')
@@ -1302,11 +1620,12 @@ function AppLoaded(): JSX.Element {
   const scrollToUserMessage = useCallback(
     (id: string) => {
       const el = chatScrollRef.current
-      const target = userMsgElMapRef.current.get(id)
-      if (!el || !target) return
+      if (!el) return
       userScrollLockedRef.current = true
       stopAutoScroll()
-      const top = Math.max(0, target.offsetTop - 24)
+      const virtualTop = virtualApi?.getOffsetTopById(id)
+      const target = userMsgElMapRef.current.get(id)
+      const top = Math.max(0, (virtualTop ?? target?.offsetTop ?? 0) - 24)
       el.scrollTo({ top, behavior: 'smooth' })
       if (highlightUserMsgTimerRef.current != null) window.clearTimeout(highlightUserMsgTimerRef.current)
       setHighlightUserMsgId(id)
@@ -1315,7 +1634,7 @@ function AppLoaded(): JSX.Element {
         highlightUserMsgTimerRef.current = null
       }, 900)
     },
-    [stopAutoScroll]
+    [stopAutoScroll, virtualApi]
   )
 
   useEffect(() => {
@@ -1329,22 +1648,22 @@ function AppLoaded(): JSX.Element {
     const maxLen = Math.max(1, ...userMsgs.map((m) => (typeof m.content === 'string' ? m.content.length : 0)))
     const denom = Math.log(1 + maxLen)
     const next: Array<{ id: string; topRatio: number; widthPx: number; content: string }> = []
-    const sh = Math.max(1, el.scrollHeight)
+    const sh = Math.max(1, virtualApi?.getTotalHeight() ?? el.scrollHeight)
     for (const m of userMsgs) {
       const id = String(m.id || '').trim()
       if (!id) continue
-      const node = userMsgElMapRef.current.get(id)
-      if (!node) continue
+      const top = virtualApi?.getOffsetTopById(id) ?? userMsgElMapRef.current.get(id)?.offsetTop
+      if (top == null) continue
       const content = typeof m.content === 'string' ? m.content : ''
       const len = content.length
       const norm = denom > 0 ? Math.log(1 + Math.max(0, len)) / denom : 0
       const widthPx = 4 + norm * (18 - 4)
-      const topRatio = Math.max(0, Math.min(1, node.offsetTop / sh))
+      const topRatio = Math.max(0, Math.min(1, top / sh))
       next.push({ id, topRatio, widthPx, content })
     }
     next.sort((a, b) => a.topRatio - b.topRatio)
     setUserNavItems(next)
-  }, [lastMessageKey, messages])
+  }, [lastMessageKey, messages, virtualApi])
 
   useEffect(() => {
     isLoadingRef.current = Boolean(isLoading)
@@ -1373,13 +1692,13 @@ function AppLoaded(): JSX.Element {
     if (!userScrollLockedRef.current) {
       lastSeenMessageKeyRef.current = lastMessageKey
       setShowScrollToBottom(false)
-      startAutoScroll()
+      startAutoScroll(isLoading ? { force: true } : undefined)
       return
     }
     if (lastMessageKey !== lastSeenMessageKeyRef.current) {
       setShowScrollToBottom(true)
     }
-  }, [lastMessageKey, startAutoScroll])
+  }, [isLoading, lastMessageKey, startAutoScroll])
 
   useEffect(() => {
     const root = document.documentElement
@@ -1460,20 +1779,21 @@ function AppLoaded(): JSX.Element {
     }
   }
 
-  const handleSend = async () => {
-    if (!inputValue.trim() || isLoading) return
+  const handleSend = async (rawText: string): Promise<boolean> => {
+    const trimmed = String(rawText || '').trim()
+    if (!trimmed || isLoading) return false
     
     if (!activeProvider && !effectiveProviderId) {
       openSettings()
-      return
+      return false
     }
 
     let ensuredProjectId = String(useStore.getState().ui.activeProjectId || '').trim()
     if (!ensuredProjectId) {
       const res = await window.anima?.window?.pickDirectory?.()
-      if (!res?.ok || res.canceled) return
+      if (!res?.ok || res.canceled) return false
       const dir = String(res.path || '').trim()
-      if (!dir) return
+      if (!dir) return false
       ensuredProjectId = await useStore.getState().addProject(dir)
       if (ensuredProjectId) await useStore.getState().createChatInProject(ensuredProjectId)
     }
@@ -1483,47 +1803,47 @@ function AppLoaded(): JSX.Element {
     }
 
     const ensuredChatId = String(useStore.getState().activeChatId || '').trim()
-    if (!ensuredChatId) return
+    if (!ensuredChatId) return false
 
-      const userMessage = inputValue.trim()
-      const userAttachments = composer.attachments.map((a) => ({ path: a.path }))
-      const userAttachmentsWorkspaceDir = resolveWorkspaceDir()
-      setInputValue('')
-      setIsLoading(true)
-      const controller = new AbortController()
-      abortControllerRef.current = controller
+    const userMessage = trimmed
+    const userAttachments = composer.attachments.map((a) => ({ path: a.path }))
+    const userAttachmentsWorkspaceDir = resolveWorkspaceDir()
+    setIsLoading(true)
+    const controller = new AbortController()
+    abortControllerRef.current = controller
 
-      const turnId = crypto.randomUUID()
-      let currentAssistantId = crypto.randomUUID()
+    const turnId = crypto.randomUUID()
+    let currentAssistantId = crypto.randomUUID()
 
-      const updateLastMessage = (content: string, meta?: any) => {
-        const { updateMessageById, activeChatId } = useStore.getState()
-        if (activeChatId) {
-          updateMessageById(activeChatId, currentAssistantId, { content, meta })
+    const updateLastMessage = (content: string, meta?: any) => {
+      const { updateMessageById, activeChatId } = useStore.getState()
+      if (activeChatId) {
+        updateMessageById(activeChatId, currentAssistantId, { content, meta })
+      }
+    }
+
+    const runSend = async () => {
+      const composerPayload = buildComposerPayload()
+
+      addMessage({
+        role: 'user',
+        content: userMessage,
+        turnId,
+        meta: userAttachments.length ? { userAttachments, userAttachmentsWorkspaceDir } : undefined
+      } as any)
+      if (composer.attachments.length) updateComposer({ attachments: [] })
+      userScrollLockedRef.current = false
+      chatIsAtBottomRef.current = true
+      setChatIsAtBottom(true)
+      setShowScrollToBottom(false)
+      window.requestAnimationFrame(() => {
+        const el = chatScrollRef.current
+        if (el) {
+          markProgrammaticScroll()
+          el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
         }
-      }
-
-    const composerPayload = buildComposerPayload()
-
-    addMessage({
-      role: 'user',
-      content: userMessage,
-      turnId,
-      meta: userAttachments.length ? { userAttachments, userAttachmentsWorkspaceDir } : undefined
-    } as any)
-    if (composer.attachments.length) updateComposer({ attachments: [] })
-    userScrollLockedRef.current = false
-    chatIsAtBottomRef.current = true
-    setChatIsAtBottom(true)
-    setShowScrollToBottom(false)
-    window.requestAnimationFrame(() => {
-      const el = chatScrollRef.current
-      if (el) {
-        markProgrammaticScroll()
-        el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
-      }
-      startAutoScroll({ force: true })
-    })
+        startAutoScroll({ force: true })
+      })
 
       try {
         // Add placeholder for assistant
@@ -1626,9 +1946,13 @@ function AppLoaded(): JSX.Element {
              }
           } else {
              // Finalize current assistant message
-             updateLastMessage(fullContent, assistantMeta)
+             const finalizedAssistantMeta =
+               typeof assistantMeta?.reasoningText === 'string' && assistantMeta.reasoningText.trim()
+                 ? { ...assistantMeta, reasoningStatus: 'done' as const }
+                 : assistantMeta
+             updateLastMessage(fullContent, finalizedAssistantMeta)
              if (activeChatId) {
-               void persistMessageById(activeChatId, currentAssistantId, fullContent, assistantMeta)
+               void persistMessageById(activeChatId, currentAssistantId, fullContent, finalizedAssistantMeta)
              }
 
              msgId = crypto.randomUUID()
@@ -1769,6 +2093,9 @@ function AppLoaded(): JSX.Element {
                 updateLastMessage(fullContent, assistantMeta)
               } else if (evt.type === 'trace' && evt.trace) {
                 upsertTrace(evt.trace)
+              } else if (evt.type === 'error') {
+                const err = typeof evt.error === 'string' && evt.error.trim() ? evt.error.trim() : 'Unknown error'
+                throw new Error(err)
               } else if (evt.type === 'compression_start') {
                 compressionSeenStart = true
                 compressionEnded = false
@@ -1948,13 +2275,10 @@ function AppLoaded(): JSX.Element {
         typingTimerRef.current = null
       }
     }
-  }
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
     }
+
+    void runSend()
+    return true
   }
 
   return (
@@ -1981,9 +2305,124 @@ function AppLoaded(): JSX.Element {
                 </div>
               )}
               <ScrollArea className="h-[420px] rounded-md border p-3">
-                <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                  {summaryLoading ? '加载中…' : (summaryText || '暂无摘要。')}
-                </div>
+                {summaryLoading ? (
+                  <div className="text-sm text-muted-foreground">加载中…</div>
+                ) : !summaryText ? (
+                  <div className="text-sm text-muted-foreground">暂无摘要。</div>
+                ) : settings.enableMarkdown ? (
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm, remarkMath]}
+                    rehypePlugins={[rehypeKatex, rehypeRaw]}
+                    className="prose prose-sm dark:prose-invert max-w-none prose-p:text-[14px] prose-li:text-[14px] prose-table:text-[14px] prose-p:leading-relaxed prose-li:leading-relaxed text-foreground/90"
+                    components={{
+                      pre: ({ children }) => <>{children}</>,
+                      code({ inline, className, children, ...props }: any) {
+                        const match = /language-(\w+)/.exec(className || '')
+                        const lang = match ? match[1] : 'text'
+                        const value = String(children).replace(/\n$/, '')
+                        const trimmed = value.trim()
+                        const isFileToken =
+                          !/^https?:\/\//i.test(trimmed) &&
+                          (trimmed.startsWith('file://') ||
+                            trimmed.startsWith('/') ||
+                            trimmed.startsWith('\\') ||
+                            trimmed.startsWith('./') ||
+                            trimmed.startsWith('../') ||
+                            trimmed.startsWith('~/') ||
+                            /\.(ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)$/i.test(trimmed))
+                        const isShortFence = !inline && !match && trimmed && !trimmed.includes('\n') && trimmed.length <= 80
+                        if (isShortFence) {
+                          return (
+                            <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[12px] text-foreground" {...props}>
+                              {trimmed}
+                            </code>
+                          )
+                        }
+                        if (lang === 'mermaid') {
+                          return <MermaidBlock chart={value} />
+                        }
+                        if (!inline) {
+                          return <CodeBlock language={lang} value={value} className={className} {...props} />
+                        }
+                        if (isFileToken) {
+                          return (
+                            <button
+                              type="button"
+                              className="rounded bg-muted px-1.5 py-0.5 font-mono text-[12px] text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 cursor-pointer"
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                openLinkTarget(trimmed)
+                              }}
+                              title={trimmed}
+                            >
+                              {trimmed}
+                            </button>
+                          )
+                        }
+                        return (
+                          <code className={className} {...props}>
+                            {children}
+                          </code>
+                        )
+                      },
+                      img({ src, alt, ...props }: any) {
+                        const raw = String(src || '').trim()
+                        if (!raw) return null
+                        const isLikelyUrl = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw)
+                        const isRelativePath = raw && !isLikelyUrl && !raw.startsWith('/') && !raw.startsWith('\\')
+                        if (isRelativePath) {
+                          const name = raw.split('/').pop() || raw
+                          return (
+                            <button
+                              type="button"
+                              className="text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                openLinkTarget(raw)
+                              }}
+                              title={raw}
+                            >
+                              {name}
+                            </button>
+                          )
+                        }
+                        return <img src={raw} alt={String(alt || '')} {...props} />
+                      },
+                      a({ href, children, className, ...props }: any) {
+                        const target = String(href || '').trim()
+                        const isFileLike =
+                          target.startsWith('file://') ||
+                          target.startsWith('/') ||
+                          target.startsWith('\\') ||
+                          target.startsWith('./') ||
+                          target.startsWith('../') ||
+                          target.startsWith('~/') ||
+                          /\.(ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)$/i.test(target)
+                        const linkClass = isFileLike ? 'text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300' : ''
+                        return (
+                          <a
+                            {...props}
+                            href={target}
+                            className={[className, linkClass].filter(Boolean).join(' ')}
+                            onClick={(e) => {
+                              if (!target) return
+                              e.preventDefault()
+                              openLinkTarget(target)
+                            }}
+                          >
+                            {children}
+                          </a>
+                        )
+                      }
+                    }}
+                  >
+                    {linkifyQuotedFileNames(normalizeChatMarkdown(summaryText))}
+                  </ReactMarkdown>
+                ) : (
+                  <div className="whitespace-pre-wrap text-sm leading-relaxed">{summaryText}</div>
+                )}
               </ScrollArea>
             </div>
             <DialogFooter>
@@ -2092,9 +2531,9 @@ function AppLoaded(): JSX.Element {
               className="flex-1 overflow-y-auto pt-4 pl-6 pr-6 pb-4 no-drag"
             >
               {displayMessages.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-4">
-                  <p className="font-medium text-lg text-foreground">{t.helloTitle}</p>
-                  <p className="text-sm text-muted-foreground">
+                <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-3">
+                  <p className="font-semibold text-[22px] tracking-tight text-foreground">{t.helloTitle}</p>
+                  <p className="text-sm text-muted-foreground text-center max-w-[520px] leading-6">
                     {activeProvider ? t.helloSubtitleConnected(activeProvider.name) : t.helloSubtitleDisconnected}
                   </p>
                   {!activeProvider && (
@@ -2105,19 +2544,39 @@ function AppLoaded(): JSX.Element {
                 </div>
               ) : (
                 <div className="flex flex-col gap-1.5 pb-2 max-w-3xl mx-auto w-full">
-                  {displayMessages.map((msg) => {
-                    if (msg.role !== 'user' && msg.role !== 'tool') {
-                      const meta: any = msg.meta || {}
-                      const hasReasoning = typeof meta.reasoningText === 'string' && meta.reasoningText.trim().length > 0
-                      const hasTokens = Boolean(settings.showTokenUsage && meta.totalTokens != null)
-                      const hasContent = typeof msg.content === 'string' && msg.content.trim().length > 0
-                      const hasCompression = meta.compressionState === 'running' || meta.compressionState === 'done'
+                  <VirtualizedList
+                    items={displayMessages as any}
+                    getKey={(m: any) => String(m?.id || '')}
+                    scrollRef={chatScrollRef as any}
+                    onApi={setVirtualApi}
+                    renderItem={(msg: any, ctx) => {
+                      const active = Boolean(ctx.active)
+                      if (msg.role !== 'user' && msg.role !== 'tool') {
+                        const meta: any = msg.meta || {}
+                        const hasReasoning = typeof meta.reasoningText === 'string' && meta.reasoningText.trim().length > 0
+                        const hasTokens = Boolean(settings.showTokenUsage && meta.totalTokens != null)
+                        const hasContent = typeof msg.content === 'string' && msg.content.trim().length > 0
+                        const hasCompression = meta.compressionState === 'running' || meta.compressionState === 'done'
 
-                      if (!hasContent && !hasReasoning && !hasTokens && !hasCompression) return null
-                    }
+                        if (!hasContent && !hasReasoning && !hasTokens && !hasCompression) return null
+                      }
 
-                    return (
-                    <div key={msg.id} className="w-full">
+                      if (msg.role === 'tool' && !active) {
+                        const traces = Array.isArray(msg.meta?.toolTraces) ? msg.meta.toolTraces : []
+                        const names = traces
+                          .map((t: any) => String(t?.name || '').trim())
+                          .map((n: string) => n.replace(/^tool_start:/, '').replace(/^tool_done:/, '').replace(/^tool_end:/, '').trim())
+                          .filter((n: string) => n && n !== 'model_call' && n !== 'tool_call')
+                        const label = names.length ? `${names[0]}${names.length > 1 ? ` 等 ${names.length} 个` : ''}` : `${traces.length} 个工具调用`
+                        return (
+                          <div className="w-full py-0.5">
+                            <div className="text-[12px] text-muted-foreground">{label}</div>
+                          </div>
+                        )
+                      }
+
+                      return (
+                      <div className="w-full">
                       {msg.role === 'user' ? (
                         <div className={`py-2 flex justify-end ${msg.id === lastUserMessageId ? 'sticky top-0 z-20' : ''}`}>
                            <div className="flex flex-col items-end gap-2">
@@ -2562,11 +3021,65 @@ function AppLoaded(): JSX.Element {
                               const status = meta.reasoningStatus
                               const text = typeof meta.reasoningText === 'string' ? meta.reasoningText.trim() : ''
                               if (!text) return null
-                              const isThinking = status === 'pending' || status === 'streaming'
+                              const isThinkingRaw = status === 'pending' || status === 'streaming'
+                              const isLatest = ctx.index === displayMessages.length - 1
+                              const isThinking = Boolean(isThinkingRaw && isLoading && isLatest)
+                              const msgId = String(msg.id || '')
+                              const open = reasoningOpenByMsgId[msgId] ?? isThinking
+                              const headerText =
+                                settings.language === 'zh'
+                                  ? isThinking
+                                    ? '思考中…'
+                                    : '思考已完成'
+                                  : settings.language === 'ja'
+                                    ? isThinking
+                                      ? '思考中…'
+                                      : '思考完了'
+                                    : isThinking
+                                      ? 'Thinking…'
+                                      : 'Thought complete'
+                              const toggle = () => {
+                                setReasoningOpenByMsgId((prev) => {
+                                  const curr = prev[msgId] ?? isThinking
+                                  return { ...prev, [msgId]: !curr }
+                                })
+                              }
                               return (
-                                <div className="border-l-2 border-muted/20 text-[13px] leading-relaxed text-muted-foreground py-0.5">
-                                  {text}
-                                  {isThinking && <span className="inline-block w-1.5 h-3 bg-muted-foreground/50 ml-1 animate-pulse align-middle"/>}
+                                <div>
+                                  <button
+                                    type="button"
+                                    className="group w-full flex items-center gap-2 min-w-0 py-1.5 rounded-md text-left hover:bg-muted/10 transition-colors motion-reduce:transition-none"
+                                    onClick={(e) => {
+                                      e.preventDefault()
+                                      e.stopPropagation()
+                                      toggle()
+                                    }}
+                                    aria-expanded={open}
+                                  >
+                                    <Brain className="w-3.5 h-3.5 text-muted-foreground/80 shrink-0" />
+                                    <span className="text-[12px] font-medium text-muted-foreground shrink-0">
+                                      {headerText}
+                                    </span>
+                                    <span
+                                      aria-hidden="true"
+                                      className="ml-auto opacity-0 group-hover:opacity-100 h-6 w-6 -mr-1 rounded-md hover:bg-black/5 dark:hover:bg-white/10 text-muted-foreground transition-opacity motion-reduce:transition-none flex items-center justify-center"
+                                    >
+                                      <ChevronDown
+                                        className={`w-3.5 h-3.5 transition-transform motion-reduce:transition-none ${
+                                          open ? 'rotate-180' : ''
+                                        }`}
+                                      />
+                                    </span>
+                                  </button>
+
+                                  {open ? (
+                                    <div className="mt-1 border-l-2 border-muted/20 pl-3 text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words">
+                                      {text}
+                                      {isThinking && (
+                                        <span className="inline-block w-1.5 h-3 bg-muted-foreground/50 ml-1 animate-pulse align-middle" />
+                                      )}
+                                    </div>
+                                  ) : null}
                                 </div>
                               )
                             })()}
@@ -2750,8 +3263,8 @@ function AppLoaded(): JSX.Element {
                       )}
                     </div>
                     )
-                  })}
-                  <div ref={messagesEndRef} />
+                    }}
+                  />
                 </div>
               )}
             </main>
@@ -2802,37 +3315,46 @@ function AppLoaded(): JSX.Element {
                 </div>
               </div>
             )}
-            {showScrollToBottom && (
-              <div className="absolute bottom-28 left-1/2 -translate-x-1/2 z-30 no-drag">
-                <TooltipProvider>
-                  <Tooltip delayDuration={150}>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-9 w-9 rounded-full bg-transparent hover:bg-muted/40 text-primary/80 hover:text-primary transition-colors"
-                        onClick={() => {
-                          lastSeenMessageKeyRef.current = lastMessageKey
-                          setShowScrollToBottom(false)
-                          setChatIsAtBottom(true)
-                          chatIsAtBottomRef.current = true
-                          userScrollLockedRef.current = false
-                          const el = chatScrollRef.current
-                          if (el) {
-                            markProgrammaticScroll()
-                            el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
-                          }
-                          startAutoScroll({ force: true })
-                        }}
-                      >
-                        <ChevronDown className="w-4 h-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>下方有新内容</TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
-            )}
+            <AnimatePresence initial={false}>
+              {showScrollToBottom ? (
+                <motion.div
+                  key="scroll-to-bottom"
+                  initial={reduceMotion ? false : { opacity: 0, y: 8, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                  transition={reduceMotion ? { duration: 0 } : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                  className="absolute bottom-28 left-1/2 -translate-x-1/2 z-30 no-drag"
+                >
+                  <TooltipProvider>
+                    <Tooltip delayDuration={150}>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 rounded-full bg-transparent hover:bg-muted/40 text-primary/80 hover:text-primary transition-colors"
+                          onClick={() => {
+                            lastSeenMessageKeyRef.current = lastMessageKey
+                            setShowScrollToBottom(false)
+                            setChatIsAtBottom(true)
+                            chatIsAtBottomRef.current = true
+                            userScrollLockedRef.current = false
+                            const el = chatScrollRef.current
+                            if (el) {
+                              markProgrammaticScroll()
+                              el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
+                            }
+                            startAutoScroll({ force: true })
+                          }}
+                        >
+                          <ChevronDown className="w-4 h-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>下方有新内容</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
 
             <footer className="pl-6 pr-6 pt-6 pb-0 no-drag overflow-visible">
               <div className="max-w-3xl mx-auto relative bg-background rounded-xl shadow-sm border border-black/5 dark:border-white/10 p-3 transition-all duration-200">
@@ -2875,222 +3397,263 @@ function AppLoaded(): JSX.Element {
                       })}
                     </div>
                   )}
-                  <InputAnimation
-                    className="w-full bg-transparent border-0 resize-none shadow-none text-[13px] leading-relaxed"
+                  <ChatComposer
                     placeholder={t.typeMessage}
-                    rows={1}
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                  />
-                  <div className="flex justify-between items-center px-2 pb-1 mt-1 gap-2">
-                   <div className="flex items-center gap-1 flex-1 min-w-0 overflow-hidden">
-                      {/* Attachments */}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 rounded-full shrink-0 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0"
-                        onClick={() => void handlePickFiles()}
-                      >
-                        <Paperclip className="w-4 h-4" />
-                      </Button>
+                    isLoading={isLoading}
+                    onSend={handleSend}
+                    onStop={handleStop}
+                    onApi={(api) => {
+                      composerApiRef.current = api
+                    }}
+                    isRecording={isRecording}
+                    isVoiceModelAvailable={isVoiceModelAvailable}
+                    onToggleRecording={() => {
+                      if (!isRecording && !isVoiceModelAvailable) {
+                        alert('请配置模型')
+                        return
+                      }
+                      void toggleRecording()
+                    }}
+                    leftControls={
+                      <div className="flex items-center gap-1 flex-1 min-w-0 overflow-hidden">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 rounded-full shrink-0 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0"
+                          onClick={() => void handlePickFiles()}
+                        >
+                          <Paperclip className="w-4 h-4" />
+                        </Button>
 
-                      {/* Tools */}
-                      <Popover open={popoverPanel === 'tools'} onOpenChange={(open) => handlePopoverOpenChange('tools', open)}>
-                        <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('tools')} onMouseLeave={handleInputPanelMouseLeave}>
-                           <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full shrink-0 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0">
-                             <Wrench className="w-4 h-4" />
-                           </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-80" align="start" onMouseEnter={() => handleMouseEnter('tools')} onMouseLeave={handleMouseLeave}>
-                          <div className="space-y-3">
-                             <div className="flex items-center justify-between">
-                               <h4 className="font-medium text-xs leading-none">{t.composer.tools}</h4>
-                               <select className="text-xs border rounded px-2 py-1" value={composer.toolMode} onChange={(e) => updateComposer({ toolMode: e.target.value as any })}>
+                        <Popover open={popoverPanel === 'tools'} onOpenChange={(open) => handlePopoverOpenChange('tools', open)}>
+                          <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('tools')} onMouseLeave={handleInputPanelMouseLeave}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 rounded-full shrink-0 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0"
+                            >
+                              <Wrench className="w-4 h-4" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-80" align="start" onMouseEnter={() => handleMouseEnter('tools')} onMouseLeave={handleMouseLeave}>
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-between">
+                                <h4 className="font-medium text-xs leading-none">{t.composer.tools}</h4>
+                                <select
+                                  className="text-xs border rounded px-2 py-1"
+                                  value={composer.toolMode}
+                                  onChange={(e) => updateComposer({ toolMode: e.target.value as any })}
+                                >
                                   <option value="auto">{t.composer.auto}</option>
                                   <option value="all">{t.composer.all}</option>
                                   <option value="disabled">{t.composer.disabled}</option>
-                               </select>
-                             </div>
-                             
-                             <div className="space-y-2">
-                               <h5 className="text-[11px] font-medium text-muted-foreground uppercase">Built-in</h5>
-                               <ScrollArea className="h-[240px]">
-                                  <div className="flex flex-col gap-1 pr-3">
-                                     {builtinTools.map((tool) => (
-                                       <div key={tool.id} className="flex items-center space-x-2">
-                                         <Checkbox className="rounded-none" id={tool.id} checked={composer.enabledToolIds.includes(tool.id)} onCheckedChange={(checked) => updateComposer({ enabledToolIds: toggleId(composer.enabledToolIds, tool.id, !!checked) })} />
-                                         <label htmlFor={tool.id} className="text-xs leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">{tool.name}</label>
-                                       </div>
-                                     ))}
-                                  </div>
-                               </ScrollArea>
-                             </div>
+                                </select>
+                              </div>
 
-                             <div className="space-y-2">
-                               <h5 className="text-[11px] font-medium text-muted-foreground uppercase">{t.composer.mcpServers}</h5>
-                               {settings.mcpServers.length === 0 ? (
+                              <div className="space-y-2">
+                                <h5 className="text-[11px] font-medium text-muted-foreground uppercase">Built-in</h5>
+                                <ScrollArea className="h-[240px]">
+                                  <div className="flex flex-col gap-1 pr-3">
+                                    {builtinTools.map((tool) => (
+                                      <div key={tool.id} className="flex items-center space-x-2">
+                                        <Checkbox
+                                          className="rounded-none"
+                                          id={tool.id}
+                                          checked={composer.enabledToolIds.includes(tool.id)}
+                                          onCheckedChange={(checked) =>
+                                            updateComposer({ enabledToolIds: toggleId(composer.enabledToolIds, tool.id, !!checked) })
+                                          }
+                                        />
+                                        <label htmlFor={tool.id} className="text-xs leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                                          {tool.name}
+                                        </label>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </ScrollArea>
+                              </div>
+
+                              <div className="space-y-2">
+                                <h5 className="text-[11px] font-medium text-muted-foreground uppercase">{t.composer.mcpServers}</h5>
+                                {settings.mcpServers.length === 0 ? (
                                   <div className="text-xs text-muted-foreground">—</div>
-                               ) : (
+                                ) : (
                                   <ScrollArea className="h-[200px]">
                                     <div className="space-y-1">
-                                       {settings.mcpServers.map((s) => (
-                                          <div key={s.id} className="flex items-center space-x-2">
-                                            <Checkbox className="rounded-none" id={s.id} checked={composer.enabledMcpServerIds.includes(s.id)} onCheckedChange={(checked) => updateComposer({ enabledMcpServerIds: toggleId(composer.enabledMcpServerIds, s.id, !!checked) })} />
-                                            <label htmlFor={s.id} className="text-xs leading-none">
-                                              <span className="block font-medium">{s.name || s.id}</span>
-                                              <span className="block text-[10px] text-muted-foreground truncate w-[200px]">{s.url}</span>
-                                            </label>
-                                          </div>
-                                       ))}
-                                    </div>
-                                  </ScrollArea>
-                               )}
-                             </div>
-                          </div>
-                        </PopoverContent>
-                      </Popover>
-
-                      {/* Skills */}
-                      <Popover open={popoverPanel === 'skills'} onOpenChange={(open) => handlePopoverOpenChange('skills', open)}>
-                        <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('skills')} onMouseLeave={handleInputPanelMouseLeave}>
-                           <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full shrink-0 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0">
-                             <Sparkles className="w-4 h-4" />
-                           </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-80" align="start" onMouseEnter={() => handleMouseEnter('skills')} onMouseLeave={handleMouseLeave}>
-                           <div className="space-y-3">
-                             <div className="flex items-center justify-between">
-                               <h4 className="font-medium text-xs leading-none">{t.composer.skills}</h4>
-                               <select className="text-xs border rounded px-2 py-1" value={composer.skillMode} onChange={(e) => updateComposer({ skillMode: e.target.value as any })}>
-                                  <option value="auto">{t.composer.auto}</option>
-                                  <option value="all">{t.composer.all}</option>
-                                  <option value="disabled">{t.composer.disabled}</option>
-                               </select>
-                             </div>
-                             
-                             <div className="flex items-center justify-between gap-2">
-                                <span className="text-xs text-muted-foreground">{skillsCache.length} loaded</span>
-                                <div className="flex gap-2">
-                                   <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => void ensureSkills()}>{t.composer.refresh}</Button>
-                                   <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => void openSkillsFolder()}>{t.composer.openFolder}</Button>
-                                </div>
-                             </div>
-
-                             {skillsCache.length === 0 ? (
-                               <div className="text-xs text-muted-foreground">—</div>
-                            ) : (
-                               <ScrollArea className="h-[300px]">
-                                  <div className="space-y-2">
-                                     {skillsCache.map((s) => (
-                                       <div key={s.id} className="flex items-start space-x-2">
-                                         <Checkbox
-                                           className="rounded-none"
-                                           id={`skill-${s.id}`}
-                                           disabled={s.isValid === false}
-                                           checked={composer.enabledSkillIds.includes(s.id)}
-                                           onCheckedChange={(checked) => updateComposer({ enabledSkillIds: toggleId(composer.enabledSkillIds, s.id, !!checked) })}
-                                         />
-                                         <label htmlFor={`skill-${s.id}`} className="text-xs leading-none space-y-1">
+                                      {settings.mcpServers.map((s) => (
+                                        <div key={s.id} className="flex items-center space-x-2">
+                                          <Checkbox
+                                            className="rounded-none"
+                                            id={s.id}
+                                            checked={composer.enabledMcpServerIds.includes(s.id)}
+                                            onCheckedChange={(checked) =>
+                                              updateComposer({ enabledMcpServerIds: toggleId(composer.enabledMcpServerIds, s.id, !!checked) })
+                                            }
+                                          />
+                                          <label htmlFor={s.id} className="text-xs leading-none">
                                             <span className="block font-medium">{s.name || s.id}</span>
-                                            <span className="block text-[10px] text-muted-foreground line-clamp-2">{s.description || s.id}</span>
-                                            {s.isValid === false ? (
-                                              <span className="block text-[10px] text-destructive line-clamp-2">
-                                                {Array.isArray(s.errors) && s.errors.length ? s.errors.join(', ') : 'invalid'}
-                                              </span>
-                                            ) : null}
+                                            <span className="block text-[10px] text-muted-foreground truncate w-[200px]">{s.url}</span>
                                           </label>
                                         </div>
                                       ))}
-                                   </div>
-                                </ScrollArea>
-                             )}
-                           </div>
-                        </PopoverContent>
-                      </Popover>
+                                    </div>
+                                  </ScrollArea>
+                                )}
+                              </div>
+                            </div>
+                          </PopoverContent>
+                        </Popover>
 
-                      {/* Model Selector */}
-                      <Popover open={popoverPanel === 'model'} onOpenChange={(open) => handlePopoverOpenChange('model', open)}>
-                        <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('model')} onMouseLeave={handleInputPanelMouseLeave}>
-                           <Button variant="ghost" className="h-8 rounded-full gap-2 px-3 text-xs font-normal text-primary hover:text-primary hover:bg-primary/15 shrink min-w-0 max-w-[200px] focus-visible:ring-0 focus-visible:ring-offset-0">
-                              {effectiveProvider ? (
-                                <MaskedIcon url={getProviderIconUrl(effectiveProvider)} className="w-3.5 h-3.5 shrink-0" />
-                              ) : null}
+                        <Popover open={popoverPanel === 'skills'} onOpenChange={(open) => handlePopoverOpenChange('skills', open)}>
+                          <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('skills')} onMouseLeave={handleInputPanelMouseLeave}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 rounded-full shrink-0 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0"
+                            >
+                              <Sparkles className="w-4 h-4" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-80" align="start" onMouseEnter={() => handleMouseEnter('skills')} onMouseLeave={handleMouseLeave}>
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-between">
+                                <h4 className="font-medium text-xs leading-none">{t.composer.skills}</h4>
+                                <select
+                                  className="text-xs border rounded px-2 py-1"
+                                  value={composer.skillMode}
+                                  onChange={(e) => updateComposer({ skillMode: e.target.value as any })}
+                                >
+                                  <option value="auto">{t.composer.auto}</option>
+                                  <option value="all">{t.composer.all}</option>
+                                  <option value="disabled">{t.composer.disabled}</option>
+                                </select>
+                              </div>
+
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs text-muted-foreground">{skillsCache.length} loaded</span>
+                                <div className="flex gap-2">
+                                  <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => void ensureSkills()}>
+                                    {t.composer.refresh}
+                                  </Button>
+                                  <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => void openSkillsFolder()}>
+                                    {t.composer.openFolder}
+                                  </Button>
+                                </div>
+                              </div>
+
+                              {skillsCache.length === 0 ? (
+                                <div className="text-xs text-muted-foreground">—</div>
+                              ) : (
+                                <ScrollArea className="h-[300px]">
+                                  <div className="space-y-2">
+                                    {skillsCache.map((s) => (
+                                      <div key={s.id} className="flex items-start space-x-2">
+                                        <Checkbox
+                                          className="rounded-none"
+                                          id={`skill-${s.id}`}
+                                          disabled={s.isValid === false}
+                                          checked={composer.enabledSkillIds.includes(s.id)}
+                                          onCheckedChange={(checked) => updateComposer({ enabledSkillIds: toggleId(composer.enabledSkillIds, s.id, !!checked) })}
+                                        />
+                                        <label htmlFor={`skill-${s.id}`} className="text-xs leading-none space-y-1">
+                                          <span className="block font-medium">{s.name || s.id}</span>
+                                          <span className="block text-[10px] text-muted-foreground line-clamp-2">{s.description || s.id}</span>
+                                          {s.isValid === false ? (
+                                            <span className="block text-[10px] text-destructive line-clamp-2">
+                                              {Array.isArray(s.errors) && s.errors.length ? s.errors.join(', ') : 'invalid'}
+                                            </span>
+                                          ) : null}
+                                        </label>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </ScrollArea>
+                              )}
+                            </div>
+                          </PopoverContent>
+                        </Popover>
+
+                        <Popover open={popoverPanel === 'model'} onOpenChange={(open) => handlePopoverOpenChange('model', open)}>
+                          <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('model')} onMouseLeave={handleInputPanelMouseLeave}>
+                            <Button
+                              variant="ghost"
+                              className="h-8 rounded-full gap-2 px-3 text-xs font-normal text-primary hover:text-primary hover:bg-primary/15 shrink min-w-0 max-w-[200px] focus-visible:ring-0 focus-visible:ring-offset-0"
+                            >
+                              {effectiveProvider ? <MaskedIcon url={getProviderIconUrl(effectiveProvider)} className="w-3.5 h-3.5 shrink-0" /> : null}
                               <span className="truncate">{effectiveModel || 'Anima'}</span>
                               <ChevronDown className="w-3.5 h-3.5 opacity-50 shrink-0" />
-                           </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-[300px]" align="start" onMouseEnter={() => handleMouseEnter('model')} onMouseLeave={handleMouseLeave}>
-                           <div className="space-y-3">
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[300px]" align="start" onMouseEnter={() => handleMouseEnter('model')} onMouseLeave={handleMouseLeave}>
+                            <div className="space-y-3">
                               <div className="flex items-center justify-between">
-                                 <h4 className="font-medium text-xs leading-none">{t.composer.model}</h4>
-                                 <div className="flex items-center gap-2">
-                                    <span className="text-xs text-muted-foreground">Auto</span>
-                                    <Switch checked={isAutoModel} onCheckedChange={toggleAutoModel} />
-                                 </div>
+                                <h4 className="font-medium text-xs leading-none">{t.composer.model}</h4>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-muted-foreground">Auto</span>
+                                  <Switch checked={isAutoModel} onCheckedChange={toggleAutoModel} />
+                                </div>
                               </div>
                               <ScrollArea className="h-[240px]">
-                                 <div className="space-y-4 pr-3">
-                                    {sortedProviders.map((p) => {
-                                      const iconUrl = getProviderIconUrl(p)
-                                      const models = Array.isArray(p.config?.models) ? p.config.models : []
-                                      const isProviderSelected = String(p.id) === effectiveProviderId
-                                      
-                                      return (
-                                        <div key={p.id} className="space-y-2">
-                                           <div className="flex items-center gap-2">
-                                              <div className="w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold border bg-muted/50">
-                                                {iconUrl ? <MaskedIcon url={iconUrl} className="w-3.5 h-3.5" /> : String(p.name || p.id || '?')[0]}
-                                              </div>
-                                              <span className="text-xs font-medium">{p.name}</span>
-                                           </div>
-                                           <div className="flex flex-wrap gap-2">
-                                              {models.map((m) => {
-                                                 const modelId = typeof m === 'string' ? m : m.id
-                                                 const isEnabled = typeof m === 'string' ? true : m.isEnabled
-                                                 if (!isEnabled) return null
+                                <div className="space-y-4 pr-3">
+                                  {sortedProviders.map((p) => {
+                                    const iconUrl = getProviderIconUrl(p)
+                                    const models = Array.isArray(p.config?.models) ? p.config.models : []
+                                    const isProviderSelected = String(p.id) === effectiveProviderId
 
-                                                 const selected = isProviderSelected && effectiveModel === modelId
-                                                 return (
-                                                    <Badge 
-                                                      key={`${p.id}:${modelId}`} 
-                                                      variant={selected ? 'default' : 'outline'} 
-                                                      className="cursor-pointer font-normal"
-                                                      onClick={() => updateComposer({ providerOverrideId: p.id, modelOverride: modelId })}
-                                                    >
-                                                       {modelId}
-                                                    </Badge>
-                                                 )
-                                              })}
-                                           </div>
+                                    return (
+                                      <div key={p.id} className="space-y-2">
+                                        <div className="flex items-center gap-2">
+                                          <div className="w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold border bg-muted/50">
+                                            {iconUrl ? <MaskedIcon url={iconUrl} className="w-3.5 h-3.5" /> : String(p.name || p.id || '?')[0]}
+                                          </div>
+                                          <span className="text-xs font-medium">{p.name}</span>
                                         </div>
-                                      )
-                                    })}
-                                 </div>
+                                        <div className="flex flex-wrap gap-2">
+                                          {models.map((m) => {
+                                            const modelId = typeof m === 'string' ? m : m.id
+                                            const isEnabled = typeof m === 'string' ? true : m.isEnabled
+                                            if (!isEnabled) return null
+
+                                            const selected = isProviderSelected && effectiveModel === modelId
+                                            return (
+                                              <Badge
+                                                key={`${p.id}:${modelId}`}
+                                                variant={selected ? 'default' : 'outline'}
+                                                className="cursor-pointer font-normal"
+                                                onClick={() => updateComposer({ providerOverrideId: p.id, modelOverride: modelId })}
+                                              >
+                                                {modelId}
+                                              </Badge>
+                                            )
+                                          })}
+                                        </div>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
                               </ScrollArea>
-                           </div>
-                        </PopoverContent>
-                      </Popover>
+                            </div>
+                          </PopoverContent>
+                        </Popover>
 
-                      {effectiveProvider?.type === 'deepseek' ? (
-                        <select
-                          className="h-8 rounded-full border bg-background px-2 text-[11px] text-foreground"
-                          value={thinkingLevel}
-                          onChange={(e) => updateComposer({ thinkingLevel: e.target.value as any })}
-                          title={t.composer.thinking}
-                        >
-                          <option value="default">{t.composer.thinkingDefault}</option>
-                          <option value="off">{t.composer.thinkingOff}</option>
-                          <option value="low">{t.composer.thinkingLow}</option>
-                          <option value="medium">{t.composer.thinkingMedium}</option>
-                          <option value="high">{t.composer.thinkingHigh}</option>
-                        </select>
-                      ) : null}
+                        {effectiveProvider?.type === 'deepseek' ? (
+                          <select
+                            className="h-8 rounded-full border bg-background px-2 text-[11px] text-foreground"
+                            value={thinkingLevel}
+                            onChange={(e) => updateComposer({ thinkingLevel: e.target.value as any })}
+                            title={t.composer.thinking}
+                          >
+                            <option value="default">{t.composer.thinkingDefault}</option>
+                            <option value="off">{t.composer.thinkingOff}</option>
+                            <option value="low">{t.composer.thinkingLow}</option>
+                            <option value="medium">{t.composer.thinkingMedium}</option>
+                            <option value="high">{t.composer.thinkingHigh}</option>
+                          </select>
+                        ) : null}
 
-                       {/* Context Usage */}
-                       <TooltipProvider>
-                         <Tooltip delayDuration={0}>
-                           <TooltipTrigger asChild>
+                        <TooltipProvider>
+                          <Tooltip delayDuration={0}>
+                            <TooltipTrigger asChild>
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -3098,61 +3661,202 @@ function AppLoaded(): JSX.Element {
                               >
                                 <CircularProgress value={usageStats.percentage} />
                               </Button>
-                           </TooltipTrigger>
-                           <TooltipContent side="top" className="text-xs">
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="text-xs">
                               <div className="flex flex-col gap-1">
-                                <div className="font-medium">Context Usage: {usageStats.percentage > 0 ? `${usageStats.percentage.toFixed(1)}%` : '0%'}</div>
+                                <div className="font-medium">
+                                  Context Usage: {usageStats.percentage > 0 ? `${usageStats.percentage.toFixed(1)}%` : '0%'}
+                                </div>
                                 <div className="text-muted-foreground">Used: {formatTokenCount(usageStats.used)}</div>
                                 {usageStats.total > 0 && <div className="text-muted-foreground">Limit: {formatTokenCount(usageStats.total)}</div>}
                               </div>
-                           </TooltipContent>
-                         </Tooltip>
-                       </TooltipProvider>
-                    </div>
-                     
-                     <div className="flex items-center gap-1 shrink-0">
-
-                       <Button 
-                         variant="ghost" 
-                         size="icon" 
-                         className={`h-8 w-8 rounded-full transition-all duration-200 focus-visible:ring-0 focus-visible:ring-offset-0 ${isRecording ? 'text-red-500 animate-pulse bg-red-500/10' : `text-primary hover:text-primary hover:bg-primary/15 ${isVoiceModelAvailable ? '' : 'opacity-50'}`}`}
-                         onClick={() => {
-                           if (!isRecording && !isVoiceModelAvailable) {
-                             alert('请配置模型')
-                             return
-                           }
-                           void toggleRecording()
-                         }}
-                         title={isRecording ? 'Stop Recording' : 'Voice Input'}
-                       >
-                         {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4 opacity-70" />}
-                       </Button>
-
-                       <Button 
-                         variant="ghost"
-                         size="icon"
-                         className={`h-8 w-8 rounded-full transition-all duration-200 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0 ${inputValue.trim() || isLoading ? '' : 'opacity-50'}`}
-                         onClick={isLoading ? handleStop : handleSend}
-                         disabled={!inputValue.trim() && !isLoading}
-                       >
-                         {isLoading ? <StopCircle className="w-4 h-4 animate-pulse" /> : <Send className="w-4 h-4" />}
-                       </Button>
-                     </div>
-                  </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                    }
+                  />
               </div>
             </footer>
             </div>
             </div>
           </div>
           <div className="relative h-full shrink-0 flex">
-            <div
-              className={`absolute left-0 top-0 bottom-0 w-1.5 -translate-x-full cursor-col-resize hover:bg-primary/20 active:bg-primary/40 transition-colors z-50 ${ui.rightSidebarOpen ? '' : 'hidden'}`}
-              onMouseDown={(e) => { e.preventDefault(); setIsResizingRight(true); }}
-            />
-            <RightSidebar width={rightWidth} />
+            <RightSidebar width={rightWidth} onResizeStart={() => setIsResizingRight(true)} />
           </div>
           </>
         )}
+      </div>
+    </div>
+  )
+}
+
+function ChatComposer({
+  placeholder,
+  isLoading,
+  onSend,
+  onStop,
+  onApi,
+  isRecording,
+  isVoiceModelAvailable,
+  onToggleRecording,
+  leftControls
+}: {
+  placeholder: string
+  isLoading: boolean
+  onSend: (text: string) => Promise<boolean>
+  onStop: () => void
+  onApi?: (api: {
+    appendText: (text: string) => void
+    setVoiceDraft: (finalText: string, interimText: string) => void
+    commitVoiceFinal: (text: string) => void
+    clearVoiceDraft: () => void
+  }) => void
+  isRecording: boolean
+  isVoiceModelAvailable: boolean
+  onToggleRecording: () => void
+  leftControls: ReactNode
+}): JSX.Element {
+  const [value, setValue] = useState('')
+  const voiceAnchorRef = useRef<number | null>(null)
+  const reduceMotion = useReducedMotion()
+
+  const api = useMemo(() => {
+    const ensureAnchor = (prev: string) => {
+      if (voiceAnchorRef.current != null) return prev
+      const spacer = prev && !prev.endsWith(' ') && !prev.endsWith('\n') ? ' ' : ''
+      voiceAnchorRef.current = prev.length + spacer.length
+      return prev + spacer
+    }
+
+    const applyDraft = (finalText: string, interimText: string) => {
+      const a = String(finalText || '').trim()
+      const b = String(interimText || '').trim()
+      const combined = a && b ? `${a}${a.endsWith(' ') || a.endsWith('\n') ? '' : ' '}${b}` : a || b
+      setValue((prev) => {
+        const base = ensureAnchor(prev)
+        const anchor = voiceAnchorRef.current ?? base.length
+        return base.slice(0, anchor) + combined
+      })
+    }
+
+    return {
+      appendText: (text: string) => {
+        const piece = String(text || '').trim()
+        if (!piece) return
+        setValue((prev) => {
+          const spacer = prev && !prev.endsWith(' ') && !prev.endsWith('\n') ? ' ' : ''
+          return prev + spacer + piece
+        })
+      },
+      setVoiceDraft: (finalText: string, interimText: string) => {
+        applyDraft(finalText, interimText)
+      },
+      commitVoiceFinal: (text: string) => {
+        const piece = String(text || '').trim()
+        if (!piece) {
+          voiceAnchorRef.current = null
+          return
+        }
+        setValue((prev) => {
+          const base = ensureAnchor(prev)
+          const anchor = voiceAnchorRef.current ?? base.length
+          voiceAnchorRef.current = null
+          return base.slice(0, anchor) + piece
+        })
+      },
+      clearVoiceDraft: () => {
+        setValue((prev) => {
+          const anchor = voiceAnchorRef.current
+          voiceAnchorRef.current = null
+          if (anchor == null) return prev
+          return prev.slice(0, anchor).replace(/[ \t]+$/, '')
+        })
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (onApi) onApi(api)
+  }, [onApi, api])
+
+  const onSubmit = useCallback(async () => {
+    if (isLoading) {
+      onStop()
+      return
+    }
+    const text = String(value || '').trim()
+    if (!text) return
+    const ok = await onSend(text)
+    if (ok) setValue('')
+  }, [isLoading, onStop, onSend, value])
+
+  return (
+    <div className="w-full">
+      <InputAnimation
+        className="w-full bg-transparent border-0 resize-none shadow-none text-[13px] leading-relaxed"
+        placeholder={placeholder}
+        rows={1}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault()
+            void onSubmit()
+          }
+        }}
+      />
+      <div className="flex justify-between items-center px-2 pb-1 mt-1 gap-2">
+        {leftControls}
+        <div className="flex items-center gap-1 shrink-0">
+          <Button
+            variant="ghost"
+            size="icon"
+            className={`h-8 w-8 rounded-full transition-all duration-200 focus-visible:ring-0 focus-visible:ring-offset-0 ${
+              isRecording
+                ? 'text-blue-500 border-0 bg-transparent hover:bg-blue-500/10'
+                : `text-primary hover:text-primary hover:bg-primary/15 ${isVoiceModelAvailable ? '' : 'opacity-50'}`
+            }`}
+            onClick={onToggleRecording}
+            title={isRecording ? 'Stop Recording' : 'Voice Input'}
+          >
+            {isRecording ? (
+              <div className="flex items-end justify-center gap-[2px] w-4 h-4">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <motion.span
+                    key={i}
+                    className="w-[2px] h-full bg-current rounded-full"
+                    style={{ transformOrigin: 'center' }}
+                    animate={
+                      reduceMotion
+                        ? { scaleY: 0.7, opacity: 0.9 }
+                        : { scaleY: [0.25, 1, 0.35, 0.85, 0.3], opacity: [0.6, 1, 0.7, 1, 0.6] }
+                    }
+                    transition={
+                      reduceMotion
+                        ? { duration: 0 }
+                        : { duration: 0.95, repeat: Infinity, ease: 'easeInOut', delay: i * 0.08 }
+                    }
+                  />
+                ))}
+              </div>
+            ) : (
+              <Mic className="w-4 h-4 opacity-70" />
+            )}
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            className={`h-8 w-8 rounded-full transition-all duration-200 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0 ${
+              String(value || '').trim() || isLoading ? '' : 'opacity-50'
+            }`}
+            onClick={() => void onSubmit()}
+            disabled={!String(value || '').trim() && !isLoading}
+          >
+            {isLoading ? <StopCircle className="w-4 h-4 animate-pulse" /> : <Send className="w-4 h-4" />}
+          </Button>
+        </div>
       </div>
     </div>
   )

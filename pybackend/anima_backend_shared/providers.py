@@ -362,7 +362,7 @@ def _provider_spec_from_obj(settings_obj: Dict[str, Any], provider_obj: Dict[str
     provider_id = str(provider_obj.get("id") or "").strip() or "provider"
     provider_type = str(provider_obj.get("type") or "openai").strip() or "openai"
     base_url = str(cfg.get("baseUrl") or "").strip()
-    api_key = str(cfg.get("apiKey") or "").strip()
+    api_key = ""
     model = str(cfg.get("selectedModel") or "").strip()
     if not model:
         models = cfg.get("models") or []
@@ -375,6 +375,26 @@ def _provider_spec_from_obj(settings_obj: Dict[str, Any], provider_obj: Dict[str
 
     if not base_url:
         return None
+    profile_id = None
+    try:
+        from .qwen_auth_runtime import get_qwen_profile_id_from_provider_obj
+
+        profile_id = get_qwen_profile_id_from_provider_obj(provider_obj)
+    except Exception:
+        profile_id = None
+
+    if profile_id is not None:
+        try:
+            from .qwen_auth_runtime import resolve_qwen_access_token
+
+            api_key = resolve_qwen_access_token(provider_id, profile_id)
+        except Exception as e:
+            raise RuntimeError(str(e))
+        provider_type = "openai_compatible"
+        if not api_format:
+            api_format = "chat_completions"
+    else:
+        api_key = str(cfg.get("apiKey") or "").strip()
     return ProviderSpec(
         provider_id=provider_id,
         provider_type=provider_type,

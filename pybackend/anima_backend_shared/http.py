@@ -22,4 +22,10 @@ def read_body_json(handler: BaseHTTPRequestHandler) -> Any:
     raw = handler.rfile.read(length)
     if not raw:
         return None
-    return json.loads(raw.decode("utf-8"))
+    try:
+        text = raw.decode("utf-8", errors="ignore").strip()
+        if not text:
+            return None
+        return json.loads(text)
+    except Exception:
+        return None

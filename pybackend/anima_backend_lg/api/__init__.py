@@ -23,6 +23,12 @@ from .runs import (
     handle_post_runs_non_stream,
 )
 from .runs_stream import handle_post_runs_stream
+from .qwen_auth import (
+    handle_get_provider_auth_profiles,
+    handle_get_provider_auth_status,
+    handle_post_provider_auth_logout,
+    handle_post_provider_auth_start,
+)
 from .settings_tools import (
     handle_get_attachment_file,
     handle_get_artifact_file,
@@ -43,6 +49,12 @@ from .voice import (
     handle_post_voice_models_download,
     handle_post_voice_models_download_cancel,
     handle_post_voice_transcribe,
+)
+from .voice_stream import (
+    handle_get_voice_stream_events,
+    handle_post_voice_stream_chunk,
+    handle_post_voice_stream_start,
+    handle_post_voice_stream_stop,
 )
 from ..cron import handle_get_cron_jobs, handle_post_cron_jobs
 
@@ -195,6 +207,19 @@ def dispatch(handler: Any, method: str, path: str) -> bool:
         handle_post_providers_fetch_models(handler)
         return True
 
+    if m == "POST" and path == "/api/providers/auth/start":
+        handle_post_provider_auth_start(handler)
+        return True
+    if m == "GET" and path == "/api/providers/auth/status":
+        handle_get_provider_auth_status(handler)
+        return True
+    if m == "POST" and path == "/api/providers/auth/logout":
+        handle_post_provider_auth_logout(handler)
+        return True
+    if m == "GET" and path == "/api/providers/auth/profiles":
+        handle_get_provider_auth_profiles(handler)
+        return True
+
     if m == "POST" and path == "/chat/prepare":
         handle_post_chat_prepare(handler)
         return True
@@ -222,6 +247,18 @@ def dispatch(handler: Any, method: str, path: str) -> bool:
         return True
     if m == "POST" and path == "/voice/transcribe":
         handle_post_voice_transcribe(handler)
+        return True
+    if m == "POST" and path == "/voice/stream/start":
+        handle_post_voice_stream_start(handler)
+        return True
+    if m == "POST" and path == "/voice/stream/chunk":
+        handle_post_voice_stream_chunk(handler)
+        return True
+    if m == "POST" and path == "/voice/stream/stop":
+        handle_post_voice_stream_stop(handler)
+        return True
+    if m == "GET" and path == "/voice/stream/events":
+        handle_get_voice_stream_events(handler)
         return True
 
     return False

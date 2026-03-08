@@ -163,11 +163,56 @@ def _sum_model_size_bytes(info: Dict[str, Any]) -> Optional[int]:
 
 def voice_model_catalog() -> List[Dict[str, Any]]:
     base = [
-        {"id": "openai/whisper-large-v3-turbo", "name": "Whisper Large V3 Turbo"},
-        {"id": "openai/whisper-medium", "name": "Whisper Medium"},
-        {"id": "openai/whisper-small", "name": "Whisper Small"},
-        {"id": "openai/whisper-base", "name": "Whisper Base"},
-        {"id": "openai/whisper-tiny", "name": "Whisper Tiny"},
+        {
+            "id": "openai/whisper-large-v3-turbo",
+            "name": "Whisper Large V3 Turbo",
+            "desc": {
+                "zh": "大模型加速版：速度很快，准确率接近 large-v3；更适合实时/快速转写。",
+                "en": "Turbo variant: much faster with near large-v3 quality; great for fast transcription.",
+            },
+            "badges": {"zh": ["很快", "多语言", "高质量"], "en": ["Very fast", "Multilingual", "High quality"]},
+            "capabilities": {"multilingual": True, "supportedLanguages": "100+", "uiLanguageOptions": ["auto", "en", "zh", "ja"]},
+        },
+        {
+            "id": "openai/whisper-medium",
+            "name": "Whisper Medium",
+            "desc": {
+                "zh": "准确率与速度平衡，日常使用推荐；资源占用中等。",
+                "en": "Balanced accuracy and speed; good default for most users.",
+            },
+            "badges": {"zh": ["推荐", "多语言", "均衡"], "en": ["Recommended", "Multilingual", "Balanced"]},
+            "capabilities": {"multilingual": True, "supportedLanguages": "100+", "uiLanguageOptions": ["auto", "en", "zh", "ja"]},
+        },
+        {
+            "id": "openai/whisper-small",
+            "name": "Whisper Small",
+            "desc": {
+                "zh": "速度更快、占用更低；准确率略低，适合轻量设备。",
+                "en": "Faster and lighter; slightly lower accuracy.",
+            },
+            "badges": {"zh": ["更省", "多语言", "更快"], "en": ["Lighter", "Multilingual", "Faster"]},
+            "capabilities": {"multilingual": True, "supportedLanguages": "100+", "uiLanguageOptions": ["auto", "en", "zh", "ja"]},
+        },
+        {
+            "id": "openai/whisper-base",
+            "name": "Whisper Base",
+            "desc": {
+                "zh": "更轻量，适合基础听写；长句与口音下准确率有限。",
+                "en": "Lightweight for basic dictation; less robust on accents/long speech.",
+            },
+            "badges": {"zh": ["轻量", "多语言", "入门"], "en": ["Lightweight", "Multilingual", "Starter"]},
+            "capabilities": {"multilingual": True, "supportedLanguages": "100+", "uiLanguageOptions": ["auto", "en", "zh", "ja"]},
+        },
+        {
+            "id": "openai/whisper-tiny",
+            "name": "Whisper Tiny",
+            "desc": {
+                "zh": "最快最小，适合试用/应急；准确率最低。",
+                "en": "Smallest and fastest; lowest accuracy—good for quick trials.",
+            },
+            "badges": {"zh": ["最快", "多语言", "试用"], "en": ["Fastest", "Multilingual", "Trial"]},
+            "capabilities": {"multilingual": True, "supportedLanguages": "100+", "uiLanguageOptions": ["auto", "en", "zh", "ja"]},
+        },
     ]
     res: List[Dict[str, Any]] = []
     for m in base:

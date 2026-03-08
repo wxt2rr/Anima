@@ -3,6 +3,7 @@ import uuid
 import json
 import tempfile
 import os
+import time
 from unittest.mock import patch
 
 
@@ -1600,6 +1601,78 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
                             self.assertTrue(rel)
                             self.assertTrue(os.path.isfile(os.path.join(wdir, rel)))
                             self.assertTrue(rel.lower().endswith((".mp4", ".webm", ".mov")))
+
+    def test_qwen_oauth_device_flow_stores_credentials_and_resolves_provider_spec(self) -> None:
+        from anima_backend_shared import database as db
+        from anima_backend_shared import provider_credentials as cred_store
+        from anima_backend_shared import providers as shared_providers
+
+        td, env, db_mod, _settings = self._with_temp_config_root()
+        with td:
+            with patch.dict(os.environ, env):
+                with patch.object(db_mod, "_CONFIG_ROOT", None):
+                    with patch.object(db_mod, "_DB_INITIALIZED", False):
+                        db.init_db()
+                        db.set_app_settings(
+                            {
+                                "settings": {"defaultToolMode": "all"},
+                                "providers": [
+                                    {
+                                        "id": "qwen",
+                                        "name": "Qwen",
+                                        "type": "openai_compatible",
+                                        "isEnabled": True,
+                                        "auth": {"mode": "oauth_device_code", "profileId": "default"},
+                                        "config": {"baseUrl": "https://portal.qwen.ai/v1", "models": [], "selectedModel": "coder-model"},
+                                    }
+                                ],
+                            }
+                        )
+
+                        from anima_backend_lg.api import qwen_auth as api_qwen_auth
+
+                        fake_device = {
+                            "device_code": "dc",
+                            "user_code": "UCODE",
+                            "verification_uri": "https://chat.qwen.ai/verify",
+                            "verification_uri_complete": "https://chat.qwen.ai/verify?code=UCODE",
+                            "expires_in": 600,
+                            "interval": 1,
+                        }
+                        fake_token_result = {
+                            "status": "success",
+                            "token": {
+                                "accessToken": "ACCESS",
+                                "refreshToken": "REFRESH",
+                                "expiresAt": int(time.time() * 1000) + 3600 * 1000,
+                                "resourceUrl": "https://portal.qwen.ai",
+                            },
+                        }
+
+                        with patch.object(api_qwen_auth, "generate_pkce_verifier_challenge", return_value=("v", "c")):
+                            with patch.object(api_qwen_auth, "request_device_code", return_value=fake_device):
+                                h1 = self._make_handler({"providerId": "qwen", "profileId": "default"})
+                                api_qwen_auth.handle_post_provider_auth_start(h1)
+                                out1 = self._json_out(h1)
+                                self.assertTrue(out1.get("ok") is True)
+                                flow_id = str(out1.get("flowId") or "")
+                                self.assertTrue(flow_id)
+
+                        with patch.object(api_qwen_auth, "poll_device_token", return_value=fake_token_result):
+                            h2 = self._make_handler(query={"flowId": flow_id})
+                            api_qwen_auth.handle_get_provider_auth_status(h2)
+                            out2 = self._json_out(h2)
+                            self.assertTrue(out2.get("ok") is True)
+                            self.assertEqual(str(out2.get("state")), "success")
+
+                        cred = cred_store.get_oauth_credential("qwen", "default")
+                        self.assertTrue(isinstance(cred, dict))
+                        self.assertEqual(str(cred.get("accessToken")), "ACCESS")
+
+                        spec = shared_providers.get_provider_spec(db.get_app_settings(), "qwen")
+                        self.assertTrue(spec is not None)
+                        self.assertEqual(spec.provider_id, "qwen")
+                        self.assertEqual(spec.api_key, "ACCESS")
 
 if __name__ == "__main__":
     unittest.main()

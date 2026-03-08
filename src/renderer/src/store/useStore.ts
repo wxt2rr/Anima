@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { nanoid } from 'nanoid'
 import { ThemeColor } from '../lib/themes'
+import type { ShortcutBinding, ShortcutId } from '../lib/shortcuts'
 
 
 export interface TodoItem {
@@ -124,6 +125,10 @@ export interface Provider {
   description?: string
   icon?: string
   isEnabled: boolean
+  auth?: {
+    mode: 'oauth_device_code'
+    profileId?: string
+  }
   config: {
     apiKey?: string
     baseUrl?: string
@@ -261,6 +266,10 @@ export interface Settings {
     language: string
     autoDetect: boolean
     localModels?: Array<{ id: string; name: string; path: string }>
+  }
+
+  shortcuts?: {
+    bindings?: Partial<Record<ShortcutId, ShortcutBinding | null>>
   }
 
   im?: {
@@ -1056,6 +1065,7 @@ export const useStore = create<AppState>()(
           const data = await fetchJson('/settings', { method: 'GET' })
           const rawSettings = (data as any)?.settings
           const rawProviders = (data as any)?.providers
+          const rawVoiceModelsInstalled = (data as any)?.voiceModelsInstalled
           
           // Merge with defaults for voice
           if (rawSettings && !rawSettings.voice) {
@@ -1102,10 +1112,19 @@ export const useStore = create<AppState>()(
           set({
             settings: { ...rawSettings, themeColor: rawSettings.themeColor || 'zinc' } as Settings,
             providers: rawProviders as Provider[],
+            voiceModelsInstalled: Array.isArray(rawVoiceModelsInstalled)
+              ? (rawVoiceModelsInstalled as any[])
+                  .map((m: any) => ({
+                    id: String(m?.id || '').trim(),
+                    name: String(m?.name || m?.id || '').trim(),
+                    source: (m?.source === 'local' ? 'local' : 'remote') as VoiceModelSource,
+                    path: m?.path ? String(m.path) : undefined
+                  }))
+                  .filter((m: VoiceModelEntry) => Boolean(m.id))
+              : [],
             configLoaded: true,
             configError: ''
           })
-          void get().refreshVoiceModelsInstalled().catch(() => {})
         } catch (e) {
           set({
             configLoaded: false,
@@ -1117,8 +1136,12 @@ export const useStore = create<AppState>()(
 
       refreshVoiceModelsInstalled: async () => {
         try {
-          const res = await fetchJson('/voice/models/installed', { method: 'GET' })
-          const models = Array.isArray((res as any)?.models) ? (res as any).models : []
+          const res = await fetchJson('/settings', { method: 'GET' })
+          const models = Array.isArray((res as any)?.voiceModelsInstalled)
+            ? (res as any).voiceModelsInstalled
+            : Array.isArray((res as any)?.models)
+              ? (res as any).models
+              : []
           const normalized: VoiceModelEntry[] = models
             .map((m: any) => ({
               id: String(m?.id || '').trim(),

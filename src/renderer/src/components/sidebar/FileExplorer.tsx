@@ -108,10 +108,12 @@ const getLanguage = (filename: string) => {
   }
 };
 
-export const FileExplorer: React.FC = () => {
-  const { settings, updateSettings, ui } = useStore();
-  const projects = Array.isArray(settings?.projects) ? (settings!.projects as any[]) : []
-  const activeProjectId = String(ui?.activeProjectId || '').trim()
+export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) => {
+  const settings = useStore((s) => s.settings)
+  const ui = useStore((s) => s.ui)
+  const updateSettings = useStore((s) => s.updateSettings)
+  const projects = Array.isArray(settings?.projects) ? ((settings as any).projects as any[]) : []
+  const activeProjectId = String((ui as any)?.activeProjectId || '').trim()
   const activeProjectDir = activeProjectId
     ? String((projects.find((p) => String(p?.id || '').trim() === activeProjectId) as any)?.dir || '').trim()
     : ''
@@ -189,6 +191,7 @@ export const FileExplorer: React.FC = () => {
   }, [isResizing]);
 
   useEffect(() => {
+    if (!active && rootPath) return
     const init = async () => {
       const base = String(activeProjectDir || settings?.workspaceDir || '').trim()
       if (base) {
@@ -206,7 +209,7 @@ export const FileExplorer: React.FC = () => {
       }
     };
     init();
-  }, [activeProjectDir, settings?.workspaceDir, updateSettings]);
+  }, [active, activeProjectDir, rootPath, settings?.workspaceDir, updateSettings]);
 
   useEffect(() => {
     const base = String(activeProjectDir || '').trim()
@@ -303,6 +306,7 @@ export const FileExplorer: React.FC = () => {
   };
 
   useEffect(() => {
+    if (!active) return
     const req = ui.fileExplorerRequest;
     if (!req?.nonce) return;
     const raw = String(req.path || '').trim();
@@ -314,7 +318,7 @@ export const FileExplorer: React.FC = () => {
       ? withoutFragment
       : (base ? `${base.replace(/\/$/, '')}/${withoutFragment.replace(/^\//, '')}` : withoutFragment);
     void openFilePath(fullPath);
-  }, [activeProjectDir, rootPath, settings?.workspaceDir, ui.fileExplorerRequest]);
+  }, [active, activeProjectDir, rootPath, settings?.workspaceDir, ui.fileExplorerRequest]);
 
   if (!rootPath) {
     return (
@@ -432,7 +436,7 @@ export const FileExplorer: React.FC = () => {
       {/* Right: Preview */}
       <div className="flex-1 flex flex-col h-full overflow-hidden bg-background min-w-0">
         {selectedFile ? (
-          <FilePreview file={selectedFile} loading={loadingFile} onClose={clearSelectedFile} />
+          <FilePreview file={selectedFile} loading={loadingFile} onClose={clearSelectedFile} active={active} />
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-2 p-8 text-center opacity-50">
             <Search className="w-10 h-10 stroke-1" />
@@ -527,8 +531,25 @@ const FileTreeItem: React.FC<{
   );
 };
 
-const FilePreview: React.FC<{ file: SelectedFile, loading: boolean, onClose: () => void }> = ({ file, loading, onClose }) => {
+const FilePreview: React.FC<{ file: SelectedFile, loading: boolean, onClose: () => void; active: boolean }> = ({ file, loading, onClose, active }) => {
   const [scale, setScale] = useState(1);
+
+  if (!active) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="h-9 px-4 flex items-center justify-between border-b border-border bg-muted/10 shrink-0">
+          <div className="flex items-center gap-2 overflow-hidden">
+            {getFileIcon(file.name)}
+            <span className="text-xs font-medium truncate">{file.name}</span>
+          </div>
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose} title="Close">
+            <X className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+        <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground">Preview paused</div>
+      </div>
+    );
+  }
 
   if (loading) {
     return <div className="flex items-center justify-center h-full text-sm text-muted-foreground">Loading...</div>;

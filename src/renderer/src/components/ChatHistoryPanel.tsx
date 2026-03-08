@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import {
   Dialog,
   DialogContent,
@@ -45,6 +46,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
   const setUpdateDialogOpen = useUpdateStore((s) => s.setDialogOpen)
   const [renameTargetId, setRenameTargetId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
+  const reduceMotion = useReducedMotion()
 
   const handleMouseEnter = () => {
     if (closeTimerRef.current) {
@@ -196,8 +198,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
     if (!res?.ok || res.canceled) return
     const dir = String(res.path || '').trim()
     if (!dir) return
-    const pid = await addProject(dir)
-    if (pid) await createChatInProject(pid)
+    await addProject(dir)
   }
 
   const beginRenameProject = (projectId: string) => {
@@ -350,21 +351,25 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
                       <TooltipContent>{p.pinned ? t.unpin : t.pin}</TooltipContent>
                     </Tooltip>
 
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          className="p-1 rounded-lg transition-all text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10 hover:text-foreground"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            void createChatInProject(pid)
-                          }}
-                        >
-                          <SquarePen className="w-3.5 h-3.5" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>{t.createChatTip}</TooltipContent>
-                    </Tooltip>
+                    {hasChats ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            className="p-1 rounded-lg transition-all text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10 hover:text-foreground"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              void createChatInProject(pid)
+                            }}
+                          >
+                            <SquarePen className="w-3.5 h-3.5" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t.createChatTip}</TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      <div className="w-6" />
+                    )}
 
                     <Popover open={projectMenuOpenId === pid} onOpenChange={(open) => setProjectMenuOpenId(open ? pid : null)}>
                       <PopoverTrigger
@@ -394,16 +399,18 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
                           <Star className="w-4 h-4" />
                           <span>{p.pinned ? t.unpin : t.pin}</span>
                         </button>
-                        <button
-                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-sm text-sm hover:bg-accent hover:text-accent-foreground transition-colors text-left"
-                          onClick={() => {
-                            setProjectMenuOpenId(null)
-                            void createChatInProject(pid)
-                          }}
-                        >
-                          <SquarePen className="w-4 h-4" />
-                          <span>{t.createChat}</span>
-                        </button>
+                        {hasChats ? (
+                          <button
+                            className="w-full flex items-center gap-2 px-2 py-1.5 rounded-sm text-sm hover:bg-accent hover:text-accent-foreground transition-colors text-left"
+                            onClick={() => {
+                              setProjectMenuOpenId(null)
+                              void createChatInProject(pid)
+                            }}
+                          >
+                            <SquarePen className="w-4 h-4" />
+                            <span>{t.createChat}</span>
+                          </button>
+                        ) : null}
                         <button
                           className="w-full flex items-center gap-2 px-2 py-1.5 rounded-sm text-sm hover:bg-accent hover:text-accent-foreground transition-colors text-left text-destructive"
                           onClick={() => {
@@ -418,58 +425,57 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
                     </Popover>
                   </div>
 
-                  {!collapsed && hasChats ? (
-                    <div className="mt-1 space-y-1">
-                      {list.map((chat) => {
-                        const active = chat.id === activeChatId
-                        const title = (chat.title || '').trim() || t.untitled
-                        return (
-                          <div
-                            key={chat.id}
-                            onClick={() => void setActiveChat(chat.id)}
-                            className={`group relative flex items-center gap-2 px-3 py-1.5 rounded-xl cursor-pointer transition-all duration-200 ${
-                              active
-                                ? 'bg-secondary text-foreground font-semibold shadow-sm'
-                                : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
-                            }`}
-                          >
-                            <span className="w-3.5 h-3.5 shrink-0" />
-                            <span className="truncate text-[13px] flex-1 leading-5">{title}</span>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    setDeleteId(chat.id)
-                                  }}
-                                  className={`p-1 rounded-lg transition-all text-muted-foreground hover:text-destructive ${
-                                    active ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/10'
+                  <AnimatePresence initial={false}>
+                    {!collapsed ? (
+                      <motion.div
+                        key={`${pid}-body`}
+                        initial={reduceMotion ? false : { opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={reduceMotion ? { duration: 0 } : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                        style={{ overflow: 'hidden' }}
+                      >
+                        {hasChats ? (
+                          <div className="mt-1 space-y-1">
+                            {list.map((chat) => {
+                              const active = chat.id === activeChatId
+                              const title = (chat.title || '').trim() || t.untitled
+                              return (
+                                <div
+                                  key={chat.id}
+                                  onClick={() => void setActiveChat(chat.id)}
+                                  className={`group relative flex items-center gap-2 px-3 py-1.5 rounded-xl cursor-pointer transition-all duration-200 ${
+                                    active
+                                      ? 'bg-secondary text-foreground font-semibold shadow-sm'
+                                      : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
                                   }`}
                                 >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </TooltipTrigger>
-                              <TooltipContent>{t.deleteChatTip}</TooltipContent>
-                            </Tooltip>
+                                  <span className="w-3.5 h-3.5 shrink-0" />
+                                  <span className="truncate text-[13px] flex-1 leading-5">{title}</span>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          setDeleteId(chat.id)
+                                        }}
+                                        className={`p-1 rounded-lg transition-all text-muted-foreground hover:text-destructive ${
+                                          active ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/10'
+                                        }`}
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>{t.deleteChatTip}</TooltipContent>
+                                  </Tooltip>
+                                </div>
+                              )
+                            })}
                           </div>
-                        )
-                      })}
-                    </div>
-                  ) : null}
-
-                  {!collapsed && !hasChats ? (
-                    <div className="mt-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-3 text-xs text-muted-foreground hover:text-foreground"
-                        onClick={() => void createChatInProject(pid)}
-                      >
-                        <span className="w-3.5 h-3.5 mr-2" />
-                        {t.newChat}
-                      </Button>
-                    </div>
-                  ) : null}
+                        ) : null}
+                      </motion.div>
+                    ) : null}
+                  </AnimatePresence>
                 </div>
               )
             })}

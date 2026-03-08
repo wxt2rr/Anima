@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -87,12 +87,33 @@
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 @keyframes anima-flow-text {
   0% {
     background-position: 0% 50%;
   }
   100% {
     background-position: 200% 50%;
+  }
+}
+
+@keyframes anima-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
   }
 }
 
@@ -110,5 +131,9 @@
     background-clip: text;
     color: transparent;
     animation: anima-flow-text 1.6s linear infinite;
+  }
+
+  .anima-float {
+    animation: anima-float 3.2s ease-in-out infinite;
   }
 }

@@ -135,6 +135,19 @@ def init_db() -> None:
     """
     )
 
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS provider_credentials (
+            provider_id TEXT NOT NULL,
+            profile_id TEXT NOT NULL,
+            type TEXT NOT NULL,
+            data TEXT NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (provider_id, profile_id)
+        )
+        """
+    )
+
     c.execute("CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages (chat_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_chats_updated_at ON chats (updated_at DESC)")
 
@@ -668,6 +681,7 @@ def clear_all_data() -> None:
     conn = get_db_connection()
     conn.execute("DELETE FROM messages")
     conn.execute("DELETE FROM chats")
+    conn.execute("DELETE FROM provider_credentials")
     conn.commit()
 
     current = get_app_settings()

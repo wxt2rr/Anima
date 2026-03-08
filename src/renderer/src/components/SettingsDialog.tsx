@@ -1,11 +1,12 @@
 import { 
   Settings, MessageSquare, Database, Globe, 
   Cpu, Search, Plus, Trash2, CheckCircle2, XCircle, RefreshCw,
-  Copy, ChevronDown, ChevronRight, Eye, EyeOff, ExternalLink, Wand2, FolderOpen, Sparkles, Mic, Info
+  Copy, ChevronDown, ChevronRight, Eye, EyeOff, ExternalLink, Wand2, FolderOpen, Sparkles, Mic, Info, Keyboard
 } from 'lucide-react'
 import { resolveBackendBaseUrl, useStore, type Provider, type ProviderModel, type VoiceModelEntry } from '../store/useStore'
 import { THEMES, ThemeColor } from '../lib/themes'
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react'
+import { SHORTCUTS, isMacLike, type ShortcutId, normalizeBinding, bindingId, formatBindingParts } from '@/lib/shortcuts'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
@@ -249,7 +250,9 @@ function VoiceSettings({ t }: { t: any }) {
   const voiceModelsInstalled = useStore(s => s.voiceModelsInstalled)
   const refreshVoiceModelsInstalled = useStore(s => s.refreshVoiceModelsInstalled)
   const [catalogStatus, setCatalogStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle')
-  const [catalogModels, setCatalogModels] = useState<Array<{ id: string; name: string; sizeBytes?: number | null }>>([])
+  const [catalogModels, setCatalogModels] = useState<
+    Array<{ id: string; name: string; desc?: any; badges?: any; capabilities?: any; sizeBytes?: number | null }>
+  >([])
   const [baseModelsDir, setBaseModelsDir] = useState<string>('')
   const downloadByModelId = useStore(s => s.voiceDownloadByModelId)
   const startVoiceModelDownload = useStore(s => s.startVoiceModelDownload)
@@ -302,7 +305,10 @@ function VoiceSettings({ t }: { t: any }) {
     ;(async () => {
       try {
         const [catalogRes, baseDirRes] = await Promise.all([
-          fetchBackendJson<{ ok: boolean; models?: Array<{ id: string; name: string; sizeBytes?: number | null }> }>('/voice/models/catalog', {
+          fetchBackendJson<{
+            ok: boolean
+            models?: Array<{ id: string; name: string; desc?: any; badges?: any; capabilities?: any; sizeBytes?: number | null }>
+          }>('/voice/models/catalog', {
             method: 'GET'
           }),
           fetchBackendJson<{ ok: boolean; dir?: string }>('/voice/models/base_dir', { method: 'GET' }).catch(() => ({ ok: false } as any))
@@ -315,6 +321,9 @@ function VoiceSettings({ t }: { t: any }) {
             .map((m) => ({
               id: String(m?.id || '').trim(),
               name: String(m?.name || m?.id || '').trim(),
+              desc: (m as any)?.desc,
+              badges: (m as any)?.badges,
+              capabilities: (m as any)?.capabilities,
               sizeBytes: typeof (m as any)?.sizeBytes === 'number' ? (m as any).sizeBytes : null
             }))
             .filter((m) => m.id)
@@ -382,6 +391,75 @@ function VoiceSettings({ t }: { t: any }) {
      langHint: 'Select recognition language.'
   }
 
+  const modelMetaById = useMemo(() => {
+    const dict: Record<
+      string,
+      { desc?: { zh?: string; en?: string }; badges?: { zh?: string[]; en?: string[] }; capabilities?: any; name?: string }
+    > = {}
+    for (const m of catalogModels) {
+      const id = String((m as any)?.id || '').trim()
+      if (!id) continue
+      const d = (m as any)?.desc
+      const b = (m as any)?.badges
+      dict[id] = {
+        name: String((m as any)?.name || '').trim() || undefined,
+        desc:
+          d && typeof d === 'object'
+            ? { zh: typeof d.zh === 'string' ? d.zh : undefined, en: typeof d.en === 'string' ? d.en : undefined }
+            : undefined,
+        badges:
+          b && typeof b === 'object'
+            ? {
+                zh: Array.isArray(b.zh) ? b.zh.map((x: any) => String(x || '').trim()).filter(Boolean) : undefined,
+                en: Array.isArray(b.en) ? b.en.map((x: any) => String(x || '').trim()).filter(Boolean) : undefined
+              }
+            : undefined,
+        capabilities: (m as any)?.capabilities
+      }
+    }
+    return dict
+  }, [catalogModels])
+
+  const lang = String(settings?.language || 'en')
+  const pickModelDesc = (id: string) => {
+    const meta = modelMetaById[String(id || '').trim()]
+    const d = meta?.desc
+    if (!d) return ''
+    if (lang === 'zh') return String(d.zh || d.en || '').trim()
+    if (lang === 'ja') return String(d.en || d.zh || '').trim()
+    return String(d.en || d.zh || '').trim()
+  }
+  const pickModelBadges = (id: string) => {
+    const meta = modelMetaById[String(id || '').trim()]
+    const b = meta?.badges
+    if (!b) return [] as string[]
+    if (lang === 'zh') return Array.isArray(b.zh) && b.zh.length ? b.zh : Array.isArray(b.en) ? b.en : []
+    if (lang === 'ja') return Array.isArray(b.en) && b.en.length ? b.en : Array.isArray(b.zh) ? b.zh : []
+    return Array.isArray(b.en) && b.en.length ? b.en : Array.isArray(b.zh) ? b.zh : []
+  }
+  const pickModelLangLine = (id: string) => {
+    const meta = modelMetaById[String(id || '').trim()]
+    const cap = meta?.capabilities
+    const supported = String(cap?.supportedLanguages || '').trim()
+    const opts = Array.isArray(cap?.uiLanguageOptions) ? cap.uiLanguageOptions.map((x: any) => String(x || '').trim()).filter(Boolean) : []
+    const multi = cap?.multilingual === true
+    if (!multi && !opts.length) return ''
+    if (lang === 'zh') {
+      const head = `语言：${multi ? '多语言' : ''}${supported ? `（${supported}）` : ''}`
+      const tail = opts.length ? `；界面可选：${opts.join('/')}` : ''
+      return `${head}${tail}`
+    }
+    const head = `Languages: ${multi ? 'multilingual' : ''}${supported ? ` (${supported})` : ''}`
+    const tail = opts.length ? `; UI options: ${opts.join('/')}` : ''
+    return `${head}${tail}`
+  }
+  const formatModelName = (id: string, fallbackName: string) => {
+    const name = String(modelMetaById[String(id || '').trim()]?.name || fallbackName || '').trim() || id
+    const badges = pickModelBadges(id).slice(0, 3)
+    if (!badges.length) return name
+    return `${name} · ${badges.join(' · ')}`
+  }
+
   if (!settings) return null
 
   return (
@@ -416,12 +494,17 @@ function VoiceSettings({ t }: { t: any }) {
                    <SelectContent>
                       {(voiceModelsInstalled || []).map((m: VoiceModelEntry) => (
                         <SelectItem key={m.id} value={m.id}>
-                          {m.name || m.id}
+                          {formatModelName(m.id, m.name || m.id)}
                         </SelectItem>
                       ))}
                    </SelectContent>
                 </Select>
                 <p className="text-sm text-muted-foreground">{vt.modelDesc}</p>
+                {selectedModelId ? (
+                  <div className="text-xs text-muted-foreground">
+                    {pickModelLangLine(selectedModelId)}
+                  </div>
+                ) : null}
                 {!selectedModelId ? (
                   <div className="text-sm text-muted-foreground">{vt.downloadHint}</div>
                 ) : null}
@@ -458,6 +541,11 @@ function VoiceSettings({ t }: { t: any }) {
              </Button>
            </div>
            <p className="text-sm text-muted-foreground">{vt.modelDesc}</p>
+           <div className="text-sm text-muted-foreground">
+             {lang === 'zh'
+               ? '建议：一般场景选 Medium；在噪声大/口音重时选 Large；设备性能较弱选 Small/Base；仅试用选 Tiny。'
+               : 'Suggestion: Medium for most cases; Large for noisy speech; Small/Base for low-end devices; Tiny for quick trials.'}
+           </div>
            <div className="space-y-2">
              {catalogStatus === 'loading' ? (
                <div className="text-sm text-muted-foreground">加载中…</div>
@@ -472,6 +560,9 @@ function VoiceSettings({ t }: { t: any }) {
                const isError = dl?.status === 'error'
               const isDone = dl?.status === 'done'
               const isCanceled = dl?.status === 'canceled'
+              const desc = pickModelDesc(m.id)
+              const badges = pickModelBadges(m.id).slice(0, 3)
+              const langLine = pickModelLangLine(m.id)
               const totalForProgress =
                 typeof dl?.totalBytes === 'number' && dl.totalBytes > 0
                   ? dl.totalBytes
@@ -490,7 +581,16 @@ function VoiceSettings({ t }: { t: any }) {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="text-sm font-medium truncate flex items-center gap-2">
-                        {m.name}
+                        <span className="truncate">{m.name}</span>
+                        {badges.length ? (
+                          <span className="flex items-center gap-1 shrink-0">
+                            {badges.map((b) => (
+                              <Badge key={b} variant="secondary" className="text-[10px] font-normal px-1.5 py-0.5">
+                                {b}
+                              </Badge>
+                            ))}
+                          </span>
+                        ) : null}
                         {modelPath ? (
                           <Button
                             variant="ghost"
@@ -504,6 +604,8 @@ function VoiceSettings({ t }: { t: any }) {
                         ) : null}
                       </div>
                       <div className="text-xs text-muted-foreground truncate">{m.id}</div>
+                      {desc ? <div className="text-xs text-muted-foreground mt-1">{desc}</div> : null}
+                      {langLine ? <div className="text-xs text-muted-foreground mt-1">{langLine}</div> : null}
                       <div className="text-xs text-muted-foreground">大小：{formatBytes(m.sizeBytes ?? 0)}</div>
                       {(isInstalled || isDone) && modelPath ? (
                         <div className="text-xs text-muted-foreground flex items-center gap-1 min-w-0">
@@ -611,6 +713,294 @@ function VoiceSettings({ t }: { t: any }) {
   )
 }
 
+function ShortcutsSettings() {
+  const settings = useStore((s) => s.settings)
+  const updateSettings = useStore((s) => s.updateSettings)
+  const lang = String(settings?.language || 'en')
+  const isMac = isMacLike()
+  const overrides = useMemo(
+    () => ((settings?.shortcuts?.bindings || {}) as Partial<Record<ShortcutId, any>>),
+    [settings?.shortcuts?.bindings]
+  )
+  const [editing, setEditing] = useState<ShortcutId | null>(null)
+  const [captureHint, setCaptureHint] = useState('')
+
+  const t = useMemo(() => {
+    const dict = {
+      en: {
+        title: 'Keyboard shortcuts',
+        hint: 'Shortcuts work globally. Some may be overridden by the system.',
+        columns: { action: 'Action', keys: 'Keys' },
+        edit: 'Edit',
+        reset: 'Reset',
+        disable: 'Disable',
+        disabled: 'Disabled',
+        default: 'Default',
+        custom: 'Custom',
+        captureTitle: 'Set shortcut',
+        captureDesc: 'Press a new shortcut (must include Ctrl/⌘).',
+        conflict: (x: string) => `Conflict with: ${x}`,
+        invalid: 'Invalid shortcut.',
+        requirePrimary: 'Please include Ctrl (Windows/Linux) or ⌘ (macOS).'
+      },
+      zh: {
+        title: '快捷键',
+        hint: '快捷键为全局生效，部分组合键可能被系统占用。',
+        columns: { action: '操作', keys: '按键' },
+        edit: '更改',
+        reset: '恢复默认',
+        disable: '禁用',
+        disabled: '已禁用',
+        default: '默认',
+        custom: '自定义',
+        captureTitle: '设置快捷键',
+        captureDesc: '按下新的快捷键（必须包含 Ctrl/⌘）。',
+        conflict: (x: string) => `与「${x}」冲突`,
+        invalid: '无效快捷键。',
+        requirePrimary: '请包含 Ctrl（Windows/Linux）或 ⌘（macOS）。'
+      },
+      ja: {
+        title: 'ショートカット',
+        hint: 'ショートカットは全体で有効です。一部はOSにより上書きされる場合があります。',
+        columns: { action: '操作', keys: 'キー' },
+        edit: '変更',
+        reset: 'デフォルトに戻す',
+        disable: '無効化',
+        disabled: '無効',
+        default: 'デフォルト',
+        custom: 'カスタム',
+        captureTitle: 'ショートカット設定',
+        captureDesc: '新しいショートカットを押してください（Ctrl/⌘ 必須）。',
+        conflict: (x: string) => `競合: ${x}`,
+        invalid: '無効なショートカットです。',
+        requirePrimary: 'Ctrl（Windows/Linux）または ⌘（macOS）を含めてください。'
+      }
+    } as const
+    const key = (lang || 'en') as keyof typeof dict
+    return dict[key] || dict.en
+  }, [lang])
+
+  const titleById = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const s of SHORTCUTS) {
+      const title = lang === 'zh' ? s.title.zh : lang === 'ja' ? s.title.ja : s.title.en
+      m.set(s.id, title)
+    }
+    return m
+  }, [lang])
+
+  const effectiveBindingById = useMemo(() => {
+    const out: Partial<Record<ShortcutId, { binding: any; state: 'default' | 'custom' | 'disabled' }>> = {}
+    for (const s of SHORTCUTS) {
+      const raw = (overrides as any)[s.id]
+      if (raw === null) {
+        out[s.id] = { binding: null, state: 'disabled' }
+        continue
+      }
+      const b = raw ? normalizeBinding(raw) : null
+      if (b) out[s.id] = { binding: b, state: 'custom' }
+      else out[s.id] = { binding: s.binding, state: 'default' }
+    }
+    return out
+  }, [overrides])
+
+  const bindingToOwners = useMemo(() => {
+    const m = new Map<string, string[]>()
+    for (const s of SHORTCUTS) {
+      const eff = (effectiveBindingById as any)[s.id]
+      const b = eff?.binding
+      if (!b) continue
+      const id = bindingId(b)
+      const prev = m.get(id) || []
+      m.set(id, [...prev, s.id])
+    }
+    return m
+  }, [effectiveBindingById])
+
+  const grouped = useMemo(() => {
+    const groups = new Map<string, typeof SHORTCUTS>()
+    for (const s of SHORTCUTS) {
+      const k = lang === 'zh' ? s.category.zh : lang === 'ja' ? s.category.ja : s.category.en
+      const prev = groups.get(k) || []
+      groups.set(k, [...prev, s])
+    }
+    return Array.from(groups.entries())
+  }, [lang])
+
+  const renderKeys = (parts: string[]) => {
+    return (
+      <div className="flex items-center justify-end gap-1 flex-wrap">
+        {parts.map((p, idx) => (
+          <kbd
+            key={`${p}:${idx}`}
+            className="px-1.5 py-0.5 rounded-md border border-border bg-muted/30 text-[11px] text-foreground/80"
+          >
+            {p}
+          </kbd>
+        ))}
+      </div>
+    )
+  }
+
+  const saveOverride = useCallback(
+    (id: ShortcutId, next: any) => {
+    const cur = (settings?.shortcuts?.bindings || {}) as any
+    const nextBindings = { ...cur }
+    if (next === undefined) delete nextBindings[id]
+    else nextBindings[id] = next
+    updateSettings({ shortcuts: { ...(settings?.shortcuts || {}), bindings: nextBindings } } as any)
+    },
+    [settings?.shortcuts, updateSettings]
+  )
+
+  useEffect(() => {
+    if (!editing) return
+    setCaptureHint('')
+    const isMacLocal = isMacLike()
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return
+      e.preventDefault()
+      e.stopPropagation()
+      const key = String(e.key || '')
+      if (key === 'Escape') {
+        setEditing(null)
+        return
+      }
+      const lower = key.toLowerCase()
+      if (lower === 'shift' || lower === 'alt' || lower === 'meta' || lower === 'control') return
+      const primary = isMacLocal ? e.metaKey : e.ctrlKey
+      if (!primary) {
+        setCaptureHint(t.requirePrimary)
+        return
+      }
+      if (!lower || lower.length > 2 || /\s/.test(lower)) {
+        setCaptureHint(t.invalid)
+        return
+      }
+      const b = normalizeBinding({ key: lower, primary: true, shift: e.shiftKey, alt: e.altKey })
+      if (!b) {
+        setCaptureHint(t.invalid)
+        return
+      }
+      const bid = bindingId(b)
+      const owners = (bindingToOwners.get(bid) || []).filter((x) => x !== editing)
+      if (owners.length) {
+        const first = titleById.get(owners[0]) || owners[0]
+        setCaptureHint(t.conflict(first))
+        return
+      }
+      saveOverride(editing, b)
+      setEditing(null)
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [bindingToOwners, editing, saveOverride, t, titleById])
+
+  return (
+    <div className="p-6 space-y-4 h-full overflow-y-auto custom-scrollbar">
+      <Card>
+        <CardContent className="p-6 space-y-2">
+          <div className="text-sm font-semibold">{t.title}</div>
+          <div className="text-xs text-muted-foreground">{t.hint}</div>
+        </CardContent>
+      </Card>
+
+      {grouped.map(([groupName, items]) => (
+        <Card key={groupName}>
+          <CardContent className="p-6 space-y-3">
+            <div className="text-sm font-semibold">{groupName}</div>
+            <div className="grid grid-cols-1 gap-2">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <div>{t.columns.action}</div>
+                <div>{t.columns.keys}</div>
+              </div>
+              <div className="h-px bg-border/60" />
+              {items.map((s) => {
+                const title = lang === 'zh' ? s.title.zh : lang === 'ja' ? s.title.ja : s.title.en
+                const eff = (effectiveBindingById as any)[s.id]
+                const state = eff?.state as 'default' | 'custom' | 'disabled'
+                const binding = eff?.binding
+                const parts = binding ? formatBindingParts(binding, isMac) : [t.disabled]
+                return (
+                  <div key={s.id} className="flex items-center justify-between gap-4">
+                    <div className="min-w-0 flex items-center gap-2">
+                      <div className="text-sm text-foreground/90 truncate">{title}</div>
+                      <Badge variant="secondary" className="text-[10px] font-normal">
+                        {state === 'default' ? t.default : state === 'custom' ? t.custom : t.disabled}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      {renderKeys(parts)}
+                      <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => setEditing(s.id as ShortcutId)}>
+                        {t.edit}
+                      </Button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+
+      <Dialog open={Boolean(editing)} onOpenChange={(o) => (o ? null : setEditing(null))}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>{t.captureTitle}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="text-sm text-muted-foreground">{t.captureDesc}</div>
+            {editing ? (
+              <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 space-y-2">
+                <div className="text-sm font-medium">{titleById.get(editing) || editing}</div>
+                <div className="flex items-center justify-between">
+                  <div className="text-xs text-muted-foreground">Current</div>
+                  <div className="flex items-center gap-1">
+                    {(() => {
+                      const eff = (effectiveBindingById as any)[editing]
+                      const binding = eff?.binding
+                      const parts = binding ? formatBindingParts(binding, isMac) : [t.disabled]
+                      return renderKeys(parts)
+                    })()}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {captureHint ? <div className="text-sm text-destructive">{captureHint}</div> : null}
+          </div>
+          <DialogFooter className="gap-2">
+            {editing ? (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    saveOverride(editing, undefined)
+                    setEditing(null)
+                  }}
+                >
+                  {t.reset}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    saveOverride(editing, null)
+                    setEditing(null)
+                  }}
+                >
+                  {t.disable}
+                </Button>
+              </>
+            ) : null}
+            <Button variant="default" onClick={() => setEditing(null)}>
+              OK
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
 export const SettingsDialog = memo(function SettingsDialog() {
   const isSettingsOpen = useStore(s => s.isSettingsOpen)
   const setSettingsOpen = useStore(s => s.setSettingsOpen)
@@ -637,6 +1027,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           network: 'Network',
           data: 'Data',
           voice: 'Voice',
+          shortcuts: 'Shortcuts',
           about: 'About'
         },
         voice: {
@@ -739,6 +1130,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           network: '网络',
           data: '数据',
           voice: '语音',
+          shortcuts: '快捷键',
           about: '关于'
         },
         providers: {
@@ -841,6 +1233,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           network: 'ネットワーク',
           data: 'データ',
           voice: '音声',
+          shortcuts: 'ショートカット',
           about: '情報'
         },
         providers: {
@@ -942,6 +1335,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
     { id: 'network', label: t.tabs.network, icon: Globe },
     { id: 'data', label: t.tabs.data, icon: Database },
     { id: 'voice', label: t.tabs.voice, icon: Mic },
+    { id: 'shortcuts', label: t.tabs.shortcuts, icon: Keyboard },
     { id: 'about', label: t.tabs.about, icon: Info },
   ]
 
@@ -999,6 +1393,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
             {activeTab === 'network' && <NetworkSettings />}
             {activeTab === 'data' && <DataSettings />}
             {activeTab === 'voice' && <VoiceSettings t={t} />}
+            {activeTab === 'shortcuts' && <ShortcutsSettings />}
             {activeTab === 'about' && <AboutSettings />}
           </div>
           
@@ -1042,6 +1437,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           network: 'Network',
           data: 'Data',
           voice: 'Voice',
+          shortcuts: 'Shortcuts',
           about: 'About'
         },
         savedHint: 'All changes are saved automatically.',
@@ -1072,6 +1468,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           network: '网络',
           data: '数据',
           voice: '语音',
+          shortcuts: '快捷键',
           about: '关于'
         },
         savedHint: '所有更改会自动保存。',
@@ -1102,6 +1499,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           network: 'ネットワーク',
           data: 'データ',
           voice: '音声',
+          shortcuts: 'ショートカット',
           about: '情報'
         },
         savedHint: '変更は自動的に保存されます。',
@@ -1167,6 +1565,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
     { id: 'network', label: t.tabs.network, icon: Globe },
     { id: 'data', label: t.tabs.data, icon: Database },
     { id: 'voice', label: t.tabs.voice, icon: Mic },
+    { id: 'shortcuts', label: t.tabs.shortcuts, icon: Keyboard },
     { id: 'about', label: t.tabs.about, icon: Info }
   ]
 
@@ -1219,6 +1618,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           {activeTab === 'network' && <NetworkSettings />}
           {activeTab === 'data' && <DataSettings />}
           {activeTab === 'voice' && <VoiceSettings t={t} />}
+          {activeTab === 'shortcuts' && <ShortcutsSettings />}
           {activeTab === 'about' && <AboutSettings />}
         </div>
 
@@ -1407,6 +1807,7 @@ function AboutSettings() {
 function ProvidersSettings() {
   const { providers: providers0, toggleProvider, updateProvider } = useStore()
   const { settings: settings0 } = useStore()
+  const loadRemoteConfig = useStore(s => s.loadRemoteConfig)
   const settings = settings0!
   const providers = providers0 ?? EMPTY_PROVIDERS
   const [selectedProviderId, setSelectedProviderId] = useState<string>(() => providers[0]?.id || '')
@@ -1417,6 +1818,18 @@ function ProvidersSettings() {
   const [isFetchingModels, setIsFetchingModels] = useState(false)
   const [editingModel, setEditingModel] = useState<ProviderModel | null>(null)
   const [customProviderDialogOpen, setCustomProviderDialogOpen] = useState(false)
+  const [qwenAuthProfiles, setQwenAuthProfiles] = useState<Array<{ profileId: string; state: string; expiresAt?: number | null }>>([])
+  const [qwenLogin, setQwenLogin] = useState<{
+    open: boolean
+    providerRecordId: string
+    flowId: string
+    verificationUrl: string
+    userCode: string
+    expiresAt: number
+    pollIntervalMs: number
+    state: 'idle' | 'pending' | 'success' | 'error'
+    error?: string
+  }>({ open: false, providerRecordId: '', flowId: '', verificationUrl: '', userCode: '', expiresAt: 0, pollIntervalMs: 2000, state: 'idle' })
 
   useEffect(() => {
     if (selectedProviderId) return
@@ -1530,6 +1943,17 @@ function ProvidersSettings() {
 
   const activeProvider = providers.find(p => p.id === selectedProviderId)
   const hasFetchedModels = Boolean(activeProvider?.config?.modelsFetched)
+  const activeProviderIdLower = String(activeProvider?.id || '').toLowerCase()
+  const activeProviderNameLower = String(activeProvider?.name || '').toLowerCase()
+  const isQwen = Boolean(
+    activeProvider &&
+      (
+        ['qwen', 'qwen-portal', 'qwen-auth'].includes(activeProviderIdLower) ||
+        activeProviderIdLower.startsWith('qwen') ||
+        activeProviderNameLower.includes('qwen')
+      )
+  )
+  const qwenProfileId = String(activeProvider?.auth?.profileId || 'default').trim() || 'default'
   
   const filteredProviders = providers.filter(p => 
     p.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -1552,8 +1976,12 @@ function ProvidersSettings() {
 
   const handleFetchModels = async () => {
     if (!activeProvider) return
-    if (!activeProvider.config.apiKey || !activeProvider.config.baseUrl) {
-      alert(settings.language === 'zh' ? '请先填写 API Key 和 Base URL' : 'Please enter API Key and Base URL first')
+    if (!activeProvider.config.baseUrl) {
+      alert(settings.language === 'zh' ? '请先填写 Base URL' : 'Please enter Base URL first')
+      return
+    }
+    if (!isQwen && !activeProvider.config.apiKey) {
+      alert(settings.language === 'zh' ? '请先填写 API Key' : 'Please enter API Key first')
       return
     }
     setIsFetchingModels(true)
@@ -1562,8 +1990,11 @@ function ProvidersSettings() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          providerId: isQwen ? activeProvider.id : undefined,
+          profileId: isQwen ? qwenProfileId : undefined,
+          useQwenOAuth: isQwen ? true : undefined,
           baseUrl: activeProvider.config.baseUrl || '',
-          apiKey: activeProvider.config.apiKey || ''
+          apiKey: isQwen ? undefined : (activeProvider.config.apiKey || '')
         })
       })
       if (res.ok && Array.isArray(res.models)) {
@@ -1587,6 +2018,123 @@ function ProvidersSettings() {
       setIsFetchingModels(false)
     }
   }
+
+  const refreshQwenProfiles = useCallback(async () => {
+    if (!isQwen) return
+    const res = await fetchBackendJson<{ ok: boolean; profiles?: Array<{ profileId: string; state: string; expiresAt?: number | null }> }>(
+      '/api/providers/auth/profiles',
+      { method: 'GET' }
+    )
+    const profiles = Array.isArray(res?.profiles) ? res.profiles : []
+    setQwenAuthProfiles(
+      profiles
+        .map((p: any) => ({
+          profileId: String(p?.profileId || '').trim(),
+          state: String(p?.state || '').trim(),
+          expiresAt: p?.expiresAt == null ? null : Number(p.expiresAt)
+        }))
+        .filter((p: any) => Boolean(p.profileId))
+    )
+  }, [isQwen])
+
+  useEffect(() => {
+    void refreshQwenProfiles().catch(() => {})
+  }, [refreshQwenProfiles, selectedProviderId])
+
+  const startQwenLogin = useCallback(async () => {
+    if (!activeProvider) return
+    setQwenLogin({
+      open: true,
+      providerRecordId: activeProvider.id,
+      flowId: '',
+      verificationUrl: '',
+      userCode: '',
+      expiresAt: 0,
+      pollIntervalMs: 2000,
+      state: 'pending'
+    })
+    const res = await fetchBackendJson<{
+      ok: boolean
+      flowId: string
+      verificationUrl: string
+      userCode: string
+      expiresAt: number
+      pollIntervalMs: number
+    }>('/api/providers/auth/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providerId: activeProvider.id, profileId: qwenProfileId })
+    })
+    setQwenLogin({
+      open: true,
+      providerRecordId: activeProvider.id,
+      flowId: String(res.flowId || ''),
+      verificationUrl: String(res.verificationUrl || ''),
+      userCode: String(res.userCode || ''),
+      expiresAt: Number(res.expiresAt || 0),
+      pollIntervalMs: Number(res.pollIntervalMs || 2000),
+      state: 'pending'
+    })
+  }, [activeProvider, qwenProfileId])
+
+  const logoutQwen = useCallback(async () => {
+    if (!activeProvider) return
+    await fetchBackendJson<{ ok: boolean }>('/api/providers/auth/logout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providerId: activeProvider.id, profileId: qwenProfileId })
+    })
+    await refreshQwenProfiles().catch(() => {})
+    updateProvider(activeProvider.id, { auth: { mode: 'oauth_device_code', profileId: qwenProfileId } })
+  }, [activeProvider, qwenProfileId, refreshQwenProfiles, updateProvider])
+
+  useEffect(() => {
+    if (!qwenLogin.open || !qwenLogin.flowId) return
+    if (qwenLogin.state !== 'pending') return
+    let stopped = false
+    const tick = async () => {
+      if (stopped) return
+      try {
+        const res = await fetchBackendJson<any>(`/api/providers/auth/status?flowId=${encodeURIComponent(qwenLogin.flowId)}`, {
+          method: 'GET'
+        })
+        const state = String(res?.state || '').trim()
+        if (state === 'pending') {
+          return
+        }
+        if (state === 'error') {
+          setQwenLogin((s) => ({ ...s, state: 'error', error: String(res?.error || 'OAuth failed') }))
+          return
+        }
+        if (state === 'success') {
+          const patch = res?.configPatch || {}
+          const providerRecordId = qwenLogin.providerRecordId
+          if (providerRecordId) {
+            updateProvider(providerRecordId, { auth: { mode: 'oauth_device_code', profileId: qwenProfileId } })
+            updateProvider(providerRecordId, {
+              baseUrl: patch.baseUrl || (activeProvider?.config?.baseUrl || ''),
+              models: Array.isArray(patch.models) ? patch.models : (activeProvider?.config?.models || []),
+              selectedModel: patch.selectedModel || (activeProvider?.config?.selectedModel || ''),
+              modelsFetched: true,
+              apiKey: ''
+            })
+          }
+          setQwenLogin((s) => ({ ...s, state: 'success' }))
+          await refreshQwenProfiles().catch(() => {})
+          await loadRemoteConfig().catch(() => {})
+          setQwenLogin({ open: false, providerRecordId: '', flowId: '', verificationUrl: '', userCode: '', expiresAt: 0, pollIntervalMs: 2000, state: 'idle' })
+        }
+      } catch (e) {
+        setQwenLogin((s) => ({ ...s, state: 'error', error: e instanceof Error ? e.message : 'OAuth failed' }))
+      }
+    }
+    const timer = window.setInterval(tick, Math.max(500, qwenLogin.pollIntervalMs || 2000))
+    void tick()
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+    }
+  }, [qwenLogin.open, qwenLogin.flowId, qwenLogin.pollIntervalMs, qwenLogin.state, qwenLogin.providerRecordId, qwenProfileId, activeProvider, loadRemoteConfig, refreshQwenProfiles, updateProvider])
 
   const toggleModel = (modelId: string, enabled: boolean) => {
     if (!activeProvider) return
@@ -1775,35 +2323,78 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
               </Card>
 
 
-              {/* API Key Section */}
-              <Card>
-                 <CardContent className="p-6 space-y-4">
+              {!isQwen && (
+                <Card>
+                  <CardContent className="p-6 space-y-4">
                     <div className="space-y-1">
-                       <Label>{t.apiKey}</Label>
-                       <div className="relative">
-                          <Input 
-                            type={showApiKey ? "text" : "password"}
-                            className="pr-10"
-                            placeholder={t.enterApiKey}
-                            value={activeProvider.config.apiKey || ''}
-                            onChange={(e) => updateProvider(activeProvider.id, { apiKey: e.target.value })}
-                          />
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setShowApiKey(!showApiKey)}
-                            className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-                          >
-                            {showApiKey ? <EyeOff className="w-4 h-4 text-muted-foreground" /> : <Eye className="w-4 h-4 text-muted-foreground" />}
-                          </Button>
-                       </div>
-                       <div className="flex items-center gap-1 text-xs text-muted-foreground pt-1">
-                          <span>{t.getKey(activeProvider.name)}</span>
-                          <ExternalLink className="w-3 h-3" />
-                       </div>
+                      <Label>{t.apiKey}</Label>
+                      <div className="relative">
+                        <Input
+                          type={showApiKey ? "text" : "password"}
+                          className="pr-10"
+                          placeholder={t.enterApiKey}
+                          value={activeProvider.config.apiKey || ''}
+                          onChange={(e) => updateProvider(activeProvider.id, { apiKey: e.target.value })}
+                        />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setShowApiKey(!showApiKey)}
+                          className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                        >
+                          {showApiKey ? <EyeOff className="w-4 h-4 text-muted-foreground" /> : <Eye className="w-4 h-4 text-muted-foreground" />}
+                        </Button>
+                      </div>
+                      <div className="flex items-center gap-1 text-xs text-muted-foreground pt-1">
+                        <span>{t.getKey(activeProvider.name)}</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </div>
                     </div>
-                 </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              )}
+
+              {isQwen && (
+                <Card>
+                  <CardContent className="p-6 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-1">
+                        <Label>Qwen OAuth</Label>
+                        <p className="text-xs text-muted-foreground">
+                          {settings.language === 'zh' ? '使用设备码登录，凭据仅保存在本地后端' : 'Device code login; credentials stay in local backend'}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button variant="outline" size="sm" onClick={() => void startQwenLogin()}>
+                          {settings.language === 'zh' ? '登录' : 'Sign in'}
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => void logoutQwen()}>
+                          {settings.language === 'zh' ? '退出' : 'Logout'}
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">{settings.language === 'zh' ? 'Profile' : 'Profile'}</span>
+                        <span className="font-mono">{qwenProfileId}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">{settings.language === 'zh' ? '状态' : 'Status'}</span>
+                        <span>
+                          {(() => {
+                            const p = qwenAuthProfiles.find(x => x.profileId === qwenProfileId) || qwenAuthProfiles[0]
+                            const st = String(p?.state || 'not_logged_in')
+                            if (st === 'valid') return settings.language === 'zh' ? '已登录' : 'Logged in'
+                            if (st === 'expired') return settings.language === 'zh' ? '已过期' : 'Expired'
+                            return settings.language === 'zh' ? '未登录' : 'Not logged in'
+                          })()}
+                        </span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Base URL Section */}
               <Card>
@@ -1989,6 +2580,86 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
         </div>
       </div>
       
+      <Dialog
+        open={qwenLogin.open}
+        onOpenChange={(open) => {
+          if (open) return
+          setQwenLogin({ open: false, providerRecordId: '', flowId: '', verificationUrl: '', userCode: '', expiresAt: 0, pollIntervalMs: 2000, state: 'idle' })
+        }}
+      >
+        <DialogContent className="sm:max-w-[560px]">
+          <DialogHeader>
+            <DialogTitle>Qwen OAuth</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>{settings.language === 'zh' ? '打开链接授权' : 'Open the authorization link'}</Label>
+              <div className="relative group">
+                <div className="absolute inset-y-0 right-0 flex items-center pr-2">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => copyToClipboard(qwenLogin.verificationUrl)}
+                    className="h-8 w-8 hover:bg-secondary text-muted-foreground transition-colors"
+                    disabled={!qwenLogin.verificationUrl}
+                  >
+                    <Copy className="w-4 h-4" />
+                  </Button>
+                </div>
+                <code className="block w-full bg-secondary rounded-lg px-4 py-3 text-sm font-mono text-muted-foreground break-all">
+                  {qwenLogin.verificationUrl || '-'}
+                </code>
+              </div>
+              {qwenLogin.verificationUrl && (
+                <a
+                  href={qwenLogin.verificationUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-primary underline"
+                >
+                  {settings.language === 'zh' ? '在浏览器打开' : 'Open in browser'}
+                </a>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>{settings.language === 'zh' ? '验证码（如提示）' : 'User code (if prompted)'}</Label>
+              <div className="flex items-center justify-between gap-3 bg-secondary rounded-lg px-4 py-3">
+                <span className="font-mono text-sm">{qwenLogin.userCode || '-'}</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => copyToClipboard(qwenLogin.userCode)}
+                  disabled={!qwenLogin.userCode}
+                >
+                  {settings.language === 'zh' ? '复制' : 'Copy'}
+                </Button>
+              </div>
+            </div>
+
+            <div className="text-sm">
+              {qwenLogin.state === 'pending' && (
+                <span className="text-muted-foreground">
+                  {settings.language === 'zh' ? '等待授权完成…' : 'Waiting for approval…'}
+                </span>
+              )}
+              {qwenLogin.state === 'error' && <span className="text-destructive">{qwenLogin.error || 'OAuth failed'}</span>}
+              {qwenLogin.state === 'success' && (
+                <span className="text-green-600">{settings.language === 'zh' ? '登录成功' : 'Success'}</span>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setQwenLogin({ open: false, providerRecordId: '', flowId: '', verificationUrl: '', userCode: '', expiresAt: 0, pollIntervalMs: 2000, state: 'idle' })}
+            >
+              {settings.language === 'zh' ? '关闭' : 'Close'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <CustomProviderDialog 
         open={customProviderDialogOpen} 
         onOpenChange={setCustomProviderDialogOpen} 
@@ -3182,8 +3853,11 @@ function SkillsSettings() {
       {skills.length === 0 ? (
         <div className="flex-1 flex items-center justify-center">
           <div className="flex flex-col items-center text-center gap-3">
-            <div className="w-20 h-20 rounded-full bg-white border border-border shadow-sm flex items-center justify-center">
-              <Sparkles className="w-9 h-9 text-muted-foreground" />
+            <div className="group w-20 h-20 rounded-full bg-white border border-border shadow-sm flex items-center justify-center transition-colors">
+              <div className="relative">
+                <div className="absolute -inset-4 rounded-full bg-[radial-gradient(circle,rgba(99,102,241,0.18),transparent_60%)] opacity-0 blur-sm transition-opacity group-hover:opacity-100 motion-reduce:transition-none" />
+                <Sparkles className="relative w-9 h-9 text-muted-foreground motion-safe:anima-float group-hover:text-foreground transition-colors motion-reduce:transition-none" />
+              </div>
             </div>
             <div className="text-sm font-semibold text-foreground">{t.emptyTitle}</div>
             <div className="text-xs text-muted-foreground max-w-[520px] leading-5">{t.emptyHint(displayPath)}</div>

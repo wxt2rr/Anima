@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Folder, GitBranch, TerminalSquare, Globe, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -8,15 +8,15 @@ import { TerminalPanel } from './TerminalPanel';
 import { BrowserPreview } from './BrowserPreview';
 import { useStore } from '@/store/useStore';
 import { cn } from '@/lib/utils';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 
-export const RightSidebar: React.FC<{ width?: number }> = ({ width = 600 }) => {
-  const { 
-    ui: { rightSidebarOpen, activeRightPanel, previewUrl }, 
-    setRightSidebarOpen, 
-    setActiveRightPanel,
-    setPreviewUrl
-  } = useStore();
+export const RightSidebar: React.FC<{ width?: number; onResizeStart?: () => void }> = ({ width = 600, onResizeStart }) => {
+  const rightSidebarOpen = useStore((s) => s.ui.rightSidebarOpen)
+  const activeRightPanel = useStore((s) => s.ui.activeRightPanel)
+  const previewUrl = useStore((s) => s.ui.previewUrl)
+  const setRightSidebarOpen = useStore((s) => s.setRightSidebarOpen)
+  const setActiveRightPanel = useStore((s) => s.setActiveRightPanel)
+  const setPreviewUrl = useStore((s) => s.setPreviewUrl)
 
   useEffect(() => {
     const off = window.anima.preview.onServerDetected(({ url }) => {
@@ -29,17 +29,24 @@ export const RightSidebar: React.FC<{ width?: number }> = ({ width = 600 }) => {
   }, [setActiveRightPanel, setPreviewUrl])
 
   // Default to 'files' if open but no panel selected
-  const currentPanel = activeRightPanel || 'files';
+  const currentPanel = activeRightPanel || 'files'
+  const [mountedPanels, setMountedPanels] = useState<Record<string, boolean>>({})
+  const [expandedReady, setExpandedReady] = useState(false)
 
-  const renderContent = () => {
-    switch (currentPanel) {
-      case 'files': return <FileExplorer />;
-      case 'git': return <GitPanel />;
-      case 'terminal': return <TerminalPanel />;
-      case 'preview': return <BrowserPreview initialUrl={previewUrl} />;
-      default: return null;
+  useEffect(() => {
+    if (!rightSidebarOpen) {
+      setExpandedReady(false)
+      return
     }
-  };
+    setExpandedReady(false)
+    const t = window.setTimeout(() => setExpandedReady(true), 160)
+    return () => window.clearTimeout(t)
+  }, [rightSidebarOpen, currentPanel])
+
+  useEffect(() => {
+    if (!rightSidebarOpen) return
+    setMountedPanels((prev) => (prev[currentPanel] ? prev : { ...prev, [currentPanel]: true }))
+  }, [currentPanel, rightSidebarOpen])
 
   const tabs = [
     { id: 'files', label: 'Files', icon: Folder },
@@ -48,17 +55,20 @@ export const RightSidebar: React.FC<{ width?: number }> = ({ width = 600 }) => {
     { id: 'preview', label: 'Preview', icon: Globe },
   ] as const;
 
+  const expandedWidth = Math.max(300, Math.min(1200, Number(width) || 600))
+  const expandedTransformClosed = `translateX(${expandedWidth}px)`
+  const expandedStyle = useMemo(() => {
+    return {
+      width: `${expandedWidth}px`,
+      transform: rightSidebarOpen ? 'translateX(0px)' : expandedTransformClosed
+    } as React.CSSProperties
+  }, [expandedTransformClosed, expandedWidth, rightSidebarOpen])
+
   return (
     <div
-      style={{ width: rightSidebarOpen ? width : 60 }}
       className={cn(
-        "h-full z-20 shrink-0 transition-[width] duration-300 ease-in-out will-change-[width]",
-        "rounded-[12px] overflow-hidden no-drag",
-        // When collapsed: clean, no heavy border (or subtle), slightly wider for elegance
-        // When expanded: standard border
-        rightSidebarOpen 
-          ? "border border-border shadow-none bg-background" 
-          : "border-0 bg-transparent" 
+        "h-full z-20 shrink-0 no-drag relative",
+        "w-[60px] bg-transparent"
       )}
     >
       <div className="relative w-full h-full">
@@ -94,12 +104,26 @@ export const RightSidebar: React.FC<{ width?: number }> = ({ width = 600 }) => {
         {/* Expanded Content (Panel) */}
         <div 
           className={cn(
-            "absolute inset-y-0 right-0 w-full flex flex-col transition-all duration-300 bg-background",
-            rightSidebarOpen 
-              ? "opacity-100 translate-x-0" 
-              : "opacity-0 translate-x-4 pointer-events-none"
+            "absolute top-0 bottom-0 right-0 flex flex-col bg-background",
+            "transition-transform duration-200 ease-out will-change-transform",
+            "rounded-[12px] overflow-hidden",
+            "border border-border shadow-none",
+            "pointer-events-auto",
+            rightSidebarOpen ? "opacity-100" : "opacity-0 pointer-events-none"
           )}
+          style={expandedStyle}
         >
+          {rightSidebarOpen && (
+            <div
+              className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize z-50 hover:bg-primary/15 active:bg-primary/25"
+              onMouseDown={(e) => {
+                if (!onResizeStart) return
+                e.preventDefault()
+                onResizeStart()
+              }}
+            />
+          )}
+
           {/* Header / Tabs - Elegant Segmented Control Style */}
           <div className="flex items-center justify-between px-4 pt-4 pb-2 shrink-0 draggable">
             <div className="flex items-center p-1 bg-muted/30 rounded-xl no-drag">
@@ -139,19 +163,32 @@ export const RightSidebar: React.FC<{ width?: number }> = ({ width = 600 }) => {
           </div>
 
           {/* Content */}
-          <div className="flex-1 overflow-hidden relative mt-2">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={currentPanel}
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                transition={{ duration: 0.2, ease: "easeOut" }}
-                className="h-full w-full"
-              >
-                {renderContent()}
-              </motion.div>
-            </AnimatePresence>
+          <div className="flex-1 overflow-hidden relative mt-2" style={{ contain: 'layout paint' }}>
+            {tabs.map((tab) => {
+              const isActive = currentPanel === tab.id
+              const shouldMount = Boolean(mountedPanels[tab.id]) && (expandedReady || !isActive)
+              const show = isActive
+              if (!shouldMount && isActive) {
+                return (
+                  <div key={tab.id} className="h-full w-full flex items-center justify-center text-xs text-muted-foreground">
+                    Loading…
+                  </div>
+                )
+              }
+              return (
+                <div key={tab.id} className={cn("h-full w-full", show ? "block" : "hidden")}>
+                  {tab.id === 'files' ? (
+                    <FileExplorer active={show && rightSidebarOpen} />
+                  ) : tab.id === 'git' ? (
+                    <GitPanel active={show && rightSidebarOpen} />
+                  ) : tab.id === 'terminal' ? (
+                    <TerminalPanel active={show && rightSidebarOpen} />
+                  ) : tab.id === 'preview' ? (
+                    <BrowserPreview initialUrl={previewUrl} active={show && rightSidebarOpen} />
+                  ) : null}
+                </div>
+              )
+            })}
           </div>
         </div>
       </div>

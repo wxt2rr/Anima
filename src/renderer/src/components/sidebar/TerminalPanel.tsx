@@ -11,11 +11,10 @@ type TerminalTab = {
   title: string
 }
 
-export const TerminalPanel: React.FC = () => {
-  const { settings, ui } = useStore()
-  const projects = settings?.projects
-  const workspaceDirSetting = settings?.workspaceDir
-  const activeProjectId = ui?.activeProjectId
+export const TerminalPanel: React.FC<{ active?: boolean }> = ({ active = true }) => {
+  const projects = useStore((s) => s.settings?.projects)
+  const workspaceDirSetting = useStore((s) => s.settings?.workspaceDir)
+  const activeProjectId = useStore((s) => s.ui.activeProjectId)
   const workspaceDir = useMemo(() => {
     const list = Array.isArray(projects) ? (projects as any[]) : []
     const pid = String(activeProjectId || '').trim()
@@ -35,6 +34,7 @@ export const TerminalPanel: React.FC = () => {
   const cleanupMapRef = useRef(new Map<string, () => void>())
 
   const openIfNeeded = (id: string, el: HTMLDivElement | null) => {
+    if (!active) return
     if (!el) return
     if (terminalMapRef.current.has(id)) return
 
@@ -107,6 +107,7 @@ export const TerminalPanel: React.FC = () => {
 
   useEffect(() => {
     const handleResize = () => {
+      if (!active) return
       if (!activeId) return
       const fitAddon = fitAddonMapRef.current.get(activeId)
       const term = terminalMapRef.current.get(activeId)
@@ -115,11 +116,12 @@ export const TerminalPanel: React.FC = () => {
       window.anima.terminal.resize({ id: activeId, cols: term.cols, rows: term.rows })
     }
 
+    if (!active) return
     window.addEventListener('resize', handleResize)
     return () => {
       window.removeEventListener('resize', handleResize)
     }
-  }, [activeId])
+  }, [active, activeId])
 
   useEffect(() => {
     const cleanupMap = cleanupMapRef.current
