@@ -2553,9 +2553,9 @@ function AppLoaded(): JSX.Element {
   }
 
   return (
-    <div className="h-screen w-full overflow-hidden rounded-[20px] bg-secondary/30 dark:bg-black/40 text-foreground transition-colors duration-300 relative">
+    <div className="h-screen w-full overflow-hidden rounded-[20px] bg-white text-foreground transition-colors duration-300 relative">
       <div className="draggable absolute inset-x-0 top-0 h-2" />
-      <div className={`flex h-full w-full overflow-hidden p-2 ${ui.sidebarCollapsed ? 'gap-0' : 'gap-2'}`}>
+      <div className="flex h-full w-full overflow-hidden p-2 gap-0">
         <SettingsDialog />
         <UpdateDialog />
         <Dialog
@@ -2859,7 +2859,7 @@ function AppLoaded(): JSX.Element {
                                   if (el) map.set(id, el)
                                   else map.delete(id)
                                 }}
-                                className={`w-fit max-w-[520px] rounded-2xl border border-border/60 bg-black/5 dark:bg-white/10 px-4 py-2 text-[14px] leading-relaxed whitespace-pre-wrap break-words text-foreground/90 transition-shadow ${msg.id === highlightUserMsgId ? 'ring-2 ring-primary/35 shadow-sm' : ''}`}
+                                className={`w-fit max-w-[520px] rounded-2xl border border-border/60 bg-black/5 dark:bg-white/10 px-4 py-2 text-[13px] leading-relaxed whitespace-pre-wrap break-words text-foreground/90 transition-shadow ${msg.id === highlightUserMsgId ? 'ring-2 ring-primary/35 shadow-sm' : ''}`}
                               >
                                 {msg.content}
                               </div>
@@ -3374,7 +3374,7 @@ function AppLoaded(): JSX.Element {
                                 <ReactMarkdown
                                   remarkPlugins={[remarkGfm, remarkMath]}
                                   rehypePlugins={[rehypeKatex, rehypeRaw]}
-                                  className="prose prose-sm dark:prose-invert max-w-none prose-p:text-[14px] prose-li:text-[14px] prose-table:text-[14px] prose-p:leading-relaxed prose-li:leading-relaxed text-foreground/90"
+                                  className="prose prose-sm dark:prose-invert max-w-none prose-p:text-[13px] prose-li:text-[13px] prose-table:text-[13px] prose-p:leading-relaxed prose-li:leading-relaxed text-foreground/90"
                                   components={{
                                     pre: ({ children }) => <>{children}</>,
                                     code({ inline, className, children, ...props }: any) {
@@ -3628,7 +3628,7 @@ function AppLoaded(): JSX.Element {
             </AnimatePresence>
 
             <footer className="pl-6 pr-6 pt-6 pb-0 no-drag overflow-visible">
-              <div className="max-w-3xl mx-auto relative bg-background rounded-xl shadow-sm border border-black/5 dark:border-white/10 p-3 transition-all duration-200">
+              <div className="max-w-3xl mx-auto relative bg-white rounded-xl shadow-sm border border-border px-2 py-2 transition-all duration-200">
                   {composer.attachments.length > 0 && (
                     <div className="flex gap-2 overflow-x-auto pb-2 px-1">
                       {composer.attachments.map((a) => {
@@ -3686,7 +3686,7 @@ function AppLoaded(): JSX.Element {
                       void toggleRecording()
                     }}
                     leftControls={
-                      <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden">
+                      <div className="flex items-center gap-2 flex-1 min-w-0 overflow-hidden">
                         <Button
                           variant="ghost"
                           size="icon"
@@ -4077,13 +4077,13 @@ function ChatComposer({
           }
         }}
       />
-      <div className="flex justify-between items-center px-2 pb-1 mt-1 gap-2">
+      <div className="flex justify-between items-end px-0.5 pt-1.5 pb-0 mt-0.5 gap-2.5">
         {leftControls}
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
           <Button
             variant="ghost"
             size="icon"
-            className={`h-8 w-8 rounded-full transition-all duration-200 focus-visible:ring-0 focus-visible:ring-offset-0 ${
+            className={`h-9 w-9 rounded-full transition-all duration-200 focus-visible:ring-0 focus-visible:ring-offset-0 ${
               isRecording
                 ? 'text-blue-500 border-0 bg-blue-500/8 hover:bg-blue-500/12'
                 : `text-primary hover:text-primary hover:bg-primary/15 ${isVoiceModelAvailable ? '' : 'opacity-50'}`
@@ -4119,7 +4119,7 @@ function ChatComposer({
           <Button
             variant="ghost"
             size="icon"
-            className={`h-8 w-8 rounded-full transition-all duration-200 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0 ${
+            className={`h-9 w-9 rounded-full transition-all duration-200 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0 ${
               String(value || '').trim() || isLoading ? '' : 'opacity-50'
             }`}
             onClick={() => void onSubmit()}

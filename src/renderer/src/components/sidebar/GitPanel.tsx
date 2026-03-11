@@ -163,9 +163,9 @@ export const GitPanel: React.FC<{ active?: boolean }> = ({ active = true }) => {
   const allChangedFiles = status?.files || [];
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="flex flex-col h-full bg-white">
        {/* Header */}
-       <div className="h-10 px-3 flex items-center justify-between border-b border-border shrink-0">
+       <div className="h-10 px-3 flex items-center justify-between border-b border-black/5 shrink-0">
          <div className="flex items-center gap-2 max-w-[70%]">
              <GitBranch className="w-4 h-4 text-muted-foreground" />
              <Select value={currentBranch} onValueChange={handleBranchSwitch}>
@@ -188,7 +188,7 @@ export const GitPanel: React.FC<{ active?: boolean }> = ({ active = true }) => {
       </div>
       
       {/* Commit Input */}
-      <div className="p-3 space-y-3 shrink-0 border-b border-border">
+      <div className="p-3 space-y-3 shrink-0 border-b border-black/5">
         <Textarea 
           placeholder="Commit message..." 
           className="resize-none h-20 text-xs bg-muted/30"

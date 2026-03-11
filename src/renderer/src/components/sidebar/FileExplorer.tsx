@@ -334,8 +334,8 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
     <div className="flex h-full w-full overflow-hidden">
       {/* Left: File Tree */}
       {isExplorerCollapsed ? (
-        <div className="flex flex-col h-full shrink-0 border-r border-border bg-muted/5 w-10">
-          <div className="h-9 flex items-center justify-center border-b border-border/40 shrink-0">
+        <div className="flex flex-col h-full shrink-0 border-r border-black/5 bg-white w-10">
+          <div className="h-9 flex items-center justify-center border-b border-black/5 shrink-0">
             <Button
               variant="ghost"
               size="icon"
@@ -369,10 +369,10 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
         </div>
       ) : (
         <div 
-          className="flex flex-col h-full shrink-0 transition-none border-r border-border"
+          className="flex flex-col h-full shrink-0 transition-none border-r border-black/5"
           style={{ width: sidebarWidth }}
         >
-          <div className="h-9 px-2 flex items-center justify-between border-b border-border/40 bg-muted/5 shrink-0">
+          <div className="h-9 px-2 flex items-center justify-between border-b border-black/5 bg-white shrink-0">
             <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground px-2">Explorer</span>
             <div className="flex items-center gap-1">
               <Button
@@ -424,17 +424,17 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
       {!isExplorerCollapsed && (
         <div
           className={cn(
-            "w-1 h-full cursor-col-resize hover:bg-primary/50 transition-colors flex items-center justify-center group z-10 shrink-0",
-            isResizing && "bg-primary/50"
+            "w-1 h-full cursor-col-resize hover:bg-black/10 transition-colors flex items-center justify-center group z-10 shrink-0",
+            isResizing && "bg-black/10"
           )}
           onMouseDown={() => setIsResizing(true)}
         >
-          <div className="w-[1px] h-8 bg-border group-hover:bg-primary/80 transition-colors" />
+          <div className="w-[1px] h-8 bg-black/10 group-hover:bg-black/20 transition-colors" />
         </div>
       )}
 
       {/* Right: Preview */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden bg-background min-w-0">
+      <div className="flex-1 flex flex-col h-full overflow-hidden bg-white min-w-0">
         {selectedFile ? (
           <FilePreview file={selectedFile} loading={loadingFile} onClose={clearSelectedFile} active={active} />
         ) : (
@@ -516,7 +516,7 @@ const FileTreeItem: React.FC<{
         <span className="truncate">{name}</span>
       </div>
       {isDirectory && expanded && (
-        <div className="pl-3 border-l border-border/40 ml-2.5">
+        <div className="pl-3 border-l border-black/10 ml-2.5">
           {children.map(child => (
             <FileTreeItem 
               key={child.path} 
@@ -537,7 +537,7 @@ const FilePreview: React.FC<{ file: SelectedFile, loading: boolean, onClose: () 
   if (!active) {
     return (
       <div className="flex flex-col h-full">
-        <div className="h-9 px-4 flex items-center justify-between border-b border-border bg-muted/10 shrink-0">
+        <div className="h-9 px-4 flex items-center justify-between border-b border-black/5 bg-white shrink-0">
           <div className="flex items-center gap-2 overflow-hidden">
             {getFileIcon(file.name)}
             <span className="text-xs font-medium truncate">{file.name}</span>
@@ -567,7 +567,7 @@ const FilePreview: React.FC<{ file: SelectedFile, loading: boolean, onClose: () 
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="h-9 px-4 flex items-center justify-between border-b border-border bg-muted/10 shrink-0">
+      <div className="h-9 px-4 flex items-center justify-between border-b border-black/5 bg-white shrink-0">
         <div className="flex items-center gap-2 overflow-hidden">
           {getFileIcon(file.name)}
           <span className="text-xs font-medium truncate">{file.name}</span>
@@ -594,7 +594,7 @@ const FilePreview: React.FC<{ file: SelectedFile, loading: boolean, onClose: () 
       </div>
 
       {/* Content */}
-      <ScrollArea className="flex-1 bg-background">
+      <ScrollArea className="flex-1 bg-white">
         <div className="min-h-full flex flex-col relative">
           {file.type === 'text' && (
             <div className="h-full text-xs">

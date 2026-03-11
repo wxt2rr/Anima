@@ -197,8 +197,8 @@ export const BrowserPreview: React.FC<Props> = ({ initialUrl, active = true }) =
   const canControl = useMemo(() => Boolean(webviewEl && hasSrc), [hasSrc, webviewEl])
 
   return (
-    <div className="flex flex-col h-full bg-background">
-      <div className="h-10 px-2 flex items-center gap-1 border-b border-border bg-muted/10 shrink-0">
+    <div className="flex flex-col h-full bg-white">
+      <div className="h-10 px-2 flex items-center gap-1 border-b border-black/5 bg-white shrink-0">
         <Button
           variant="ghost"
           size="icon"
@@ -241,7 +241,7 @@ export const BrowserPreview: React.FC<Props> = ({ initialUrl, active = true }) =
         </Button>
         
         {/* Zoom Controls */}
-        <div className="flex items-center gap-0.5 px-1 border-l border-r border-border/50 mx-1">
+        <div className="flex items-center gap-0.5 px-1 border-l border-r border-black/10 mx-1">
           <Button
             variant="ghost"
             size="icon"
@@ -326,7 +326,7 @@ export const BrowserPreview: React.FC<Props> = ({ initialUrl, active = true }) =
               allowpopups: 'true'
             })}
             {isLoading && (
-              <div className="absolute top-2 right-2 text-[10px] text-muted-foreground bg-background/80 border rounded px-2 py-1">
+              <div className="absolute top-2 right-2 text-[10px] text-muted-foreground bg-white border border-black/10 rounded px-2 py-1">
                 Loading...
               </div>
             )}

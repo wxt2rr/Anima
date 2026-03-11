@@ -68,7 +68,7 @@ export const RightSidebar: React.FC<{ width?: number; onResizeStart?: () => void
     <div
       className={cn(
         "h-full z-20 shrink-0 no-drag relative overflow-hidden",
-        "bg-background transition-[width] duration-200 ease-out"
+        "bg-white transition-[width] duration-200 ease-out"
       )}
       style={sidebarStyle}
     >
@@ -102,7 +102,7 @@ export const RightSidebar: React.FC<{ width?: number; onResizeStart?: () => void
 
         <div
           className={cn(
-            "absolute inset-0 flex flex-col bg-background",
+            "absolute inset-0 flex flex-col bg-white",
             "transition-opacity duration-200 ease-out",
             "pointer-events-auto",
             rightSidebarOpen ? "opacity-100" : "opacity-0 pointer-events-none"
@@ -119,71 +119,73 @@ export const RightSidebar: React.FC<{ width?: number; onResizeStart?: () => void
             />
           )}
 
-          <div className="flex items-center justify-between px-4 pt-4 pb-2 shrink-0 select-none">
-            <div className="flex items-center p-1 bg-muted/30 rounded-xl no-drag">
-              {tabs.map(tab => {
-                const isActive = currentPanel === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setActiveRightPanel(tab.id)}
-                    className={cn(
-                      "relative flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors z-10 no-drag",
-                      isActive ? "text-foreground" : "text-muted-foreground hover:text-foreground"
-                    )}
-                  >
-                    {isActive && (
-                      <motion.div
-                        layoutId="activeTab"
-                        className="absolute inset-0 bg-background shadow-sm rounded-lg border border-black/5 dark:border-white/5 pointer-events-none"
-                        initial={false}
-                        transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                      />
-                    )}
-                    <tab.icon className="w-3.5 h-3.5 relative z-10" />
-                    <span className="relative z-10">{tab.label}</span>
-                  </button>
-                );
-              })}
+          <div className="flex-1 min-w-0 rounded-xl border border-border overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-3 py-2 shrink-0 select-none bg-white border-b border-border">
+              <div className="flex items-center p-1 bg-white rounded-xl no-drag">
+                {tabs.map(tab => {
+                  const isActive = currentPanel === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setActiveRightPanel(tab.id)}
+                      className={cn(
+                        "relative flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors z-10 no-drag",
+                        isActive ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      {isActive && (
+                        <motion.div
+                          layoutId="activeTab"
+                        className="absolute inset-0 bg-white rounded-lg border border-border pointer-events-none"
+                          initial={false}
+                          transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                        />
+                      )}
+                      <tab.icon className="w-3.5 h-3.5 relative z-10" />
+                      <span className="relative z-10">{tab.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="h-8 w-8 text-muted-foreground/60 hover:text-foreground hover:bg-muted/50 no-drag rounded-full" 
+                onClick={() => setRightSidebarOpen(false)}
+              >
+                 <X className="w-4 h-4" />
+              </Button>
             </div>
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              className="h-8 w-8 text-muted-foreground/60 hover:text-foreground hover:bg-muted/50 no-drag rounded-full" 
-              onClick={() => setRightSidebarOpen(false)}
-            >
-               <X className="w-4 h-4" />
-            </Button>
-          </div>
 
-          {/* Content */}
-          <div className="flex-1 overflow-hidden relative mt-2 min-w-0" style={{ contain: 'layout paint' }}>
-            {tabs.map((tab) => {
-              const isActive = currentPanel === tab.id
-              const shouldMount = Boolean(mountedPanels[tab.id]) && (expandedReady || !isActive)
-              const show = isActive
-              if (!shouldMount && isActive) {
+            {/* Content */}
+            <div className="flex-1 overflow-hidden relative min-w-0 bg-white" style={{ contain: 'layout paint' }}>
+              {tabs.map((tab) => {
+                const isActive = currentPanel === tab.id
+                const shouldMount = Boolean(mountedPanels[tab.id]) && (expandedReady || !isActive)
+                const show = isActive
+                if (!shouldMount && isActive) {
+                  return (
+                    <div key={tab.id} className="h-full w-full flex items-center justify-center text-xs text-muted-foreground">
+                      Loading…
+                    </div>
+                  )
+                }
                 return (
-                  <div key={tab.id} className="h-full w-full flex items-center justify-center text-xs text-muted-foreground">
-                    Loading…
+                  <div key={tab.id} className={cn("h-full w-full", show ? "block" : "hidden")}>
+                    {tab.id === 'files' ? (
+                      <FileExplorer active={show && rightSidebarOpen} />
+                    ) : tab.id === 'git' ? (
+                      <GitPanel active={show && rightSidebarOpen} />
+                    ) : tab.id === 'terminal' ? (
+                      <TerminalPanel active={show && rightSidebarOpen} />
+                    ) : tab.id === 'preview' ? (
+                      <BrowserPreview initialUrl={previewUrl} active={show && rightSidebarOpen} />
+                    ) : null}
                   </div>
                 )
-              }
-              return (
-                <div key={tab.id} className={cn("h-full w-full", show ? "block" : "hidden")}>
-                  {tab.id === 'files' ? (
-                    <FileExplorer active={show && rightSidebarOpen} />
-                  ) : tab.id === 'git' ? (
-                    <GitPanel active={show && rightSidebarOpen} />
-                  ) : tab.id === 'terminal' ? (
-                    <TerminalPanel active={show && rightSidebarOpen} />
-                  ) : tab.id === 'preview' ? (
-                    <BrowserPreview initialUrl={previewUrl} active={show && rightSidebarOpen} />
-                  ) : null}
-                </div>
-              )
-            })}
+              })}
+            </div>
           </div>
         </div>
       </div>
