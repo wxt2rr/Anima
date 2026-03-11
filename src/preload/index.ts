@@ -44,6 +44,20 @@ const animaAPI = {
         return () => ipcRenderer.removeListener(channel, subscription);
     }
   },
+  acp: {
+    createSession: (params: any) => ipcRenderer.invoke('acp:session:create', params),
+    status: () => ipcRenderer.invoke('acp:status'),
+    resetApprovals: (params?: any) => ipcRenderer.invoke('acp:approvals:reset', params),
+    prompt: (params: any) => ipcRenderer.invoke('acp:session:prompt', params),
+    cancel: (params: any) => ipcRenderer.invoke('acp:session:cancel', params),
+    close: (params: any) => ipcRenderer.invoke('acp:session:close', params),
+    onEvent: (sessionId: string, callback: (evt: any) => void) => {
+      const channel = `acp:event:${sessionId}`
+      const subscription = (_: any, evt: any) => callback(evt)
+      ipcRenderer.on(channel, subscription)
+      return () => ipcRenderer.removeListener(channel, subscription)
+    }
+  },
   preview: {
     openExternal: (url: string) => ipcRenderer.invoke('preview:openExternal', url),
     onServerDetected: (callback: (payload: { url: string; terminalId?: string }) => void) => {

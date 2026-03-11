@@ -98,6 +98,61 @@ def load_settings() -> Dict[str, Any]:
     if not isinstance(existing, dict):
         raise RuntimeError("Failed to load settings from database")
 
+    changed = False
+    providers = existing.get("providers")
+    if not isinstance(providers, list):
+        existing["providers"] = []
+        providers = existing["providers"]
+        changed = True
+
+    if isinstance(providers, list):
+        codex_idxs = []
+        for i, p in enumerate(providers):
+            if not isinstance(p, dict):
+                continue
+            pid = str(p.get("id") or "").strip().lower()
+            ptype = str(p.get("type") or "").strip().lower()
+            if pid == "openai_codex" or ptype == "openai_codex":
+                codex_idxs.append(i)
+
+        if not codex_idxs:
+            providers.append(
+                {
+                    "id": "openai_codex",
+                    "name": "OpenAI Codex (ChatGPT)",
+                    "type": "openai_codex",
+                    "isEnabled": False,
+                    "auth": {"mode": "oauth_openai_codex", "profileId": "default"},
+                    "config": {
+                        "baseUrl": "https://chatgpt.com/backend-api",
+                        "apiFormat": "responses",
+                        "modelsFetched": True,
+                        "models": [
+                            {"id": "gpt-5.2-codex", "isEnabled": True, "config": {"id": "gpt-5.2-codex"}},
+                            {"id": "gpt-5.2-codex-low", "isEnabled": True, "config": {"id": "gpt-5.2-codex-low"}},
+                            {"id": "gpt-5.2-codex-medium", "isEnabled": True, "config": {"id": "gpt-5.2-codex-medium"}},
+                            {"id": "gpt-5.2-codex-high", "isEnabled": True, "config": {"id": "gpt-5.2-codex-high"}},
+                            {"id": "gpt-5.2-codex-xhigh", "isEnabled": True, "config": {"id": "gpt-5.2-codex-xhigh"}},
+                        ],
+                        "selectedModel": "gpt-5.2-codex",
+                        "apiKey": "",
+                    },
+                }
+            )
+            changed = True
+        elif len(codex_idxs) > 1:
+            keep = codex_idxs[0]
+            next_providers = []
+            for i, p in enumerate(providers):
+                if i in codex_idxs and i != keep:
+                    changed = True
+                    continue
+                next_providers.append(p)
+            existing["providers"] = next_providers
+            providers = next_providers
+
+    if changed:
+        set_app_settings(existing)
     return existing
 
 

@@ -55,26 +55,25 @@ export const RightSidebar: React.FC<{ width?: number; onResizeStart?: () => void
     { id: 'preview', label: 'Preview', icon: Globe },
   ] as const;
 
+  const collapsedWidth = 60
   const expandedWidth = Math.max(300, Math.min(1200, Number(width) || 600))
-  const expandedTransformClosed = `translateX(${expandedWidth}px)`
-  const expandedStyle = useMemo(() => {
+  const sidebarWidth = rightSidebarOpen ? expandedWidth : collapsedWidth
+  const sidebarStyle = useMemo(() => {
     return {
-      width: `${expandedWidth}px`,
-      transform: rightSidebarOpen ? 'translateX(0px)' : expandedTransformClosed
+      width: `${sidebarWidth}px`
     } as React.CSSProperties
-  }, [expandedTransformClosed, expandedWidth, rightSidebarOpen])
+  }, [sidebarWidth])
 
   return (
     <div
       className={cn(
-        "h-full z-20 shrink-0 no-drag relative",
-        "w-[60px] bg-transparent"
+        "h-full z-20 shrink-0 no-drag relative overflow-hidden",
+        "bg-background transition-[width] duration-200 ease-out"
       )}
+      style={sidebarStyle}
     >
       <div className="relative w-full h-full">
-        
-        {/* Collapsed Content (Ghost Mode) */}
-        <div 
+        <div
           className={cn(
             "absolute inset-0 flex flex-col items-center pt-12 transition-all duration-300",
             rightSidebarOpen ? "opacity-0 pointer-events-none scale-95" : "opacity-100 scale-100"
@@ -101,21 +100,17 @@ export const RightSidebar: React.FC<{ width?: number; onResizeStart?: () => void
           </div>
         </div>
 
-        {/* Expanded Content (Panel) */}
-        <div 
+        <div
           className={cn(
-            "absolute top-0 bottom-0 right-0 flex flex-col bg-background",
-            "transition-transform duration-200 ease-out will-change-transform",
-            "rounded-[12px] overflow-hidden",
-            "border border-border shadow-none",
+            "absolute inset-0 flex flex-col bg-background",
+            "transition-opacity duration-200 ease-out",
             "pointer-events-auto",
             rightSidebarOpen ? "opacity-100" : "opacity-0 pointer-events-none"
           )}
-          style={expandedStyle}
         >
           {rightSidebarOpen && (
             <div
-              className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize z-50 hover:bg-primary/15 active:bg-primary/25"
+              className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize z-50 group"
               onMouseDown={(e) => {
                 if (!onResizeStart) return
                 e.preventDefault()
@@ -124,24 +119,24 @@ export const RightSidebar: React.FC<{ width?: number; onResizeStart?: () => void
             />
           )}
 
-          {/* Header / Tabs - Elegant Segmented Control Style */}
-          <div className="flex items-center justify-between px-4 pt-4 pb-2 shrink-0 draggable">
+          <div className="flex items-center justify-between px-4 pt-4 pb-2 shrink-0 select-none">
             <div className="flex items-center p-1 bg-muted/30 rounded-xl no-drag">
               {tabs.map(tab => {
                 const isActive = currentPanel === tab.id;
                 return (
                   <button
                     key={tab.id}
+                    type="button"
                     onClick={() => setActiveRightPanel(tab.id)}
                     className={cn(
-                      "relative flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors z-10",
+                      "relative flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors z-10 no-drag",
                       isActive ? "text-foreground" : "text-muted-foreground hover:text-foreground"
                     )}
                   >
                     {isActive && (
                       <motion.div
                         layoutId="activeTab"
-                        className="absolute inset-0 bg-background shadow-sm rounded-lg border border-black/5 dark:border-white/5"
+                        className="absolute inset-0 bg-background shadow-sm rounded-lg border border-black/5 dark:border-white/5 pointer-events-none"
                         initial={false}
                         transition={{ type: "spring", stiffness: 500, damping: 30 }}
                       />
@@ -163,7 +158,7 @@ export const RightSidebar: React.FC<{ width?: number; onResizeStart?: () => void
           </div>
 
           {/* Content */}
-          <div className="flex-1 overflow-hidden relative mt-2" style={{ contain: 'layout paint' }}>
+          <div className="flex-1 overflow-hidden relative mt-2 min-w-0" style={{ contain: 'layout paint' }}>
             {tabs.map((tab) => {
               const isActive = currentPanel === tab.id
               const shouldMount = Boolean(mountedPanels[tab.id]) && (expandedReady || !isActive)

@@ -109,50 +109,96 @@ function ModelConfigDialog({
 
 function CustomProviderDialog({
   open,
-  onOpenChange
+  onOpenChange,
+  initialMode
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  initialMode?: 'api' | 'acp'
 }) {
   const addProvider = useStore(s => s.addProvider)
+  const [providerMode, setProviderMode] = useState<'api' | 'acp'>(initialMode || 'api')
   const [name, setName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [apiFormat, setApiFormat] = useState('chat_completions')
   const [useMaxCompletionTokens, setUseMaxCompletionTokens] = useState(false)
+  const [acpKind, setAcpKind] = useState<'native_acp' | 'adapter' | 'acpx_bridge'>('native_acp')
+  const [acpCommand, setAcpCommand] = useState('')
+  const [acpArgs, setAcpArgs] = useState('')
+  const [acpFraming, setAcpFraming] = useState<'auto' | 'jsonl' | 'content_length'>('jsonl')
+  const [acpApprovalMode, setAcpApprovalMode] = useState<'per_action' | 'per_project' | 'always'>('per_action')
+  const [acpEnv, setAcpEnv] = useState('')
+  const [defaultModel, setDefaultModel] = useState('')
 
   useEffect(() => {
     if (open) {
+      setProviderMode(initialMode || 'api')
       setName('')
       setBaseUrl('')
       setApiKey('')
       setApiFormat('chat_completions')
       setUseMaxCompletionTokens(false)
+      setAcpKind('native_acp')
+      setAcpCommand('')
+      setAcpArgs('')
+      setAcpFraming('jsonl')
+      setAcpApprovalMode('per_action')
+      setAcpEnv('')
+      setDefaultModel('')
     }
-  }, [open])
+  }, [open, initialMode])
 
   const handleAdd = () => {
     if (!name.trim()) return
-    if (!baseUrl.trim()) return
-
-    try {
-      new URL(baseUrl.trim())
-    } catch {
-      return
-    }
-
-    addProvider({
-      name: name.trim(),
-      type: 'openai_compatible', // Defaulting to openai_compatible as it's the most generic "Chat Completions" type
-      isEnabled: true,
-      config: {
-        baseUrl: baseUrl.trim(),
-        apiKey: apiKey.trim(),
-        models: [],
-        apiFormat,
-        useMaxCompletionTokens
+    if (providerMode === 'api') {
+      if (!baseUrl.trim()) return
+      try {
+        new URL(baseUrl.trim())
+      } catch {
+        return
       }
-    })
+      addProvider({
+        name: name.trim(),
+        type: 'openai_compatible',
+        isEnabled: true,
+        config: {
+          baseUrl: baseUrl.trim(),
+          apiKey: apiKey.trim(),
+          models: [],
+          apiFormat,
+          useMaxCompletionTokens
+        }
+      })
+    } else {
+      if (!acpCommand.trim()) return
+      const env: Record<string, string> = {}
+      for (const line of acpEnv.split(/\r?\n/)) {
+        const raw = String(line || '').trim()
+        if (!raw) continue
+        const idx = raw.indexOf('=')
+        if (idx <= 0) continue
+        env[raw.slice(0, idx).trim()] = raw.slice(idx + 1)
+      }
+      const modelId = String(defaultModel || name).trim()
+      addProvider({
+        name: name.trim(),
+        type: 'acp',
+        isEnabled: true,
+        config: {
+          models: [{ id: modelId, isEnabled: true, config: { id: modelId } }],
+          selectedModel: modelId,
+          acp: {
+            kind: acpKind,
+            command: acpCommand.trim(),
+            args: String(acpArgs || '').trim() ? String(acpArgs || '').trim().split(/\s+/) : [],
+            env,
+            framing: acpFraming,
+            approvalMode: acpApprovalMode
+          }
+        }
+      })
+    }
     onOpenChange(false)
   }
 
@@ -164,6 +210,18 @@ function CustomProviderDialog({
         </DialogHeader>
         <div className="grid gap-4 py-4">
           <div className="grid gap-2">
+            <Label>Provider Type</Label>
+            <Select value={providerMode} onValueChange={(v) => setProviderMode(v as 'api' | 'acp')}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="api">API Provider</SelectItem>
+                <SelectItem value="acp">ACP Provider</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-2">
             <Label>Provider Name</Label>
             <Input
               value={name}
@@ -171,51 +229,109 @@ function CustomProviderDialog({
               placeholder="My Custom Provider"
             />
           </div>
-          <div className="grid gap-2">
-            <Label>Base URL</Label>
-            <Input
-              value={baseUrl}
-              onChange={e => setBaseUrl(e.target.value)}
-              placeholder="https://api.example.com/v1"
-            />
-          </div>
-          <div className="grid gap-2">
-            <Label>API Key</Label>
-            <Input
-              value={apiKey}
-              onChange={e => setApiKey(e.target.value)}
-              placeholder="your-api-key"
-              type="text" 
-            />
-          </div>
-          <div className="grid gap-2">
-            <Label>API Format</Label>
-            <Select value={apiFormat} onValueChange={setApiFormat}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="chat_completions">Chat Completions (/chat/completions)</SelectItem>
-                <SelectItem value="responses">Responses (/responses)</SelectItem>
-                <SelectItem value="anthropic_messages">Anthropic Messages (/v1/messages)</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-[0.8rem] text-muted-foreground">
-              Choose the API endpoint format your provider uses
-            </p>
-          </div>
-          <div className="flex items-center justify-between space-x-2">
-            <div className="flex flex-col space-y-1">
-              <Label>Use max_completion_tokens</Label>
-              <p className="text-[0.8rem] text-muted-foreground max-w-[350px]">
-                Enable for newer OpenAI models (o1, o3, etc.) that require max_completion_tokens instead of max_tokens
-              </p>
-            </div>
-            <Switch
-              checked={useMaxCompletionTokens}
-              onCheckedChange={setUseMaxCompletionTokens}
-            />
-          </div>
+          {providerMode === 'api' ? (
+            <>
+              <div className="grid gap-2">
+                <Label>Base URL</Label>
+                <Input
+                  value={baseUrl}
+                  onChange={e => setBaseUrl(e.target.value)}
+                  placeholder="https://api.example.com/v1"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>API Key</Label>
+                <Input
+                  value={apiKey}
+                  onChange={e => setApiKey(e.target.value)}
+                  placeholder="your-api-key"
+                  type="text" 
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>API Format</Label>
+                <Select value={apiFormat} onValueChange={setApiFormat}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="chat_completions">Chat Completions (/chat/completions)</SelectItem>
+                    <SelectItem value="responses">Responses (/responses)</SelectItem>
+                    <SelectItem value="anthropic_messages">Anthropic Messages (/v1/messages)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-[0.8rem] text-muted-foreground">
+                  Choose the API endpoint format your provider uses
+                </p>
+              </div>
+              <div className="flex items-center justify-between space-x-2">
+                <div className="flex flex-col space-y-1">
+                  <Label>Use max_completion_tokens</Label>
+                  <p className="text-[0.8rem] text-muted-foreground max-w-[350px]">
+                    Enable for newer OpenAI models (o1, o3, etc.) that require max_completion_tokens instead of max_tokens
+                  </p>
+                </div>
+                <Switch
+                  checked={useMaxCompletionTokens}
+                  onCheckedChange={setUseMaxCompletionTokens}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="grid gap-2">
+                <Label>Command</Label>
+                <Input value={acpCommand} onChange={e => setAcpCommand(e.target.value)} placeholder="codex-acp" />
+              </div>
+              <div className="grid gap-2">
+                <Label>Args</Label>
+                <Input value={acpArgs} onChange={e => setAcpArgs(e.target.value)} placeholder="--flag value" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <Label>Kind</Label>
+                  <Select value={acpKind} onValueChange={v => setAcpKind(v as any)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="native_acp">native_acp</SelectItem>
+                      <SelectItem value="adapter">adapter</SelectItem>
+                      <SelectItem value="acpx_bridge">acpx_bridge</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label>Framing</Label>
+                  <Select value={acpFraming} onValueChange={v => setAcpFraming(v as any)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">auto</SelectItem>
+                      <SelectItem value="jsonl">jsonl</SelectItem>
+                      <SelectItem value="content_length">content_length</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid gap-2">
+                <Label>Approval Mode</Label>
+                <Select value={acpApprovalMode} onValueChange={v => setAcpApprovalMode(v as any)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="per_action">per_action</SelectItem>
+                    <SelectItem value="per_project">per_project</SelectItem>
+                    <SelectItem value="always">always</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label>Default Model</Label>
+                <Input value={defaultModel} onChange={e => setDefaultModel(e.target.value)} placeholder="codex-acp" />
+              </div>
+              <div className="grid gap-2">
+                <Label>Env (KEY=VALUE)</Label>
+                <Textarea value={acpEnv} onChange={e => setAcpEnv(e.target.value)} rows={4} className="font-mono text-xs" />
+              </div>
+            </>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -1805,7 +1921,7 @@ function AboutSettings() {
 }
 
 function ProvidersSettings() {
-  const { providers: providers0, toggleProvider, updateProvider } = useStore()
+  const { providers: providers0, toggleProvider, updateProvider, reorderProviders } = useStore()
   const { settings: settings0 } = useStore()
   const loadRemoteConfig = useStore(s => s.loadRemoteConfig)
   const settings = settings0!
@@ -1818,7 +1934,11 @@ function ProvidersSettings() {
   const [isFetchingModels, setIsFetchingModels] = useState(false)
   const [editingModel, setEditingModel] = useState<ProviderModel | null>(null)
   const [customProviderDialogOpen, setCustomProviderDialogOpen] = useState(false)
+  const [customProviderMode, setCustomProviderMode] = useState<'api' | 'acp'>('api')
+  const [draggedProviderId, setDraggedProviderId] = useState('')
+  const [dragOverProviderId, setDragOverProviderId] = useState('')
   const [qwenAuthProfiles, setQwenAuthProfiles] = useState<Array<{ profileId: string; state: string; expiresAt?: number | null }>>([])
+  const [codexAuthProfiles, setCodexAuthProfiles] = useState<Array<{ profileId: string; state: string; expiresAt?: number | null }>>([])
   const [qwenLogin, setQwenLogin] = useState<{
     open: boolean
     providerRecordId: string
@@ -1830,6 +1950,16 @@ function ProvidersSettings() {
     state: 'idle' | 'pending' | 'success' | 'error'
     error?: string
   }>({ open: false, providerRecordId: '', flowId: '', verificationUrl: '', userCode: '', expiresAt: 0, pollIntervalMs: 2000, state: 'idle' })
+  const [codexLogin, setCodexLogin] = useState<{
+    open: boolean
+    providerRecordId: string
+    flowId: string
+    verificationUrl: string
+    expiresAt: number
+    pollIntervalMs: number
+    state: 'idle' | 'pending' | 'success' | 'error'
+    error?: string
+  }>({ open: false, providerRecordId: '', flowId: '', verificationUrl: '', expiresAt: 0, pollIntervalMs: 1000, state: 'idle' })
 
   useEffect(() => {
     if (selectedProviderId) return
@@ -1865,6 +1995,7 @@ function ProvidersSettings() {
     const slugByType: Record<string, string> = {
       openai: 'openai',
       openai_compatible: 'openai',
+      openai_codex: 'openai',
       deepseek: 'deepseek',
       moonshot: 'moonshot',
       anthropic: 'anthropic',
@@ -1945,6 +2076,7 @@ function ProvidersSettings() {
   const hasFetchedModels = Boolean(activeProvider?.config?.modelsFetched)
   const activeProviderIdLower = String(activeProvider?.id || '').toLowerCase()
   const activeProviderNameLower = String(activeProvider?.name || '').toLowerCase()
+  const isAcp = Boolean(activeProvider && String(activeProvider.type || '').toLowerCase() === 'acp')
   const isQwen = Boolean(
     activeProvider &&
       (
@@ -1953,7 +2085,11 @@ function ProvidersSettings() {
         activeProviderNameLower.includes('qwen')
       )
   )
+  const isCodex = Boolean(activeProvider && (String(activeProvider.type || '').toLowerCase() === 'openai_codex' || activeProviderNameLower.includes('codex')))
+  const isOAuthProvider = !isAcp && (isQwen || isCodex)
   const qwenProfileId = String(activeProvider?.auth?.profileId || 'default').trim() || 'default'
+  const codexProfileId = String(activeProvider?.auth?.profileId || 'default').trim() || 'default'
+  const acpConfig = ((activeProvider?.config as any)?.acp || {}) as any
   
   const filteredProviders = providers.filter(p => 
     p.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -1974,13 +2110,15 @@ function ProvidersSettings() {
     setNewModelId('')
   }
 
+
   const handleFetchModels = async () => {
     if (!activeProvider) return
+    if (isAcp) return
     if (!activeProvider.config.baseUrl) {
       alert(settings.language === 'zh' ? '请先填写 Base URL' : 'Please enter Base URL first')
       return
     }
-    if (!isQwen && !activeProvider.config.apiKey) {
+    if (!isOAuthProvider && !activeProvider.config.apiKey) {
       alert(settings.language === 'zh' ? '请先填写 API Key' : 'Please enter API Key first')
       return
     }
@@ -2136,6 +2274,118 @@ function ProvidersSettings() {
     }
   }, [qwenLogin.open, qwenLogin.flowId, qwenLogin.pollIntervalMs, qwenLogin.state, qwenLogin.providerRecordId, qwenProfileId, activeProvider, loadRemoteConfig, refreshQwenProfiles, updateProvider])
 
+  const refreshCodexProfiles = useCallback(async () => {
+    if (!isCodex || !activeProvider) return
+    const res = await fetchBackendJson<{ ok: boolean; profiles?: Array<{ profileId: string; state: string; expiresAt?: number | null }> }>(
+      `/api/providers/auth/profiles?providerId=${encodeURIComponent(activeProvider.id)}`,
+      { method: 'GET' }
+    )
+    const profiles = Array.isArray(res?.profiles) ? res.profiles : []
+    setCodexAuthProfiles(
+      profiles
+        .map((p: any) => ({
+          profileId: String(p?.profileId || '').trim(),
+          state: String(p?.state || '').trim(),
+          expiresAt: p?.expiresAt == null ? null : Number(p.expiresAt)
+        }))
+        .filter((p: any) => Boolean(p.profileId))
+    )
+  }, [activeProvider, isCodex])
+
+  useEffect(() => {
+    void refreshCodexProfiles().catch(() => {})
+  }, [refreshCodexProfiles, selectedProviderId])
+
+  const startCodexLogin = useCallback(async () => {
+    if (!activeProvider) return
+    setCodexLogin({
+      open: true,
+      providerRecordId: activeProvider.id,
+      flowId: '',
+      verificationUrl: '',
+      expiresAt: 0,
+      pollIntervalMs: 1000,
+      state: 'pending'
+    })
+    const res = await fetchBackendJson<{
+      ok: boolean
+      flowId: string
+      verificationUrl: string
+      expiresAt: number
+      pollIntervalMs: number
+    }>('/api/providers/auth/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providerId: activeProvider.id, profileId: codexProfileId })
+    })
+    setCodexLogin({
+      open: true,
+      providerRecordId: activeProvider.id,
+      flowId: String(res.flowId || ''),
+      verificationUrl: String(res.verificationUrl || ''),
+      expiresAt: Number(res.expiresAt || 0),
+      pollIntervalMs: Number(res.pollIntervalMs || 1000),
+      state: 'pending'
+    })
+  }, [activeProvider, codexProfileId])
+
+  const logoutCodex = useCallback(async () => {
+    if (!activeProvider) return
+    await fetchBackendJson<{ ok: boolean }>('/api/providers/auth/logout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providerId: activeProvider.id, profileId: codexProfileId })
+    })
+    await refreshCodexProfiles().catch(() => {})
+    updateProvider(activeProvider.id, { auth: { mode: 'oauth_openai_codex', profileId: codexProfileId } })
+  }, [activeProvider, codexProfileId, refreshCodexProfiles, updateProvider])
+
+  useEffect(() => {
+    if (!codexLogin.open || !codexLogin.flowId) return
+    if (codexLogin.state !== 'pending') return
+    let stopped = false
+    const tick = async () => {
+      if (stopped) return
+      try {
+        const res = await fetchBackendJson<any>(`/api/providers/auth/status?flowId=${encodeURIComponent(codexLogin.flowId)}`, {
+          method: 'GET'
+        })
+        const state = String(res?.state || '').trim()
+        if (state === 'pending') return
+        if (state === 'error') {
+          setCodexLogin((s) => ({ ...s, state: 'error', error: String(res?.error || 'OAuth failed') }))
+          return
+        }
+        if (state === 'success') {
+          const patch = res?.configPatch || {}
+          const providerRecordId = codexLogin.providerRecordId
+          if (providerRecordId) {
+            updateProvider(providerRecordId, { auth: { mode: 'oauth_openai_codex', profileId: codexProfileId } })
+            updateProvider(providerRecordId, {
+              baseUrl: patch.baseUrl || (activeProvider?.config?.baseUrl || ''),
+              models: Array.isArray(patch.models) ? patch.models : (activeProvider?.config?.models || []),
+              selectedModel: patch.selectedModel || (activeProvider?.config?.selectedModel || ''),
+              modelsFetched: true,
+              apiKey: ''
+            })
+          }
+          setCodexLogin((s) => ({ ...s, state: 'success' }))
+          await refreshCodexProfiles().catch(() => {})
+          await loadRemoteConfig().catch(() => {})
+          setCodexLogin({ open: false, providerRecordId: '', flowId: '', verificationUrl: '', expiresAt: 0, pollIntervalMs: 1000, state: 'idle' })
+        }
+      } catch (e) {
+        setCodexLogin((s) => ({ ...s, state: 'error', error: e instanceof Error ? e.message : 'OAuth failed' }))
+      }
+    }
+    const timer = window.setInterval(tick, Math.max(500, codexLogin.pollIntervalMs || 1000))
+    void tick()
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+    }
+  }, [codexLogin.open, codexLogin.flowId, codexLogin.pollIntervalMs, codexLogin.state, codexLogin.providerRecordId, codexProfileId, activeProvider, loadRemoteConfig, refreshCodexProfiles, updateProvider])
+
   const toggleModel = (modelId: string, enabled: boolean) => {
     if (!activeProvider) return
     const current = normalizeModels(activeProvider.config.models)
@@ -2160,26 +2410,56 @@ function ProvidersSettings() {
         
         <div className="flex-1 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
           {filteredProviders.map(provider => (
-            <Button
+            <div
               key={provider.id}
-              variant={selectedProviderId === provider.id ? "secondary" : "ghost"}
-              onClick={() => setSelectedProviderId(provider.id)}
-              className={`w-full justify-between h-auto py-2.5 px-3 font-normal ${
-                selectedProviderId === provider.id
-                  ? 'bg-background shadow-sm border border-black/5 dark:border-white/5'
-                  : ''
-              }`}
+              draggable
+              onDragStart={(e) => {
+                setDraggedProviderId(provider.id)
+                e.dataTransfer.effectAllowed = 'move'
+                e.dataTransfer.setData('text/plain', provider.id)
+              }}
+              onDragOver={(e) => {
+                e.preventDefault()
+                if (draggedProviderId && draggedProviderId !== provider.id) setDragOverProviderId(provider.id)
+              }}
+              onDragLeave={() => {
+                if (dragOverProviderId === provider.id) setDragOverProviderId('')
+              }}
+              onDrop={(e) => {
+                e.preventDefault()
+                const sourceId = String(e.dataTransfer.getData('text/plain') || draggedProviderId).trim()
+                if (sourceId && sourceId !== provider.id) reorderProviders(sourceId, provider.id)
+                setDraggedProviderId('')
+                setDragOverProviderId('')
+              }}
+              onDragEnd={() => {
+                setDraggedProviderId('')
+                setDragOverProviderId('')
+              }}
+              className={`rounded-lg transition-colors ${
+                dragOverProviderId === provider.id ? 'bg-primary/10' : ''
+              } ${draggedProviderId === provider.id ? 'opacity-60' : ''}`}
             >
-              <div className="flex items-center gap-3">
-                 <div className={`w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold border shrink-0 ${
-                    selectedProviderId === provider.id ? 'bg-secondary border-transparent' : 'bg-background border-transparent'
-                 }`}>
-                    {getProviderIconUrl(provider) ? <img src={getProviderIconUrl(provider)} className="w-4 h-4" /> : provider.name[0]}
-                 </div>
-                 <span className="truncate max-w-[120px]">{provider.name}</span>
-              </div>
-              <div className={`w-2 h-2 rounded-full shrink-0 transition-colors ${provider.isEnabled ? 'bg-green-500' : 'bg-gray-300'}`} />
-            </Button>
+              <Button
+                variant={selectedProviderId === provider.id ? "secondary" : "ghost"}
+                onClick={() => setSelectedProviderId(provider.id)}
+                className={`w-full justify-between h-auto py-2.5 px-3 font-normal cursor-grab active:cursor-grabbing ${
+                  selectedProviderId === provider.id
+                    ? 'bg-background shadow-sm border border-black/5 dark:border-white/5'
+                    : ''
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                   <div className={`w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold border shrink-0 ${
+                      selectedProviderId === provider.id ? 'bg-secondary border-transparent' : 'bg-background border-transparent'
+                   }`}>
+                      {getProviderIconUrl(provider) ? <img src={getProviderIconUrl(provider)} className="w-4 h-4" /> : provider.name[0]}
+                   </div>
+                   <span className="truncate max-w-[120px]">{provider.name}</span>
+                </div>
+                <div className={`w-2 h-2 rounded-full shrink-0 transition-colors ${provider.isEnabled ? 'bg-green-500' : 'bg-gray-300'}`} />
+              </Button>
+            </div>
           ))}
         </div>
       </div>
@@ -2189,7 +2469,23 @@ function ProvidersSettings() {
         {/* Top Actions Bar */}
         <div className="px-8 py-4">
           <div className="flex items-center justify-end gap-3 bg-secondary/10 border border-black/5 dark:border-white/5 rounded-xl px-4 py-3">
-            <Button onClick={() => setCustomProviderDialogOpen(true)}>{t.addCustom}</Button>
+            <Button
+              onClick={() => {
+                setCustomProviderMode('api')
+                setCustomProviderDialogOpen(true)
+              }}
+            >
+              {t.addCustom}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setCustomProviderMode('acp')
+                setCustomProviderDialogOpen(true)
+              }}
+            >
+              {t.addCustomAcp}
+            </Button>
           </div>
         </div>
 
@@ -2226,7 +2522,7 @@ function ProvidersSettings() {
                 </CardContent>
               </Card>
 
-              {/* Advanced Proxy Settings */}
+              {!isAcp && (
               <Card className="overflow-hidden">
                  <Button 
                     variant="ghost"
@@ -2321,9 +2617,10 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                     </CardContent>
                  )}
               </Card>
+              )}
 
 
-              {!isQwen && (
+              {!isAcp && !isOAuthProvider && (
                 <Card>
                   <CardContent className="p-6 space-y-4">
                     <div className="space-y-1">
@@ -2354,7 +2651,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                 </Card>
               )}
 
-              {isQwen && (
+              {!isAcp && isQwen && (
                 <Card>
                   <CardContent className="p-6 space-y-4">
                     <div className="flex items-center justify-between">
@@ -2396,7 +2693,172 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                 </Card>
               )}
 
-              {/* Base URL Section */}
+              {!isAcp && isCodex && (
+                <Card>
+                  <CardContent className="p-6 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-1">
+                        <Label>OpenAI Codex OAuth</Label>
+                        <p className="text-xs text-muted-foreground">
+                          {settings.language === 'zh' ? '浏览器登录，凭据仅保存在本地后端' : 'Browser login; credentials stay in local backend'}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button variant="outline" size="sm" onClick={() => void startCodexLogin()}>
+                          {settings.language === 'zh' ? '登录' : 'Sign in'}
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => void logoutCodex()}>
+                          {settings.language === 'zh' ? '退出' : 'Logout'}
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">{settings.language === 'zh' ? 'Profile' : 'Profile'}</span>
+                        <span className="font-mono">{codexProfileId}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">{settings.language === 'zh' ? '状态' : 'Status'}</span>
+                        <span>
+                          {(() => {
+                            const p = codexAuthProfiles.find(x => x.profileId === codexProfileId) || codexAuthProfiles[0]
+                            const st = String(p?.state || 'not_logged_in')
+                            if (st === 'valid') return settings.language === 'zh' ? '已登录' : 'Logged in'
+                            if (st === 'expired') return settings.language === 'zh' ? '已过期' : 'Expired'
+                            return settings.language === 'zh' ? '未登录' : 'Not logged in'
+                          })()}
+                        </span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {isAcp ? (
+                <Card>
+                  <CardContent className="p-6 space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <Label>ACP Kind</Label>
+                        <Select
+                          value={String(acpConfig.kind || 'native_acp')}
+                          onValueChange={(val) => updateProvider(activeProvider.id, { acp: { ...acpConfig, kind: val } } as any)}
+                        >
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="native_acp">native_acp</SelectItem>
+                            <SelectItem value="adapter">adapter</SelectItem>
+                            <SelectItem value="acpx_bridge">acpx_bridge</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label>Framing</Label>
+                        <Select
+                          value={String(acpConfig.framing || 'auto')}
+                          onValueChange={(val) => updateProvider(activeProvider.id, { acp: { ...acpConfig, framing: val } } as any)}
+                        >
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="auto">auto</SelectItem>
+                            <SelectItem value="jsonl">jsonl</SelectItem>
+                            <SelectItem value="content_length">content_length</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Command</Label>
+                      <Input
+                        value={String(acpConfig.command || '')}
+                        onChange={(e) => updateProvider(activeProvider.id, { acp: { ...acpConfig, command: e.target.value } } as any)}
+                        placeholder="codex-acp"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Args</Label>
+                      <Input
+                        value={Array.isArray(acpConfig.args) ? acpConfig.args.join(' ') : String(acpConfig.args || '')}
+                        onChange={(e) => updateProvider(activeProvider.id, { acp: { ...acpConfig, args: String(e.target.value || '').trim() ? String(e.target.value || '').trim().split(/\s+/) : [] } } as any)}
+                        placeholder="--flag value"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Approval Mode</Label>
+                      <Select
+                        value={String(acpConfig.approvalMode || 'per_action')}
+                        onValueChange={(val) => updateProvider(activeProvider.id, { acp: { ...acpConfig, approvalMode: val } } as any)}
+                      >
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="per_action">per_action</SelectItem>
+                          <SelectItem value="per_project">per_project</SelectItem>
+                          <SelectItem value="always">always</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Env (KEY=VALUE)</Label>
+                      <Textarea
+                        className="font-mono text-xs"
+                        rows={4}
+                        value={
+                          acpConfig.env && typeof acpConfig.env === 'object'
+                            ? Object.entries(acpConfig.env as Record<string, any>).map(([k, v]) => `${String(k)}=${String(v ?? '')}`).join('\n')
+                            : ''
+                        }
+                        onChange={(e) => {
+                          const env: Record<string, string> = {}
+                          for (const line of String(e.target.value || '').split(/\r?\n/)) {
+                            const raw = String(line || '').trim()
+                            if (!raw) continue
+                            const idx = raw.indexOf('=')
+                            if (idx <= 0) continue
+                            env[raw.slice(0, idx).trim()] = raw.slice(idx + 1)
+                          }
+                          updateProvider(activeProvider.id, { acp: { ...acpConfig, env } } as any)
+                        }}
+                      />
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={async () => {
+                          const api = window.anima?.acp
+                          if (!api) return
+                          const workspaceDir = String((settings as any)?.workspaceDir || '').trim()
+                          if (!workspaceDir) return
+                          const res = await api.createSession({
+                            workspaceDir,
+                            threadId: `acp_test_${Date.now()}`,
+                            approvalMode: String(acpConfig.approvalMode || 'per_action') as any,
+                            agent: {
+                              id: activeProvider.id,
+                              name: activeProvider.name,
+                              kind: String(acpConfig.kind || 'native_acp') as any,
+                              command: String(acpConfig.command || ''),
+                              args: Array.isArray(acpConfig.args) ? acpConfig.args : [],
+                              env: acpConfig.env && typeof acpConfig.env === 'object' ? acpConfig.env : {},
+                              framing: String(acpConfig.framing || 'auto') as any
+                            }
+                          })
+                          if (res?.ok && res.sessionId) await api.close({ sessionId: String(res.sessionId) })
+                        }}
+                      >
+                        Test ACP
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={async () => {
+                        const res = await window.anima.acp.resetApprovals()
+                        if (!res?.ok) throw new Error(String((res as any)?.error || 'reset failed'))
+                      }}>
+                        Reset approvals
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : (
               <Card>
                  <CardContent className="p-6 space-y-4">
                     <div className="space-y-1">
@@ -2434,6 +2896,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                     )}
                  </CardContent>
               </Card>
+              )}
 
 
 
@@ -2446,7 +2909,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                          variant="outline" 
                          size="sm" 
                          onClick={handleFetchModels}
-                         disabled={isFetchingModels}
+                         disabled={isFetchingModels || isAcp}
                          className="gap-2"
                        >
                          {isFetchingModels ? <RefreshCw className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
@@ -2454,7 +2917,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                        </Button>
                     </div>
 
-                    {hasFetchedModels ? (
+                    {isAcp || hasFetchedModels ? (
                       <>
                         <div className="space-y-1">
                            <Label className="text-xs text-muted-foreground">{t.defaultModel}</Label>
@@ -2660,9 +3123,75 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
         </DialogContent>
       </Dialog>
 
+      <Dialog
+        open={codexLogin.open}
+        onOpenChange={(open) => {
+          if (open) return
+          setCodexLogin({ open: false, providerRecordId: '', flowId: '', verificationUrl: '', expiresAt: 0, pollIntervalMs: 1000, state: 'idle' })
+        }}
+      >
+        <DialogContent className="sm:max-w-[560px]">
+          <DialogHeader>
+            <DialogTitle>OpenAI Codex OAuth</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>{settings.language === 'zh' ? '打开链接授权（会回调到本机）' : 'Open the authorization link (redirects back to localhost)'}</Label>
+              <div className="relative group">
+                <div className="absolute inset-y-0 right-0 flex items-center pr-2">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => copyToClipboard(codexLogin.verificationUrl)}
+                    className="h-8 w-8 hover:bg-secondary text-muted-foreground transition-colors"
+                    disabled={!codexLogin.verificationUrl}
+                  >
+                    <Copy className="w-4 h-4" />
+                  </Button>
+                </div>
+                <code className="block w-full bg-secondary rounded-lg px-4 py-3 text-sm font-mono text-muted-foreground break-all">
+                  {codexLogin.verificationUrl || '-'}
+                </code>
+              </div>
+              {codexLogin.verificationUrl && (
+                <a
+                  href={codexLogin.verificationUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-primary underline"
+                >
+                  {settings.language === 'zh' ? '在浏览器打开' : 'Open in browser'}
+                </a>
+              )}
+            </div>
+
+            <div className="text-sm">
+              {codexLogin.state === 'pending' && (
+                <span className="text-muted-foreground">
+                  {settings.language === 'zh' ? '等待授权完成…' : 'Waiting for approval…'}
+                </span>
+              )}
+              {codexLogin.state === 'error' && <span className="text-destructive">{codexLogin.error || 'OAuth failed'}</span>}
+              {codexLogin.state === 'success' && (
+                <span className="text-green-600">{settings.language === 'zh' ? '登录成功' : 'Success'}</span>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setCodexLogin({ open: false, providerRecordId: '', flowId: '', verificationUrl: '', expiresAt: 0, pollIntervalMs: 1000, state: 'idle' })}
+            >
+              {settings.language === 'zh' ? '关闭' : 'Close'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <CustomProviderDialog 
         open={customProviderDialogOpen} 
-        onOpenChange={setCustomProviderDialogOpen} 
+        onOpenChange={setCustomProviderDialogOpen}
+        initialMode={customProviderMode}
       />
     </div>
   )
@@ -2913,6 +3442,7 @@ function ChatSettings() {
         systemPrompts: 'System Prompts',
         new: 'New',
         delete: 'Delete',
+        clear: 'Clear',
         selectedHint: 'The selected prompt is used as the base system message.',
         chatParams: 'Chat Parameters',
         temperature: 'Temperature',
@@ -2957,11 +3487,44 @@ function ChatSettings() {
         cleanupArtifactsHint: 'Deletes old artifacts under workspace/.anima/artifacts.',
         cleanupDone: 'Cleanup done.',
         cleanupFailed: 'Cleanup failed.',
+        acpSettings: 'ACP Agents',
+        acpEnable: 'Enable ACP Agents',
+        acpEnableHint: 'Run external ACP coding agents (e.g. Qwen Code, codex-acp) instead of the built-in provider runtime.',
+        acpApprovalMode: 'Approval mode',
+        acpApprovalPerAction: 'Ask every time',
+        acpApprovalPerProject: 'Remember per project',
+        acpApprovalAlways: 'Always allow',
+        acpDefaultAgent: 'Default agent',
+        acpAgents: 'Agents',
+        acpAgentId: 'ID',
+        acpAgentName: 'Name',
+        acpAgentKind: 'Kind',
+        acpCommand: 'Command',
+        acpArgs: 'Args',
+        acpEnv: 'Env (KEY=VALUE)',
+        acpFraming: 'Framing',
+        acpFramingAuto: 'Auto',
+        acpFramingJsonl: 'JSONL (newline)',
+        acpFramingContentLength: 'Content-Length',
+        acpAddAgent: 'Add agent',
+        acpDeleteAgent: 'Delete',
+        acpAddFromTemplate: 'Add from template',
+        acpTemplateQwen: 'Qwen Code (ACP)',
+        acpTemplateCodexAcp: 'Codex (codex-acp)',
+        acpTemplateCodexNpx: 'Codex (npx @zed-industries/codex-acp)',
+        acpTestAgent: 'Test',
+        acpTestOk: 'OK',
+        acpTestFailed: 'Failed',
+        acpResetApprovals: 'Reset approvals',
+        acpResetApprovalsHint: 'Clears remembered approvals for ACP actions.',
+        acpResetApprovalsDone: 'Approvals reset.',
+        acpResetApprovalsFailed: 'Reset failed.'
       },
       zh: {
         systemPrompts: '系统提示词',
         new: '新建',
         delete: '删除',
+        clear: '清空',
         selectedHint: '当前选中的提示词会作为 system message 的基础内容。',
         chatParams: '聊天参数',
         temperature: '温度',
@@ -3006,11 +3569,44 @@ function ChatSettings() {
         cleanupArtifactsHint: '清理 workspace/.anima/artifacts 下的旧产物。',
         cleanupDone: '清理完成。',
         cleanupFailed: '清理失败。',
+        acpSettings: 'ACP Agents',
+        acpEnable: '启用 ACP Agents',
+        acpEnableHint: '使用外部 ACP 编码代理（例如 Qwen Code、codex-acp）作为运行时，而不是内置 Provider 运行时。',
+        acpApprovalMode: '授权模式',
+        acpApprovalPerAction: '每次询问',
+        acpApprovalPerProject: '按项目记住',
+        acpApprovalAlways: '始终允许',
+        acpDefaultAgent: '默认 Agent',
+        acpAgents: 'Agents',
+        acpAgentId: 'ID',
+        acpAgentName: '名称',
+        acpAgentKind: '类型',
+        acpCommand: '命令',
+        acpArgs: '参数',
+        acpEnv: '环境变量（KEY=VALUE）',
+        acpFraming: '分帧',
+        acpFramingAuto: '自动',
+        acpFramingJsonl: 'JSONL（换行）',
+        acpFramingContentLength: 'Content-Length',
+        acpAddAgent: '添加 Agent',
+        acpDeleteAgent: '删除',
+        acpAddFromTemplate: '按模板添加',
+        acpTemplateQwen: 'Qwen Code（ACP）',
+        acpTemplateCodexAcp: 'Codex（codex-acp）',
+        acpTemplateCodexNpx: 'Codex（npx @zed-industries/codex-acp）',
+        acpTestAgent: '测试',
+        acpTestOk: '正常',
+        acpTestFailed: '失败',
+        acpResetApprovals: '重置授权',
+        acpResetApprovalsHint: '清空 ACP 动作的“记住授权”。',
+        acpResetApprovalsDone: '已重置授权。',
+        acpResetApprovalsFailed: '重置失败。'
       },
       ja: {
         systemPrompts: 'システムプロンプト',
         new: '新規',
         delete: '削除',
+        clear: 'クリア',
         selectedHint: '選択中のプロンプトが system message のベースになります。',
         chatParams: 'チャットパラメータ',
         temperature: '温度',
@@ -3041,6 +3637,38 @@ function ChatSettings() {
         cleanupArtifactsHint: 'workspace/.anima/artifacts の古い成果物を削除します。',
         cleanupDone: 'クリーンアップ完了。',
         cleanupFailed: 'クリーンアップ失敗。',
+        acpSettings: 'ACP Agents',
+        acpEnable: 'ACP Agents を有効化',
+        acpEnableHint: '外部 ACP コーディングエージェント（例: Qwen Code、codex-acp）を実行します。',
+        acpApprovalMode: 'Approval mode',
+        acpApprovalPerAction: 'Ask every time',
+        acpApprovalPerProject: 'Remember per project',
+        acpApprovalAlways: 'Always allow',
+        acpDefaultAgent: 'Default agent',
+        acpAgents: 'Agents',
+        acpAgentId: 'ID',
+        acpAgentName: 'Name',
+        acpAgentKind: 'Kind',
+        acpCommand: 'Command',
+        acpArgs: 'Args',
+        acpEnv: 'Env (KEY=VALUE)',
+        acpAddAgent: 'Add agent',
+        acpDeleteAgent: 'Delete',
+        acpFraming: 'Framing',
+        acpFramingAuto: 'Auto',
+        acpFramingJsonl: 'JSONL (newline)',
+        acpFramingContentLength: 'Content-Length',
+        acpAddFromTemplate: 'Add from template',
+        acpTemplateQwen: 'Qwen Code (ACP)',
+        acpTemplateCodexAcp: 'Codex (codex-acp)',
+        acpTemplateCodexNpx: 'Codex (npx @zed-industries/codex-acp)',
+        acpTestAgent: 'Test',
+        acpTestOk: 'OK',
+        acpTestFailed: 'Failed',
+        acpResetApprovals: 'Reset approvals',
+        acpResetApprovalsHint: 'Clears remembered approvals for ACP actions.',
+        acpResetApprovalsDone: 'Approvals reset.',
+        acpResetApprovalsFailed: 'Reset failed.',
         singleDollarMath: '単一ドル記号の数式をレンダリング',
         singleDollarMathHint: '単一ドル記号によるインライン数式 ($x = y$など) を有効にします。',
         infoCard: '情報カードの可視化を有効化',

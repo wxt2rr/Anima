@@ -103,7 +103,18 @@ export interface ChatThread {
   }
 }
 
-export type ProviderType = 'openai' | 'anthropic' | 'google' | 'deepseek' | 'moonshot' | 'custom' | 'openai_compatible' | 'azure' | 'github' | 'acp'
+export type ProviderType =
+  | 'openai'
+  | 'anthropic'
+  | 'google'
+  | 'deepseek'
+  | 'moonshot'
+  | 'custom'
+  | 'openai_compatible'
+  | 'openai_codex'
+  | 'azure'
+  | 'github'
+  | 'acp'
 
 export interface ModelConfig {
   id: string
@@ -126,7 +137,7 @@ export interface Provider {
   icon?: string
   isEnabled: boolean
   auth?: {
-    mode: 'oauth_device_code'
+    mode: 'oauth_device_code' | 'oauth_openai_codex'
     profileId?: string
   }
   config: {
@@ -138,6 +149,14 @@ export interface Provider {
     modelsFetched?: boolean
     apiFormat?: string
     useMaxCompletionTokens?: boolean
+    acp?: {
+      kind?: 'native_acp' | 'adapter' | 'acpx_bridge'
+      command?: string
+      args?: string[]
+      env?: Record<string, string>
+      framing?: 'auto' | 'jsonl' | 'content_length'
+      approvalMode?: 'per_action' | 'per_project' | 'always'
+    }
   }
 }
 
@@ -190,6 +209,16 @@ export interface McpServer {
   id: string
   name: string
   url: string
+}
+
+export interface AcpAgent {
+  id: string
+  name?: string
+  kind?: 'mock' | 'native_acp' | 'adapter' | 'acpx_bridge'
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  framing?: 'auto' | 'jsonl' | 'content_length'
 }
 
 export type ChatDefaultMode = 'auto' | 'all' | 'disabled'
@@ -270,6 +299,13 @@ export interface Settings {
 
   shortcuts?: {
     bindings?: Partial<Record<ShortcutId, ShortcutBinding | null>>
+  }
+
+  acp?: {
+    enabled?: boolean
+    defaultAgentId?: string
+    approvalMode?: 'per_action' | 'per_project' | 'always'
+    agents?: AcpAgent[]
   }
 
   im?: {
@@ -381,6 +417,7 @@ interface AppState {
   addProvider: (provider: Omit<Provider, 'id'>) => void
   updateProvider: (id: string, updates: Partial<Provider> | Partial<Provider['config']>) => void
   toggleProvider: (id: string, isEnabled: boolean) => void
+  reorderProviders: (draggedId: string, targetId: string) => void
   getActiveProvider: () => Provider | undefined
 
   addMemory: (content: string) => void
@@ -509,6 +546,137 @@ const createDefaultUi = (): AppState['ui'] => ({
   fileExplorerRequest: { path: '', nonce: 0 },
   composer: createDefaultComposer()
 })
+
+const DEFAULT_ACP_PROVIDERS: Provider[] = [
+  {
+    id: 'qwen_acp',
+    name: 'Qwen Code (ACP)',
+    type: 'acp',
+    isEnabled: false,
+    config: {
+      models: [{ id: 'qwen-acp', isEnabled: true, config: { id: 'qwen-acp' } }],
+      selectedModel: 'qwen-acp',
+      acp: {
+        kind: 'native_acp',
+        command: 'qwen',
+        args: ['--acp'],
+        framing: 'jsonl',
+        approvalMode: 'per_action'
+      }
+    }
+  },
+  {
+    id: 'codex_acp',
+    name: 'Codex (codex-acp)',
+    type: 'acp',
+    isEnabled: false,
+    config: {
+      models: [{ id: 'codex-acp', isEnabled: true, config: { id: 'codex-acp' } }],
+      selectedModel: 'codex-acp',
+      acp: {
+        kind: 'native_acp',
+        command: 'codex-acp',
+        args: [],
+        framing: 'jsonl',
+        approvalMode: 'per_action'
+      }
+    }
+  }
+]
+
+const normalizeAcpProvider = (provider: Provider): Provider => {
+  const config = provider.config || { models: [] }
+  const acp = config.acp || {}
+  const models = Array.isArray(config.models) && config.models.length
+    ? config.models
+    : [{ id: String(provider.name || provider.id || 'acp').trim().toLowerCase().replace(/\s+/g, '-'), isEnabled: true, config: { id: String(provider.name || provider.id || 'acp').trim() } }]
+  const selectedModel = String(config.selectedModel || models.find((m) => m.isEnabled)?.id || models[0]?.id || '').trim()
+  return {
+    ...provider,
+    config: {
+      ...config,
+      models,
+      selectedModel,
+      acp: {
+        kind: String(acp.kind || 'native_acp').trim() as any,
+        command: String(acp.command || '').trim(),
+        args: Array.isArray(acp.args) ? acp.args.map((x: any) => String(x)) : [],
+        env: acp.env && typeof acp.env === 'object' ? acp.env : {},
+        framing: (String(acp.framing || 'auto').trim() as any) || 'auto',
+        approvalMode: (String(acp.approvalMode || 'per_action').trim() as any) || 'per_action'
+      }
+    }
+  }
+}
+
+const buildProviderDedupKey = (provider: Provider): string => {
+  const type = String(provider?.type || '').trim().toLowerCase()
+  const name = String(provider?.name || '').trim().toLowerCase()
+  if (type === 'acp') {
+    const acp = (provider?.config as any)?.acp || {}
+    const command = String(acp.command || '').trim().toLowerCase()
+    const args = Array.isArray(acp.args) ? acp.args.map((x: any) => String(x).trim().toLowerCase()).join(' ') : ''
+    return `acp:${name}:${command}:${args}`
+  }
+  const baseUrl = String(provider?.config?.baseUrl || '').trim().toLowerCase()
+  return `${type}:${name}:${baseUrl}`
+}
+
+const dedupeProviders = (providers: Provider[]): Provider[] => {
+  const seen = new Set<string>()
+  const out: Provider[] = []
+  for (const provider of providers) {
+    if (!provider) continue
+    const id = String(provider.id || '').trim()
+    if (!id) continue
+    const key = buildProviderDedupKey(provider)
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(provider)
+  }
+  return out
+}
+
+const mergeLegacyAcpProviders = (rawProviders: Provider[], rawSettings: any): Provider[] => {
+  const providers = Array.isArray(rawProviders) ? [...rawProviders] : []
+  const acp = rawSettings?.acp
+  const agents = Array.isArray(acp?.agents) ? acp.agents : []
+  const existingIds = new Set(providers.map((p) => String(p?.id || '').trim()).filter(Boolean))
+  for (const agent of agents) {
+    const kind = String(agent?.kind || 'native_acp').trim()
+    if (!kind || kind === 'mock' || kind === 'embedded') continue
+    const id = String(agent?.id || '').trim()
+    if (!id || existingIds.has(id)) continue
+    providers.push(
+      normalizeAcpProvider({
+        id,
+        name: String(agent?.name || id).trim() || id,
+        type: 'acp',
+        isEnabled: false,
+        config: {
+          models: [{ id, isEnabled: true, config: { id } }],
+          selectedModel: id,
+          acp: {
+            kind: kind as any,
+            command: String(agent?.command || '').trim(),
+            args: Array.isArray(agent?.args) ? agent.args.map((x: any) => String(x)) : [],
+            env: agent?.env && typeof agent.env === 'object' ? agent.env : {},
+            framing: (String(agent?.framing || 'auto').trim() as any) || 'auto',
+            approvalMode: String(acp?.approvalMode || 'per_action').trim() as any
+          }
+        }
+      })
+    )
+    existingIds.add(id)
+  }
+  for (const provider of DEFAULT_ACP_PROVIDERS) {
+    if (!existingIds.has(provider.id)) {
+      providers.push(provider)
+      existingIds.add(provider.id)
+    }
+  }
+  return dedupeProviders(providers.map((p) => (p.type === 'acp' ? normalizeAcpProvider(p) : p)))
+}
 
 export const useStore = create<AppState>()(
   persist(
@@ -1139,9 +1307,10 @@ export const useStore = create<AppState>()(
           }
           if (!rawSettings || typeof rawSettings !== 'object') throw new Error('Invalid settings payload')
           if (!Array.isArray(rawProviders)) throw new Error('Invalid providers payload')
+          const mergedProviders = mergeLegacyAcpProviders(rawProviders as Provider[], rawSettings)
           set({
             settings: { ...rawSettings, themeColor: rawSettings.themeColor || 'zinc' } as Settings,
-            providers: rawProviders as Provider[],
+            providers: mergedProviders,
             voiceModelsInstalled: Array.isArray(rawVoiceModelsInstalled)
               ? (rawVoiceModelsInstalled as any[])
                   .map((m: any) => ({
@@ -1412,15 +1581,20 @@ export const useStore = create<AppState>()(
         let nextProviders: Provider[] = []
         set((state) => {
           const curProviders = state.providers || []
+          const configKeys = new Set([
+            'apiKey',
+            'baseUrl',
+            'selectedModel',
+            'models',
+            'modelsFetched',
+            'thinkingEnabled',
+            'apiFormat',
+            'useMaxCompletionTokens',
+            'acp'
+          ])
           nextProviders = curProviders.map((p) => {
             if (p.id !== id) return p
-            if (
-              'apiKey' in updates ||
-              'baseUrl' in updates ||
-              'selectedModel' in updates ||
-              'models' in updates ||
-              'modelsFetched' in updates
-            ) {
+            if (Object.keys(updates).some((key) => configKeys.has(key))) {
               return { ...p, config: { ...p.config, ...updates } }
             }
             return { ...p, ...updates }
@@ -1441,6 +1615,29 @@ export const useStore = create<AppState>()(
           nextProviders = curProviders.map((p) => (p.id === id ? { ...p, isEnabled } : { ...p, isEnabled: false }))
           return { providers: nextProviders }
         })
+        void fetchJson('/settings', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ providers: nextProviders })
+        }).catch(() => {})
+      },
+
+      reorderProviders: (draggedId, targetId) => {
+        const fromId = String(draggedId || '').trim()
+        const toId = String(targetId || '').trim()
+        if (!fromId || !toId || fromId === toId) return
+        let nextProviders: Provider[] = []
+        set((state) => {
+          const curProviders = state.providers || []
+          const fromIndex = curProviders.findIndex((p) => p.id === fromId)
+          const toIndex = curProviders.findIndex((p) => p.id === toId)
+          if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return state
+          nextProviders = [...curProviders]
+          const [moved] = nextProviders.splice(fromIndex, 1)
+          nextProviders.splice(toIndex, 0, moved)
+          return { providers: nextProviders }
+        })
+        if (!nextProviders.length) return
         void fetchJson('/settings', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },

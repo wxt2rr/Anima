@@ -6,6 +6,10 @@ import os
 import time
 from unittest.mock import patch
 
+_TEST_CONFIG_ROOT = tempfile.TemporaryDirectory()
+os.environ.setdefault("ANIMA_CONFIG_ROOT", _TEST_CONFIG_ROOT.name)
+os.environ.setdefault("ANIMA_SKILLS_DIR", os.path.join(_TEST_CONFIG_ROOT.name, "skills"))
+
 
 class MockProvider:
     include_reasoning_content_in_messages = False
@@ -1649,7 +1653,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
                             },
                         }
 
-                        with patch.object(api_qwen_auth, "generate_pkce_verifier_challenge", return_value=("v", "c")):
+                        with patch.object(api_qwen_auth, "qwen_generate_pkce_verifier_challenge", return_value=("v", "c")):
                             with patch.object(api_qwen_auth, "request_device_code", return_value=fake_device):
                                 h1 = self._make_handler({"providerId": "qwen", "profileId": "default"})
                                 api_qwen_auth.handle_post_provider_auth_start(h1)
@@ -1673,6 +1677,515 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
                         self.assertTrue(spec is not None)
                         self.assertEqual(spec.provider_id, "qwen")
                         self.assertEqual(spec.api_key, "ACCESS")
+
+    def test_openai_codex_oauth_resolves_provider_spec(self) -> None:
+        from anima_backend_shared import database as db
+        from anima_backend_shared import provider_credentials as cred_store
+        from anima_backend_shared import providers as shared_providers
+
+        td, env, db_mod, _settings = self._with_temp_config_root()
+        with td:
+            with patch.dict(os.environ, env):
+                with patch.object(db_mod, "_CONFIG_ROOT", None):
+                    with patch.object(db_mod, "_DB_INITIALIZED", False):
+                        db.init_db()
+                        db.set_app_settings(
+                            {
+                                "settings": {"defaultToolMode": "all"},
+                                "providers": [
+                                    {
+                                        "id": "codex1",
+                                        "name": "OpenAI Codex (ChatGPT)",
+                                        "type": "openai_codex",
+                                        "isEnabled": True,
+                                        "auth": {"mode": "oauth_openai_codex", "profileId": "default"},
+                                        "config": {"baseUrl": "https://chatgpt.com/backend-api", "models": [], "selectedModel": "gpt-5.2-codex"},
+                                    }
+                                ],
+                            }
+                        )
+
+                        cred_store.upsert_oauth_credential(
+                            {
+                                "providerId": "openai_codex",
+                                "profileId": "default",
+                                "accessToken": "tok.part.sig",
+                                "refreshToken": "REFRESH",
+                                "expiresAt": int(time.time() * 1000) + 3600 * 1000,
+                                "resourceUrl": "acct_123",
+                            }
+                        )
+
+                        spec = shared_providers.get_provider_spec(db.get_app_settings(), "codex1")
+                        self.assertTrue(spec is not None)
+                        self.assertEqual(str(spec.provider_type), "openai_codex")
+                        self.assertEqual(str(spec.api_key), "tok.part.sig")
+                        self.assertEqual(str((spec.extra_headers or {}).get("chatgpt-account-id") or ""), "acct_123")
+
+    def test_provider_base_url_strips_wrapping_backticks(self) -> None:
+        from anima_backend_shared import database as db
+        from anima_backend_shared import providers as shared_providers
+
+        td, env, db_mod, _settings = self._with_temp_config_root()
+        with td:
+            with patch.dict(os.environ, env):
+                with patch.object(db_mod, "_CONFIG_ROOT", None):
+                    with patch.object(db_mod, "_DB_INITIALIZED", False):
+                        db.init_db()
+                        db.set_app_settings(
+                            {
+                                "settings": {},
+                                "providers": [
+                                    {
+                                        "id": "p1",
+                                        "name": "OpenAI",
+                                        "type": "openai",
+                                        "isEnabled": True,
+                                        "config": {"baseUrl": "`https://api.openai.com`", "apiKey": "x", "selectedModel": "m"},
+                                    }
+                                ],
+                            }
+                        )
+                        spec = shared_providers.get_provider_spec(db.get_app_settings(), "p1")
+                        self.assertTrue(spec is not None)
+                        self.assertEqual(str(spec.base_url), "https://api.openai.com")
+
+    def test_openai_codex_chat_completion_aggregates_stream(self) -> None:
+        from anima_backend_shared.providers import OpenAICodexChatProvider, ProviderSpec
+
+        spec = ProviderSpec(
+            provider_id="codex1",
+            provider_type="openai_codex",
+            base_url="https://chatgpt.com/backend-api",
+            api_key="ACCESS",
+            model="gpt-5.2-codex",
+            proxy_url="",
+            thinking_enabled=False,
+            api_format="responses",
+            use_max_completion_tokens=False,
+            extra_headers={},
+        )
+        p = OpenAICodexChatProvider(spec)
+
+        def _fake_stream(*_args, **_kwargs):
+            yield {"choices": [{"delta": {"content": "hi"}, "finish_reason": None}]}
+            yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+
+        p.chat_completion_stream = _fake_stream
+        out = p.chat_completion([{"role": "user", "content": "x"}], temperature=0, max_tokens=16)
+        msg = ((out.get("choices") or [{}])[0] or {}).get("message") or {}
+        self.assertEqual(str(msg.get("content") or ""), "hi")
+
+    def test_openai_codex_stream_falls_back_when_upstream_empty(self) -> None:
+        from anima_backend_shared.providers import OpenAICodexChatProvider, ProviderSpec
+
+        spec = ProviderSpec(
+            provider_id="codex1",
+            provider_type="openai_codex",
+            base_url="https://chatgpt.com/backend-api",
+            api_key="ACCESS",
+            model="gpt-5.2-codex",
+            proxy_url="",
+            thinking_enabled=False,
+            api_format="responses",
+            use_max_completion_tokens=False,
+            extra_headers={},
+        )
+        p = OpenAICodexChatProvider(spec)
+
+        class _StdIn:
+            def __init__(self) -> None:
+                self.buf = b""
+
+            def write(self, b: bytes) -> None:
+                self.buf += b
+
+            def close(self) -> None:
+                return
+
+        class _StdOut:
+            def readline(self) -> bytes:
+                return b""
+
+            def read(self, _n: int = -1) -> bytes:
+                return b""
+
+        class _StdErr:
+            def read(self) -> bytes:
+                return b""
+
+        class _P:
+            def __init__(self, *_args, **_kwargs) -> None:
+                self.stdin = _StdIn()
+                self.stdout = _StdOut()
+                self.stderr = _StdErr()
+
+            def kill(self) -> None:
+                return
+
+            def wait(self, timeout=None) -> int:
+                return 0
+
+        def _fake_json(_url, _headers, _payload, timeout_s: int):
+            return {
+                "response": {
+                    "output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}],
+                }
+            }
+
+        import anima_backend_shared.providers as prov_mod
+
+        with patch.object(prov_mod.shutil, "which", return_value="curl"):
+            with patch.object(prov_mod.subprocess, "Popen", _P):
+                with patch.object(p, "_codex_request_stream_to_text", return_value="ok"):
+                    evts = list(
+                        p.chat_completion_stream(
+                            [{"role": "user", "content": "hi"}],
+                            temperature=0.2,
+                            max_tokens=16,
+                            tools=None,
+                            tool_choice=None,
+                            model_override=None,
+                            extra_body=None,
+                        )
+                    )
+        text = ""
+        for e in evts:
+            c0 = ((e.get("choices") or [{}])[0]) if isinstance(e, dict) else {}
+            d0 = (c0.get("delta") or {}) if isinstance(c0, dict) else {}
+            part = d0.get("content")
+            if isinstance(part, str):
+                text += part
+        self.assertEqual(text, "ok")
+
+    def test_openai_codex_payload_includes_instructions(self) -> None:
+        from anima_backend_shared.providers import OpenAICodexChatProvider, ProviderSpec
+
+        spec = ProviderSpec(
+            provider_id="codex1",
+            provider_type="openai_codex",
+            base_url="https://chatgpt.com/backend-api",
+            api_key="ACCESS",
+            model="gpt-5.2-codex",
+            proxy_url="",
+            thinking_enabled=False,
+            api_format="responses",
+            use_max_completion_tokens=False,
+            extra_headers={},
+        )
+        p = OpenAICodexChatProvider(spec)
+        payload = p._codex_payload(  # type: ignore[attr-defined]
+            [{"role": "system", "content": "SYS"}, {"role": "user", "content": "hi"}],
+            temperature=0.2,
+            max_tokens=16,
+            model_override=None,
+            extra_body=None,
+        )
+        self.assertEqual(str(payload.get("instructions") or ""), "SYS")
+        self.assertTrue("temperature" not in payload)
+        self.assertTrue("max_tokens" not in payload)
+        self.assertTrue("max_output_tokens" not in payload)
+
+        payload2 = p._codex_payload(  # type: ignore[attr-defined]
+            [{"role": "user", "content": "hi"}],
+            temperature=0.2,
+            max_tokens=16,
+            model_override=None,
+            extra_body=None,
+        )
+        self.assertTrue(isinstance(payload2.get("instructions"), str) and str(payload2.get("instructions") or "").strip())
+        self.assertTrue("temperature" not in payload2)
+        self.assertTrue("max_tokens" not in payload2)
+        self.assertTrue("max_output_tokens" not in payload2)
+
+    def test_openai_codex_extracts_output_text_delta_events(self) -> None:
+        from anima_backend_shared.providers import OpenAICodexChatProvider, ProviderSpec
+
+        spec = ProviderSpec(
+            provider_id="codex1",
+            provider_type="openai_codex",
+            base_url="https://chatgpt.com/backend-api",
+            api_key="ACCESS",
+            model="gpt-5.2-codex",
+            proxy_url="",
+            thinking_enabled=False,
+            api_format="responses",
+            use_max_completion_tokens=False,
+            extra_headers={},
+        )
+        p = OpenAICodexChatProvider(spec)
+        d1 = p._extract_text_delta({"type": "response.output_text.delta", "delta": "h"})  # type: ignore[attr-defined]
+        d2 = p._extract_text_delta({"type": "response.output_text.delta", "text": "i"})  # type: ignore[attr-defined]
+        self.assertEqual(d1 + d2, "hi")
+
+    def test_openai_codex_handles_proxy_double_http_headers(self) -> None:
+        from anima_backend_shared.providers import OpenAICodexChatProvider, ProviderSpec
+
+        spec = ProviderSpec(
+            provider_id="codex1",
+            provider_type="openai_codex",
+            base_url="https://chatgpt.com/backend-api",
+            api_key="ACCESS",
+            model="gpt-5.2-codex",
+            proxy_url="http://127.0.0.1:7890",
+            thinking_enabled=False,
+            api_format="responses",
+            use_max_completion_tokens=False,
+            extra_headers={},
+        )
+        p = OpenAICodexChatProvider(spec)
+
+        class _StdIn:
+            def write(self, _b: bytes) -> None:
+                return
+
+            def close(self) -> None:
+                return
+
+        class _StdOut:
+            def __init__(self) -> None:
+                self._lines = [
+                    b"HTTP/1.1 200 Connection established\r\n",
+                    b"Proxy-Agent: test\r\n",
+                    b"\r\n",
+                    b"HTTP/1.1 400 Bad Request\r\n",
+                    b"Content-Type: application/json\r\n",
+                    b"\r\n",
+                ]
+                self._i = 0
+                self._rest = b'{"detail":"bad"}'
+
+            def readline(self) -> bytes:
+                if self._i >= len(self._lines):
+                    return b""
+                b = self._lines[self._i]
+                self._i += 1
+                return b
+
+            def read(self, _n: int = -1) -> bytes:
+                out = self._rest
+                self._rest = b""
+                return out
+
+        class _StdErr:
+            def read(self) -> bytes:
+                return b""
+
+        class _P:
+            def __init__(self, *_args, **_kwargs) -> None:
+                self.stdin = _StdIn()
+                self.stdout = _StdOut()
+                self.stderr = _StdErr()
+
+            def kill(self) -> None:
+                return
+
+            def wait(self, timeout=None) -> int:
+                return 0
+
+        import anima_backend_shared.providers as prov_mod
+
+        def _select(_r, _w, _e, _t):
+            return (_r, _w, _e)
+
+        with patch.object(prov_mod.shutil, "which", return_value="curl"):
+            with patch.object(prov_mod.subprocess, "Popen", _P):
+                with patch.object(prov_mod.select, "select", side_effect=_select):
+                    with self.assertRaises(RuntimeError) as ctx:
+                        p._codex_request_stream_to_text(  # type: ignore[attr-defined]
+                            "https://chatgpt.com/backend-api/codex/responses",
+                            {"Accept": "text/event-stream"},
+                            {"stream": True},
+                            timeout_s=5,
+                        )
+        self.assertIn("Upstream HTTP 400", str(ctx.exception))
+
+    def test_openai_codex_fallback_timeout_has_readable_error(self) -> None:
+        from anima_backend_shared.providers import OpenAICodexChatProvider, ProviderSpec
+
+        spec = ProviderSpec(
+            provider_id="codex1",
+            provider_type="openai_codex",
+            base_url="https://chatgpt.com/backend-api",
+            api_key="ACCESS",
+            model="gpt-5.2-codex",
+            proxy_url="http://127.0.0.1:7890",
+            thinking_enabled=False,
+            api_format="responses",
+            use_max_completion_tokens=False,
+            extra_headers={},
+        )
+        p = OpenAICodexChatProvider(spec)
+
+        class _StdIn:
+            def write(self, _b: bytes) -> None:
+                return
+
+            def close(self) -> None:
+                return
+
+        class _StdOut:
+            def readline(self) -> bytes:
+                return b""
+
+        class _StdErr:
+            def read(self) -> bytes:
+                return b""
+
+        class _P:
+            def __init__(self, *_args, **_kwargs) -> None:
+                self.stdin = _StdIn()
+                self.stdout = _StdOut()
+                self.stderr = _StdErr()
+                self.returncode = None
+                self.terminated = False
+
+            def poll(self):
+                return self.returncode
+
+            def terminate(self) -> None:
+                self.terminated = True
+                self.returncode = -15
+
+            def kill(self) -> None:
+                self.returncode = -9
+
+            def wait(self, timeout=None) -> int:
+                if self.returncode is None:
+                    self.returncode = 0
+                return int(self.returncode)
+
+        import anima_backend_shared.providers as prov_mod
+
+        times = [0.0, 100.0]
+
+        def _time():
+            return times.pop(0) if times else 100.0
+
+        def _select(_r, _w, _e, _t):
+            return ([], [], [])
+
+        with patch.object(prov_mod.shutil, "which", return_value="curl"):
+            with patch.object(prov_mod.subprocess, "Popen", _P):
+                with patch.object(prov_mod.time, "time", side_effect=_time):
+                    with patch.object(prov_mod.select, "select", side_effect=_select):
+                        with self.assertRaises(RuntimeError) as ctx:
+                            p._codex_request_stream_to_text(  # type: ignore[attr-defined]
+                                "https://chatgpt.com/backend-api/codex/responses",
+                                {"Accept": "text/event-stream"},
+                                {"stream": True},
+                                timeout_s=1,
+                            )
+        self.assertIn("Codex upstream timeout", str(ctx.exception))
+
+    def test_openai_codex_stream_sigkill_triggers_fallback(self) -> None:
+        from anima_backend_shared.providers import OpenAICodexChatProvider, ProviderSpec
+
+        spec = ProviderSpec(
+            provider_id="codex1",
+            provider_type="openai_codex",
+            base_url="https://chatgpt.com/backend-api",
+            api_key="tok.part.sig",
+            model="gpt-5.2-codex",
+            proxy_url="http://127.0.0.1:7890",
+            thinking_enabled=False,
+            api_format="responses",
+            use_max_completion_tokens=False,
+            extra_headers={"chatgpt-account-id": "acct_123", "OpenAI-Beta": "responses=experimental", "originator": "codex_cli_rs"},
+        )
+        p = OpenAICodexChatProvider(spec)
+
+        class _StdIn:
+            def write(self, _b: bytes) -> None:
+                return
+
+            def close(self) -> None:
+                return
+
+        class _StdOut:
+            def readline(self) -> bytes:
+                return b""
+
+            def read(self, _n: int = -1) -> bytes:
+                return b""
+
+        class _StdErr:
+            def read(self) -> bytes:
+                return b""
+
+        class _P:
+            def __init__(self, *_args, **_kwargs) -> None:
+                self.stdin = _StdIn()
+                self.stdout = _StdOut()
+                self.stderr = _StdErr()
+
+            def kill(self) -> None:
+                return
+
+            def wait(self, timeout=None) -> int:
+                return -9
+
+        import anima_backend_shared.providers as prov_mod
+
+        with patch.object(prov_mod.shutil, "which", return_value="curl"):
+            with patch.object(prov_mod.subprocess, "Popen", _P):
+                with patch.object(p, "_codex_request_stream_to_text", return_value="hi"):  # type: ignore[attr-defined]
+                    out = ""
+                    for evt in p.chat_completion_stream([{"role": "user", "content": "x"}], temperature=0.2, max_tokens=16):
+                        choice = ((evt.get("choices") or [{}])[0]) if isinstance(evt, dict) else {}
+                        delta = (choice.get("delta") or {}) if isinstance(choice, dict) else {}
+                        part = delta.get("content")
+                        if isinstance(part, str) and part:
+                            out += part
+                    self.assertEqual(out, "hi")
+
+    def test_codex_provider_disables_tools_in_run_graph(self) -> None:
+        from anima_backend_lg.runtime.graph import build_run_graph
+        from anima_backend_shared.providers import ProviderSpec
+
+        class _Prov:
+            def __init__(self) -> None:
+                self._spec = ProviderSpec(
+                    provider_id="codex1",
+                    provider_type="openai_codex",
+                    base_url="https://chatgpt.com/backend-api",
+                    api_key="ACCESS",
+                    model="gpt-5.2-codex",
+                    proxy_url="",
+                    thinking_enabled=False,
+                    api_format="responses",
+                    use_max_completion_tokens=False,
+                    extra_headers={},
+                )
+
+            def chat_completion(self, messages, *, temperature, max_tokens, tools=None, tool_choice=None, model_override=None, extra_body=None):
+                if tools is not None:
+                    raise RuntimeError("tools should be disabled")
+                if tool_choice is not None:
+                    raise RuntimeError("tool_choice should be disabled")
+                return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+        g = build_run_graph(_Prov())
+        out = g.invoke(
+            {
+                "run_id": "r1",
+                "thread_id": "t1",
+                "messages": [{"role": "user", "content": "hi"}],
+                "composer": {"toolMode": "all", "workspaceDir": "", "isMainSession": True},
+                "settings": {"settings": {"defaultToolMode": "all"}},
+                "temperature": 0.2,
+                "max_tokens": 16,
+                "extra_body": None,
+                "step": 0,
+                "traces": [],
+                "artifacts": [],
+                "usage": None,
+                "rate_limit": None,
+                "reasoning": "",
+                "final_content": "",
+            }
+        )
+        self.assertEqual(str((out or {}).get("final_content") or ""), "ok")
 
 if __name__ == "__main__":
     unittest.main()

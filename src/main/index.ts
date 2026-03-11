@@ -9,6 +9,7 @@ import Store from 'electron-store'
 import { registerFileService } from './services/fileService'
 import { registerGitService } from './services/gitService'
 import { registerTerminalService } from './services/terminalService'
+import { registerAcpService } from './services/acpService'
 
 let mainWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
@@ -328,6 +329,7 @@ function registerIpcHandlers(): void {
   registerFileService()
   registerGitService()
   registerTerminalService()
+  registerAcpService()
 
   ipcMain.handle('anima:app:getInfo', async () => {
     return {

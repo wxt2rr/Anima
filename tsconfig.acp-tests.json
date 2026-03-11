@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": ".tmp/acp-tests",
+    "rootDir": ".",
+    "types": ["node"]
+  },
+  "include": ["tests/acpCore.test.ts", "src/main/services/acpCore.ts"]
+}
+

@@ -15,6 +15,7 @@ from .chats import (
     handle_post_chats_sync,
 )
 from .db import handle_get_db_export, handle_get_db_path, handle_get_db_status, handle_post_db_clear, handle_post_db_import
+from .debug import handle_get_debug_config
 from .runs import (
     handle_get_run,
     handle_post_chat,
@@ -146,6 +147,10 @@ def dispatch(handler: Any, method: str, path: str) -> bool:
         return True
     if m == "POST" and path == "/api/db/clear":
         handle_post_db_clear(handler)
+        return True
+
+    if m == "GET" and path == "/api/debug/config":
+        handle_get_debug_config(handler)
         return True
 
     if m == "GET" and path == "/api/artifacts/file":

@@ -481,6 +481,13 @@ def _run_tool_loop(
         emit_event(obj)
 
     tools, mcp_index, tool_choice = select_tools(settings_obj, composer)
+    try:
+        spec_obj = getattr(provider, "_spec", None)
+        if str(getattr(spec_obj, "provider_type", "") or "").strip().lower() == "openai_codex":
+            tools = []
+            tool_choice = None
+    except Exception:
+        pass
     mo = str(composer.get("modelOverride") or "").strip() or None
 
     cur, dropped_traces = sanitize_history_messages(prepared)

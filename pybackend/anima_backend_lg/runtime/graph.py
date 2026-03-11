@@ -539,6 +539,13 @@ def build_run_graph(provider: Any) -> Any:
         extra_body = state.get("extra_body") if isinstance(state.get("extra_body"), dict) else None
 
         tools, _mcp_index, tool_choice = select_tools(settings_obj, composer)
+        try:
+            spec_obj = getattr(provider, "_spec", None)
+            if str(getattr(spec_obj, "provider_type", "") or "").strip().lower() == "openai_codex":
+                tools = []
+                tool_choice = None
+        except Exception:
+            pass
         if not isinstance(tools, list):
             tools = []
         allowed_tool_names: List[str] = []

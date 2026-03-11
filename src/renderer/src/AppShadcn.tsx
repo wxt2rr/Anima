@@ -151,6 +151,41 @@ async function fetchBackendJson<T>(path: string, init?: RequestInit): Promise<T>
 function App(): JSX.Element {
   const { configLoaded, configError, loadRemoteConfig } = useStore()
   const reduceMotion = useReducedMotion()
+  const loadingLang = useMemo(() => {
+    const nav = (() => {
+      try {
+        return String(navigator.language || '').toLowerCase()
+      } catch {
+        return ''
+      }
+    })()
+    if (nav.startsWith('zh')) return 'zh'
+    if (nav.startsWith('ja')) return 'ja'
+    return 'en'
+  }, [])
+  const tLoading = useMemo(() => {
+    const dict = {
+      en: {
+        loadingTitle: 'Loading settings…',
+        failedTitle: 'Failed to load settings',
+        subtitle: 'Connecting to local backend',
+        retry: 'Retry'
+      },
+      zh: {
+        loadingTitle: '正在加载设置…',
+        failedTitle: '加载设置失败',
+        subtitle: '正在连接本地后端',
+        retry: '重试'
+      },
+      ja: {
+        loadingTitle: '設定を読み込み中…',
+        failedTitle: '設定の読み込みに失敗しました',
+        subtitle: 'ローカルバックエンドに接続中',
+        retry: '再試行'
+      }
+    } as const
+    return dict[loadingLang as keyof typeof dict] || dict.en
+  }, [loadingLang])
 
   useEffect(() => {
     void loadRemoteConfig().catch(() => {})
@@ -194,10 +229,10 @@ function App(): JSX.Element {
                 transition={reduceMotion ? undefined : { repeat: Infinity, duration: 1.1, ease: 'easeInOut' }}
               />
               <div className="text-sm font-semibold tracking-tight">
-                {configError ? 'Failed to load settings' : 'Loading settings…'}
+                {configError ? tLoading.failedTitle : tLoading.loadingTitle}
               </div>
             </div>
-            <div className="mt-1 text-xs text-muted-foreground">Connecting to local backend</div>
+            <div className="mt-1 text-xs text-muted-foreground">{tLoading.subtitle}</div>
 
             {configError ? (
               <motion.div
@@ -213,7 +248,7 @@ function App(): JSX.Element {
             {configError ? (
               <div className="mt-5 flex items-center justify-center">
                 <Button variant="outline" onClick={() => void loadRemoteConfig().catch(() => {})}>
-                  Retry
+                  {tLoading.retry}
                 </Button>
               </div>
             ) : null}
@@ -1396,7 +1431,7 @@ function AppLoaded(): JSX.Element {
           workspace: 'Workspace',
           tools: 'Tools',
           skills: 'Skills',
-          model: 'Model',
+        model: 'Model',
           context: 'Context',
           addFiles: 'Add files',
           clear: 'Clear',
@@ -1457,7 +1492,7 @@ function AppLoaded(): JSX.Element {
           workspace: '工作区',
           tools: '工具 / MCP',
           skills: '技能',
-          model: '模型',
+        model: '模型',
           context: '上下文',
           addFiles: '添加文件',
           clear: '清除',
@@ -1518,7 +1553,7 @@ function AppLoaded(): JSX.Element {
           workspace: 'ワークスペース',
           tools: 'ツール / MCP',
           skills: 'スキル',
-          model: 'モデル',
+        model: 'モデル',
           context: 'コンテキスト',
           addFiles: 'ファイル追加',
           clear: 'クリア',
@@ -1887,7 +1922,8 @@ function AppLoaded(): JSX.Element {
     const trimmed = String(rawText || '').trim()
     if (!trimmed || isLoading) return false
     
-    if (!activeProvider && !effectiveProviderId) {
+    const isAcpProvider = String(effectiveProvider?.type || '').trim() === 'acp'
+    if (!effectiveProvider) {
       openSettings()
       return false
     }
@@ -1973,6 +2009,7 @@ function AppLoaded(): JSX.Element {
         let assistantMeta: NonNullable<Message['meta']> = shouldShowAnalysis ? { reasoningStatus: 'pending', reasoningText: '' } : {}
         let reasoningText = ''
         let gotDone = false
+        let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
         let compressionMsgId: string | null = null
         let compressionSeenStart = false
         let compressionEnded = false
@@ -2111,159 +2148,282 @@ function AppLoaded(): JSX.Element {
           updateMessageById(cid, compressionMsgId, { content: typeof content === 'string' ? content : existing?.content || '', meta: nextMeta } as any)
         }
 
-        const baseUrl = await resolveBackendBaseUrl()
-        const res = await fetch(`${baseUrl}/api/runs?stream=1`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  messages: runMessages,
-                  composer: composerPayload,
-                  temperature: settings.temperature,
-                  maxTokens: settings.maxTokens,
-                  runId: turnId,
-                  threadId,
-                  useThreadMessages: true
-                }),
-                signal: controller.signal
+        let shouldRunProvider = !isAcpProvider
+        if (isAcpProvider) {
+          try {
+            const acp = (effectiveProvider as any)?.config?.acp || {}
+            const command = String(acp.command || '').trim()
+            if (!command) throw new Error('ACP provider command is not configured')
+            const createRes = await window.anima.acp.createSession({
+              workspaceDir: composerPayload.workspaceDir,
+              threadId,
+              agent: {
+                id: String(effectiveProvider?.id || '').trim(),
+                name: String(effectiveProvider?.name || effectiveProvider?.id || 'ACP').trim(),
+                kind: String(acp.kind || 'native_acp').trim() as any,
+                command,
+                args: Array.isArray(acp.args) ? acp.args.map((x: any) => String(x)) : [],
+                env: acp.env && typeof acp.env === 'object' ? acp.env : {},
+                framing: String(acp.framing || 'auto').trim() as any
+              },
+              approvalMode: String(acp.approvalMode || 'per_action') as any
+            })
+            if (!createRes?.ok || !createRes.sessionId) throw new Error(String(createRes?.error || 'Failed to create ACP session'))
+
+            const sessionId = String(createRes.sessionId).trim()
+            let unsub: (() => void) | null = null
+
+            const donePromise = new Promise<void>((resolve, reject) => {
+              const onAbort = () => {
+                void window.anima.acp.cancel({ sessionId, runId: turnId }).catch(() => {})
+                resolve()
+              }
+              controller.signal.addEventListener('abort', onAbort, { once: true })
+
+              unsub = window.anima.acp.onEvent(sessionId, (evt: any) => {
+                const e = (evt || {}) as {
+                  type?: string
+                  content?: string
+                  stage?: string
+                  step?: number
+                  reasoning?: string
+                  usage?: BackendUsage
+                  rateLimit?: BackendRateLimit
+                  traces?: ToolTrace[]
+                  artifacts?: Artifact[]
+                  trace?: ToolTrace
+                  ok?: boolean
+                  error?: string
+                }
+                if (e.type === 'delta' && typeof e.content === 'string' && e.content) {
+                  pendingContent += e.content
+                  startTyping()
+                  return
+                }
+                if (e.type === 'stage' && typeof e.stage === 'string' && e.stage) {
+                  assistantMeta = { ...assistantMeta, stage: e.stage }
+                  updateLastMessage(fullContent, assistantMeta)
+                  return
+                }
+                if (e.type === 'reasoning_delta' && typeof e.content === 'string' && e.content) {
+                  reasoningText += e.content
+                  assistantMeta = { ...assistantMeta, reasoningText, reasoningStatus: 'streaming' }
+                  updateLastMessage(fullContent, assistantMeta)
+                  return
+                }
+                if (e.type === 'reasoning' && typeof e.content === 'string' && e.content.trim()) {
+                  reasoningText = reasoningText ? `${reasoningText}\n\n${e.content.trim()}` : e.content.trim()
+                  assistantMeta = { ...assistantMeta, reasoningText, reasoningStatus: 'streaming' }
+                  updateLastMessage(fullContent, assistantMeta)
+                  return
+                }
+                if (e.type === 'trace' && e.trace) {
+                  upsertTrace(e.trace)
+                  return
+                }
+                if (e.type === 'error') {
+                  const err = typeof e.error === 'string' && e.error.trim() ? e.error.trim() : 'Unknown error'
+                  reject(new Error(err))
+                  return
+                }
+                if (e.type === 'done') {
+                  usage = e.usage || null
+                  if (e.rateLimit && Object.keys(e.rateLimit).length) {
+                    assistantMeta = { ...assistantMeta, rateLimit: e.rateLimit }
+                  }
+                  if (Array.isArray(e.artifacts)) {
+                    assistantMeta = { ...assistantMeta, artifacts: e.artifacts }
+                  }
+                  if (Array.isArray(e.traces)) {
+                    traces = e.traces
+                    assistantMeta = {
+                      ...assistantMeta,
+                      reasoningSummary: deriveReasoningSummaryFromTraces(traces) ?? assistantMeta.reasoningSummary
+                    }
+                  }
+                  if (typeof e.reasoning === 'string' && e.reasoning.trim()) {
+                    reasoningText = reasoningText ? reasoningText : e.reasoning.trim()
+                    assistantMeta = { ...assistantMeta, reasoningText }
+                  }
+                  if (shouldShowAnalysis || reasoningText.trim()) {
+                    assistantMeta = { ...assistantMeta, reasoningStatus: 'done' }
+                  }
+                  assistantMeta = { ...assistantMeta, stage: undefined }
+                  gotDone = true
+                  resolve()
+                }
               })
-        if (!res.ok) {
-          const text = await res.text()
-          const data = text ? JSON.parse(text) : null
-          const msg = data?.error || `HTTP ${res.status}`
-          throw new Error(String(msg))
+            })
+
+            const startRes = await window.anima.acp.prompt({ sessionId, prompt: userMessage, runId: turnId })
+            if (!startRes?.ok) throw new Error(String(startRes?.error || 'Failed to start ACP prompt'))
+            await donePromise.finally(() => {
+              try {
+                unsub?.()
+              } catch {
+                //
+              }
+            })
+          } catch (e: any) {
+            throw e
+          }
         }
 
-        const reader = res.body?.getReader()
-        if (!reader) throw new Error('Streaming unavailable')
-
-        const decoder = new TextDecoder()
-        let buf = ''
-        let reading = true
-        while (reading) {
-          const { value, done } = await reader.read()
-          if (done) {
-            reading = false
-            break
+        if (shouldRunProvider) {
+          const baseUrl = await resolveBackendBaseUrl()
+          const res = await fetch(`${baseUrl}/api/runs?stream=1`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    messages: runMessages,
+                    composer: composerPayload,
+                    temperature: settings.temperature,
+                    maxTokens: settings.maxTokens,
+                    runId: turnId,
+                    threadId,
+                    useThreadMessages: true
+                  }),
+                  signal: controller.signal
+                })
+          if (!res.ok) {
+            const text = await res.text()
+            const data = text ? JSON.parse(text) : null
+            const msg = data?.error || `HTTP ${res.status}`
+            throw new Error(String(msg))
           }
-          buf += decoder.decode(value, { stream: true })
-          let scanning = true
-          while (scanning) {
-            const idx = buf.indexOf('\n\n')
-            if (idx < 0) {
-              scanning = false
+
+          reader = res.body?.getReader() || null
+          if (!reader) throw new Error('Streaming unavailable')
+
+          const decoder = new TextDecoder()
+          let buf = ''
+          let reading = true
+          while (reading) {
+            const { value, done } = await reader.read()
+            if (done) {
+              reading = false
               break
             }
-            const chunk = buf.slice(0, idx)
-            buf = buf.slice(idx + 2)
-            const lines = chunk.split('\n')
-            for (const line of lines) {
-              if (!line.startsWith('data: ')) continue
-              const jsonText = line.slice('data: '.length).trim()
-              if (!jsonText) continue
-              const evt = JSON.parse(jsonText) as {
-                type?: string
-                content?: string
-                stage?: string
-                step?: number
-                reasoning?: string
-                usage?: BackendUsage
-                rateLimit?: BackendRateLimit
-                traces?: ToolTrace[]
-                artifacts?: Artifact[]
-                trace?: ToolTrace
-                mode?: string
-                summaryPreview?: string
-                summaryUpdatedAt?: number
-                summarizedUntilMessageId?: string
-                summary?: string
-                ok?: boolean
-                error?: string
-              }
-              if (evt.type === 'delta' && typeof evt.content === 'string' && evt.content) {
-                pendingContent += evt.content
-                startTyping()
-              } else if (evt.type === 'run') {
-                continue
-              } else if (evt.type === 'stage' && typeof evt.stage === 'string' && evt.stage) {
-                assistantMeta = { ...assistantMeta, stage: evt.stage }
-                updateLastMessage(fullContent, assistantMeta)
-              } else if (evt.type === 'reasoning_delta' && typeof evt.content === 'string' && evt.content) {
-                reasoningText += evt.content
-                assistantMeta = { ...assistantMeta, reasoningText, reasoningStatus: 'streaming' }
-                updateLastMessage(fullContent, assistantMeta)
-              } else if (evt.type === 'reasoning' && typeof evt.content === 'string' && evt.content.trim()) {
-                reasoningText = reasoningText ? `${reasoningText}\n\n${evt.content.trim()}` : evt.content.trim()
-                assistantMeta = { ...assistantMeta, reasoningText, reasoningStatus: 'streaming' }
-                updateLastMessage(fullContent, assistantMeta)
-              } else if (evt.type === 'trace' && evt.trace) {
-                upsertTrace(evt.trace)
-              } else if (evt.type === 'error') {
-                const err = typeof evt.error === 'string' && evt.error.trim() ? evt.error.trim() : 'Unknown error'
-                throw new Error(err)
-              } else if (evt.type === 'compression_start') {
-                compressionSeenStart = true
-                compressionEnded = false
-                compressionFullContent = ''
-                compressionPendingContent = ''
-                stopCompressionTyping()
-                ensureCompressionMsg('running', '')
-              } else if (evt.type === 'compression_delta' && typeof evt.content === 'string' && evt.content) {
-                compressionPendingContent += evt.content
-                startCompressionTyping()
-              } else if (evt.type === 'compression_end') {
-                compressionEnded = true
-                stopCompressionTyping()
-                compressionPendingContent = ''
-                const ok = evt.ok !== false
-                if (ok) {
-                  if (typeof evt.summary === 'string') compressionFullContent = evt.summary
-                } else {
-                  const err = typeof evt.error === 'string' && evt.error.trim() ? evt.error.trim() : '未知错误'
-                  compressionFullContent = `压缩失败：${err}`
-                }
-                ensureCompressionMsg('done', compressionFullContent)
-                if (ok) {
-                  const cid = String(activeChatId || '').trim()
-                  if (cid) {
-                    void (async () => {
-                      try {
-                        const res = await fetchBackendJson<{ ok: boolean; compression?: any }>(`/api/chats/${cid}/summary?t=${Date.now()}`, { method: 'GET', cache: 'no-store' })
-                        if (res && (res as any).compression) {
-                          updateChat(cid, { meta: { compression: (res as any).compression } })
-                        }
-                      } catch {
-                        return
-                      }
-                    })()
-                  }
-                }
-              } else if (evt.type === 'done') {
-                if (compressionSeenStart && !compressionEnded) ensureCompressionMsg('done', compressionFullContent)
-                usage = evt.usage || null
-                if (evt.rateLimit && Object.keys(evt.rateLimit).length) {
-                  assistantMeta = { ...assistantMeta, rateLimit: evt.rateLimit }
-                }
-                if (Array.isArray(evt.artifacts)) {
-                  assistantMeta = { ...assistantMeta, artifacts: evt.artifacts }
-                }
-                if (Array.isArray(evt.traces)) {
-                  traces = evt.traces
-                  assistantMeta = {
-                    ...assistantMeta,
-                    reasoningSummary: deriveReasoningSummaryFromTraces(traces) ?? assistantMeta.reasoningSummary
-                  }
-                }
-                if (typeof evt.reasoning === 'string' && evt.reasoning.trim()) {
-                  reasoningText = reasoningText ? reasoningText : evt.reasoning.trim()
-                  assistantMeta = { ...assistantMeta, reasoningText }
-                }
-                if (shouldShowAnalysis || reasoningText.trim()) {
-                  assistantMeta = { ...assistantMeta, reasoningStatus: 'done' }
-                }
-                assistantMeta = { ...assistantMeta, stage: undefined }
-                gotDone = true
+            buf += decoder.decode(value, { stream: true })
+            let scanning = true
+            while (scanning) {
+              const idx = buf.indexOf('\n\n')
+              if (idx < 0) {
                 scanning = false
-                reading = false
+                break
+              }
+              const chunk = buf.slice(0, idx)
+              buf = buf.slice(idx + 2)
+              const lines = chunk.split('\n')
+              for (const line of lines) {
+                if (!line.startsWith('data: ')) continue
+                const jsonText = line.slice('data: '.length).trim()
+                if (!jsonText) continue
+                const evt = JSON.parse(jsonText) as {
+                  type?: string
+                  content?: string
+                  stage?: string
+                  step?: number
+                  reasoning?: string
+                  usage?: BackendUsage
+                  rateLimit?: BackendRateLimit
+                  traces?: ToolTrace[]
+                  artifacts?: Artifact[]
+                  trace?: ToolTrace
+                  mode?: string
+                  summaryPreview?: string
+                  summaryUpdatedAt?: number
+                  summarizedUntilMessageId?: string
+                  summary?: string
+                  ok?: boolean
+                  error?: string
+                }
+                if (evt.type === 'delta' && typeof evt.content === 'string' && evt.content) {
+                  pendingContent += evt.content
+                  startTyping()
+                } else if (evt.type === 'run') {
+                  continue
+                } else if (evt.type === 'stage' && typeof evt.stage === 'string' && evt.stage) {
+                  assistantMeta = { ...assistantMeta, stage: evt.stage }
+                  updateLastMessage(fullContent, assistantMeta)
+                } else if (evt.type === 'reasoning_delta' && typeof evt.content === 'string' && evt.content) {
+                  reasoningText += evt.content
+                  assistantMeta = { ...assistantMeta, reasoningText, reasoningStatus: 'streaming' }
+                  updateLastMessage(fullContent, assistantMeta)
+                } else if (evt.type === 'reasoning' && typeof evt.content === 'string' && evt.content.trim()) {
+                  reasoningText = reasoningText ? `${reasoningText}\n\n${evt.content.trim()}` : evt.content.trim()
+                  assistantMeta = { ...assistantMeta, reasoningText, reasoningStatus: 'streaming' }
+                  updateLastMessage(fullContent, assistantMeta)
+                } else if (evt.type === 'trace' && evt.trace) {
+                  upsertTrace(evt.trace)
+                } else if (evt.type === 'error') {
+                  const err = typeof evt.error === 'string' && evt.error.trim() ? evt.error.trim() : 'Unknown error'
+                  throw new Error(err)
+                } else if (evt.type === 'compression_start') {
+                  compressionSeenStart = true
+                  compressionEnded = false
+                  compressionFullContent = ''
+                  compressionPendingContent = ''
+                  stopCompressionTyping()
+                  ensureCompressionMsg('running', '')
+                } else if (evt.type === 'compression_delta' && typeof evt.content === 'string' && evt.content) {
+                  compressionPendingContent += evt.content
+                  startCompressionTyping()
+                } else if (evt.type === 'compression_end') {
+                  compressionEnded = true
+                  stopCompressionTyping()
+                  compressionPendingContent = ''
+                  const ok = evt.ok !== false
+                  if (ok) {
+                    if (typeof evt.summary === 'string') compressionFullContent = evt.summary
+                  } else {
+                    const err = typeof evt.error === 'string' && evt.error.trim() ? evt.error.trim() : '未知错误'
+                    compressionFullContent = `压缩失败：${err}`
+                  }
+                  ensureCompressionMsg('done', compressionFullContent)
+                  if (ok) {
+                    const cid = String(activeChatId || '').trim()
+                    if (cid) {
+                      void (async () => {
+                        try {
+                          const res = await fetchBackendJson<{ ok: boolean; compression?: any }>(`/api/chats/${cid}/summary?t=${Date.now()}`, { method: 'GET', cache: 'no-store' })
+                          if (res && (res as any).compression) {
+                            updateChat(cid, { meta: { compression: (res as any).compression } })
+                          }
+                        } catch {
+                          return
+                        }
+                      })()
+                    }
+                  }
+                } else if (evt.type === 'done') {
+                  if (compressionSeenStart && !compressionEnded) ensureCompressionMsg('done', compressionFullContent)
+                  usage = evt.usage || null
+                  if (evt.rateLimit && Object.keys(evt.rateLimit).length) {
+                    assistantMeta = { ...assistantMeta, rateLimit: evt.rateLimit }
+                  }
+                  if (Array.isArray(evt.artifacts)) {
+                    assistantMeta = { ...assistantMeta, artifacts: evt.artifacts }
+                  }
+                  if (Array.isArray(evt.traces)) {
+                    traces = evt.traces
+                    assistantMeta = {
+                      ...assistantMeta,
+                      reasoningSummary: deriveReasoningSummaryFromTraces(traces) ?? assistantMeta.reasoningSummary
+                    }
+                  }
+                  if (typeof evt.reasoning === 'string' && evt.reasoning.trim()) {
+                    reasoningText = reasoningText ? reasoningText : evt.reasoning.trim()
+                    assistantMeta = { ...assistantMeta, reasoningText }
+                  }
+                  if (shouldShowAnalysis || reasoningText.trim()) {
+                    assistantMeta = { ...assistantMeta, reasoningStatus: 'done' }
+                  }
+                  assistantMeta = { ...assistantMeta, stage: undefined }
+                  gotDone = true
+                  scanning = false
+                  reading = false
+                }
               }
             }
           }
@@ -2271,7 +2431,9 @@ function AppLoaded(): JSX.Element {
         stopCompressionTyping()
         if (compressionSeenStart && !compressionEnded) ensureCompressionMsg('done', compressionFullContent)
         if (gotDone) {
-          await reader.cancel().catch(() => {})
+          if (reader) {
+            await reader.cancel().catch(() => {})
+          }
         } else {
           if (shouldShowAnalysis || assistantMeta.reasoningStatus === 'streaming' || assistantMeta.reasoningText) {
             assistantMeta = { ...assistantMeta, reasoningStatus: 'done' }
@@ -2369,7 +2531,12 @@ function AppLoaded(): JSX.Element {
         return
       }
       console.error(error)
-      updateLastMessage(t.proxyOrKeyError(error.message))
+      const errMsg = error instanceof Error ? error.message : String(error)
+      updateLastMessage(
+        String(effectiveProvider?.type || '').trim() === 'acp'
+          ? `Error: ${errMsg}\n\nPlease check the ACP provider command, arguments, and workspace settings.`
+          : t.proxyOrKeyError(errMsg)
+      )
       await persistLastMessage()
     } finally {
       setIsLoading(false)
@@ -2682,7 +2849,7 @@ function AppLoaded(): JSX.Element {
                       return (
                       <div className="w-full">
                       {msg.role === 'user' ? (
-                        <div className={`py-2 flex justify-end ${msg.id === lastUserMessageId ? 'sticky top-0 z-20' : ''}`}>
+                        <div className={`py-3 flex justify-end ${msg.id === lastUserMessageId ? 'sticky top-2 z-20' : ''}`}>
                            <div className="flex flex-col items-end gap-2">
                               <div
                                 ref={(el) => {
@@ -3345,9 +3512,9 @@ function AppLoaded(): JSX.Element {
                               if (st === 'model_call' || st === 'tool_call') return null
                               if (st.startsWith('tool_start:') || st.startsWith('tool_done:') || st.startsWith('tool_end:')) return null
                               return (
-                                <div className="text-[11px] text-muted-foreground pt-1">
-                                  {st}
-                                </div>
+                              <div className="text-[11px] text-muted-foreground pt-1">
+                                {st}
+                              </div>
                               )
                             })()}
                             {Array.isArray(msg.meta?.artifacts) && msg.meta?.artifacts.length > 0 && (
@@ -3482,16 +3649,16 @@ function AppLoaded(): JSX.Element {
                               <img
                                 src={src}
                                 alt={name}
-                                className="h-14 w-14 rounded-lg border border-border/60 object-cover"
+                                className="h-14 w-14 rounded-2xl border border-black/6 object-cover"
                               />
                             ) : (
-                              <div className="h-14 max-w-[220px] rounded-lg border border-border/60 bg-muted/10 px-2 py-1.5 flex items-center">
+                              <div className="h-14 max-w-[220px] rounded-2xl border border-black/6 bg-black/[0.03] px-2 py-1.5 flex items-center">
                                 <div className="text-xs truncate">{name}</div>
                               </div>
                             )}
                             <button
                               type="button"
-                              className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-background border border-border/60 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                              className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-background border border-black/6 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
                               onClick={() => updateComposer({ attachments: composer.attachments.filter((x) => x.id !== a.id) })}
                             >
                               <X className="h-3 w-3" />
@@ -3519,11 +3686,11 @@ function AppLoaded(): JSX.Element {
                       void toggleRecording()
                     }}
                     leftControls={
-                      <div className="flex items-center gap-1 flex-1 min-w-0 overflow-hidden">
+                      <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden">
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-8 w-8 rounded-full shrink-0 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0"
+                          className="h-9 w-9 rounded-full shrink-0 text-muted-foreground hover:text-foreground hover:bg-black/5 focus-visible:ring-0 focus-visible:ring-offset-0"
                           onClick={() => void handlePickFiles()}
                         >
                           <Paperclip className="w-4 h-4" />
@@ -3534,7 +3701,7 @@ function AppLoaded(): JSX.Element {
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8 rounded-full shrink-0 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0"
+                              className="h-9 w-9 rounded-full shrink-0 text-muted-foreground hover:text-foreground hover:bg-black/5 focus-visible:ring-0 focus-visible:ring-offset-0"
                             >
                               <Wrench className="w-4 h-4" />
                             </Button>
@@ -3613,7 +3780,7 @@ function AppLoaded(): JSX.Element {
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8 rounded-full shrink-0 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0"
+                              className="h-9 w-9 rounded-full shrink-0 text-muted-foreground hover:text-foreground hover:bg-black/5 focus-visible:ring-0 focus-visible:ring-offset-0"
                             >
                               <Sparkles className="w-4 h-4" />
                             </Button>
@@ -3681,7 +3848,7 @@ function AppLoaded(): JSX.Element {
                           <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('model')} onMouseLeave={handleInputPanelMouseLeave}>
                             <Button
                               variant="ghost"
-                              className="h-8 rounded-full gap-2 px-3 text-xs font-normal text-primary hover:text-primary hover:bg-primary/15 shrink min-w-0 max-w-[200px] focus-visible:ring-0 focus-visible:ring-offset-0"
+                              className="h-9 rounded-full gap-2 px-3.5 text-xs font-normal text-foreground/82 hover:text-foreground hover:bg-black/5 shrink min-w-0 max-w-[220px] focus-visible:ring-0 focus-visible:ring-offset-0"
                             >
                               {effectiveProvider ? <MaskedIcon url={getProviderIconUrl(effectiveProvider)} className="w-3.5 h-3.5 shrink-0" /> : null}
                               <span className="truncate">{effectiveModel || 'Anima'}</span>
@@ -3742,7 +3909,7 @@ function AppLoaded(): JSX.Element {
 
                         {effectiveProvider?.type === 'deepseek' ? (
                           <select
-                            className="h-8 rounded-full border bg-background px-2 text-[11px] text-foreground"
+                            className="h-9 rounded-full border border-black/6 bg-white/70 px-3 text-[11px] text-foreground"
                             value={thinkingLevel}
                             onChange={(e) => updateComposer({ thinkingLevel: e.target.value as any })}
                             title={t.composer.thinking}
@@ -3761,7 +3928,7 @@ function AppLoaded(): JSX.Element {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-8 w-8 rounded-full transition-colors text-muted-foreground hover:text-primary hover:bg-primary/15 cursor-default focus-visible:ring-0 focus-visible:ring-offset-0"
+                                className="h-9 w-9 rounded-full transition-colors text-muted-foreground hover:text-foreground hover:bg-black/5 cursor-default focus-visible:ring-0 focus-visible:ring-offset-0"
                               >
                                 <CircularProgress value={usageStats.percentage} />
                               </Button>
@@ -3918,7 +4085,7 @@ function ChatComposer({
             size="icon"
             className={`h-8 w-8 rounded-full transition-all duration-200 focus-visible:ring-0 focus-visible:ring-offset-0 ${
               isRecording
-                ? 'text-blue-500 border-0 bg-transparent hover:bg-blue-500/10'
+                ? 'text-blue-500 border-0 bg-blue-500/8 hover:bg-blue-500/12'
                 : `text-primary hover:text-primary hover:bg-primary/15 ${isVoiceModelAvailable ? '' : 'opacity-50'}`
             }`}
             onClick={onToggleRecording}

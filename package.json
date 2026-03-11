@@ -21,7 +21,9 @@
     "icons:update": "node scripts/update_icons.mjs",
     "release": "node scripts/release.mjs",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:acp": "tsc -p tsconfig.acp-tests.json && node --test .tmp/acp-tests/tests/acpCore.test.js",
+    "verify:dist:mac": "node scripts/verify_dist_mac.mjs"
   },
   "build": {
     "appId": "com.anima.app",

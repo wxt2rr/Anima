@@ -43,6 +43,23 @@ declare global {
         kill: (id: string) => void
         onData: (id: string, callback: (data: string) => void) => () => void
       }
+      acp: {
+        createSession: (params: {
+          workspaceDir: string
+          threadId: string
+          approvalMode?: 'per_action' | 'per_project' | 'always'
+          agent: { id: string; name?: string; kind?: 'mock' | 'native_acp' | 'adapter' | 'acpx_bridge'; command?: string; args?: string[]; env?: Record<string, string>; framing?: 'auto' | 'jsonl' | 'content_length' }
+        }) => Promise<{ ok: boolean; sessionId?: string; error?: string }>
+        status: () => Promise<{ ok: boolean; sessions?: Array<{ id: string; key: string; workspaceDir: string; threadId: string; agent: any; agentInfo?: any; approvalMode: string; remoteSessionId?: string; running: boolean; pid?: number | null; uptimeMs: number; lastError?: string }>; error?: string }>
+        resetApprovals: (params?: { workspaceDir?: string }) => Promise<{ ok: boolean; error?: string }>
+        prompt: (params: { sessionId: string; prompt: string; runId?: string }) => Promise<{ ok: boolean; error?: string }>
+        cancel: (params: { sessionId: string; runId?: string }) => Promise<{ ok: boolean; error?: string }>
+        close: (params: { sessionId: string }) => Promise<{ ok: boolean; error?: string }>
+        onEvent: (
+          sessionId: string,
+          callback: (evt: { type: string; [k: string]: any }) => void
+        ) => () => void
+      }
       preview: {
         openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>
         onServerDetected: (callback: (payload: { url: string; terminalId?: string }) => void) => () => void
