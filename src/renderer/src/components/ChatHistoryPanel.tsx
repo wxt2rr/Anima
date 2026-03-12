@@ -225,7 +225,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
   return (
     <Card
       style={{ width: ui.sidebarCollapsed ? 0 : width }}
-      className={`flex flex-col no-drag transition-all duration-300 ease-in-out relative overflow-hidden rounded-xl bg-white ${
+      className={`flex flex-col no-drag transition-all duration-300 ease-in-out relative overflow-hidden rounded-xl bg-muted/30 ${
         ui.sidebarCollapsed ? 'opacity-0 p-0 m-0 border-0' : ''
       }`}
     >

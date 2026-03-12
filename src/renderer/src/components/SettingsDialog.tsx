@@ -1688,10 +1688,10 @@ export const SettingsWindow = memo(function SettingsWindow() {
   const onClose = () => window.close()
 
   return (
-    <div className="flex h-screen w-full bg-secondary/30 dark:bg-black/40 text-foreground transition-colors duration-300 overflow-hidden p-3 gap-3 font-sans relative">
+    <div className="flex h-screen w-full bg-white text-foreground transition-colors duration-300 overflow-hidden p-3 gap-3 font-sans relative">
       <div className="draggable absolute inset-x-0 top-0 h-3" />
       <UpdateDialog />
-      <div className="w-64 bg-background rounded-2xl shadow-sm flex flex-col overflow-hidden shrink-0">
+      <div className="w-64 bg-white rounded-2xl shadow-sm flex flex-col overflow-hidden shrink-0">
         <div className="h-[52px] flex items-center shrink-0 draggable select-none pl-[80px] border-b border-black/5 dark:border-white/5">
         </div>
 
@@ -1717,14 +1717,14 @@ export const SettingsWindow = memo(function SettingsWindow() {
         </nav>
       </div>
 
-      <div className="flex-1 bg-background rounded-2xl shadow-sm flex flex-col overflow-hidden min-w-0 border border-black/5 dark:border-white/5">
-        <div className="h-[52px] flex items-center justify-between px-6 shrink-0 draggable border-b border-black/5 dark:border-white/5 select-none bg-background/50 backdrop-blur-sm">
+      <div className="flex-1 bg-white rounded-2xl shadow-sm flex flex-col overflow-hidden min-w-0 border border-black/5 dark:border-white/5">
+        <div className="h-[52px] flex items-center justify-between px-6 shrink-0 draggable border-b border-black/5 dark:border-white/5 select-none bg-white">
           <h2 className="font-semibold text-lg cursor-default">
             {tabs.find((t) => t.id === activeTab)?.label}
           </h2>
         </div>
 
-        <div className="flex-1 overflow-hidden relative no-drag bg-background">
+        <div className="flex-1 overflow-hidden relative no-drag bg-white">
           {activeTab === 'providers' && <ProvidersSettings />}
           {activeTab === 'general' && <GeneralSettings />}
           {activeTab === 'chat' && <ChatSettings />}
@@ -1738,7 +1738,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           {activeTab === 'about' && <AboutSettings />}
         </div>
 
-        <div className="h-14 px-6 border-t border-black/5 dark:border-white/5 bg-secondary/10 flex justify-between items-center text-xs text-muted-foreground shrink-0">
+        <div className="h-14 px-6 border-t border-black/5 dark:border-white/5 bg-white flex justify-between items-center text-xs text-muted-foreground shrink-0">
           <span>{t.savedHint}</span>
           <div className="flex items-center gap-3">
             <Button

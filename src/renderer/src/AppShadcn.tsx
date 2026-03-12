@@ -3241,6 +3241,28 @@ function AppLoaded(): JSX.Element {
                                         : Array.isArray(resultObj?.items)
                                           ? resultObj.items
                                           : null
+                                    const traceLang =
+                                      settings.language === 'zh' ? 'zh' : settings.language === 'ja' ? 'ja' : 'en'
+                                    const traceI18n = {
+                                      searchResultSummary: (n: number) =>
+                                        traceLang === 'zh'
+                                          ? `已搜索到${n}条结果`
+                                          : traceLang === 'ja'
+                                            ? `${n}件の検索結果を取得`
+                                            : `Found ${n} search results`,
+                                      linkFallback: traceLang === 'zh' ? '链接' : traceLang === 'ja' ? 'リンク' : 'Link',
+                                      webpageLink: traceLang === 'zh' ? '网页链接' : traceLang === 'ja' ? 'ページリンク' : 'Page Link',
+                                      status: traceLang === 'zh' ? '状态' : traceLang === 'ja' ? '状態' : 'Status',
+                                      truncated: traceLang === 'zh' ? '已截断' : traceLang === 'ja' ? '切り詰め済み' : 'Truncated',
+                                      dir: traceLang === 'zh' ? '文件夹' : traceLang === 'ja' ? 'フォルダー' : 'Directory',
+                                      file: traceLang === 'zh' ? '文件' : traceLang === 'ja' ? 'ファイル' : 'File',
+                                      lineLabel: (n: number | string) =>
+                                        traceLang === 'zh' ? `第${n}行` : traceLang === 'ja' ? `${n}行目` : `line ${n}`,
+                                      matchedContent:
+                                        traceLang === 'zh' ? '匹配内容' : traceLang === 'ja' ? '一致内容' : 'Matched content',
+                                      readDone: traceLang === 'zh' ? '已读取' : traceLang === 'ja' ? '読み取り済み' : 'Read',
+                                      failed: traceLang === 'zh' ? '失败' : traceLang === 'ja' ? '失敗' : 'Failed'
+                                    }
                                     let resultSummary = ''
                                     let detailMarkdown = ''
 
@@ -3261,7 +3283,7 @@ function AppLoaded(): JSX.Element {
                                       icon = <Search className={iconClass} />
                                       entity = normalizeValue(argsObj.query)
                                       const count = Array.isArray(resultItems) ? resultItems.length : undefined
-                                      resultSummary = typeof count === 'number' ? `已搜索到${count}条结果` : ''
+                                      resultSummary = typeof count === 'number' ? traceI18n.searchResultSummary(count) : ''
                                     } else if (tr.name === 'WebFetch') {
                                       icon = <Eye className={iconClass} />
                                       entity = normalizeValue(argsObj.url)
@@ -3286,7 +3308,7 @@ function AppLoaded(): JSX.Element {
 
                                       const lines = resultItems
                                         .map((r: any, idx: number) => {
-                                          const title = String(r?.title || r?.url || '链接').trim()
+                                          const title = String(r?.title || r?.url || traceI18n.linkFallback).trim()
                                           const url = String(r?.url || '').trim()
                                           const snippet = String(r?.snippet || '').trim()
                                           const m = marker(idx + 1)
@@ -3300,12 +3322,12 @@ function AppLoaded(): JSX.Element {
                                     } else if (tr.name === 'WebFetch' && resultObj) {
                                       const lines: string[] = []
                                       const url = String(resultObj.finalUrl || resultObj.url || '').trim()
-                                      if (url) lines.push(`- [网页链接](${url})`)
+                                      if (url) lines.push(`- [${traceI18n.webpageLink}](${url})`)
                                       const statusParts: string[] = []
                                       if (resultObj.status) statusParts.push(`HTTP ${resultObj.status}`)
                                       if (resultObj.contentType) statusParts.push(String(resultObj.contentType))
-                                      if (resultObj.truncated) statusParts.push('已截断')
-                                      if (statusParts.length) lines.push(`- 状态：${statusParts.join(' · ')}`)
+                                      if (resultObj.truncated) statusParts.push(traceI18n.truncated)
+                                      if (statusParts.length) lines.push(`- ${traceI18n.status}: ${statusParts.join(' · ')}`)
                                       detailMarkdown = lines.join('\n')
                                     } else if (Array.isArray(resultObj?.paths)) {
                                       detailMarkdown = resultObj.paths.map((p: any) => `- ${String(p)}`).join('\n')
@@ -3313,7 +3335,7 @@ function AppLoaded(): JSX.Element {
                                       detailMarkdown = resultObj.entries
                                         .map((e: any) => {
                                           const name = String(e?.name || '')
-                                          const type = e?.type === 'dir' ? '文件夹' : e?.type === 'file' ? '文件' : ''
+                                          const type = e?.type === 'dir' ? traceI18n.dir : e?.type === 'file' ? traceI18n.file : ''
                                           return name ? `- ${name}${type ? `（${type}）` : ''}` : ''
                                         })
                                         .filter(Boolean)
@@ -3325,8 +3347,8 @@ function AppLoaded(): JSX.Element {
                                           const line = m?.line
                                           const text = String(m?.text || '').trim()
                                           if (!path && !text) return ''
-                                          if (path && line) return `- ${path} 第${line}行：${text || '匹配内容'}`
-                                          if (path) return `- ${path}：${text || '匹配内容'}`
+                                          if (path && line) return `- ${path} ${traceI18n.lineLabel(line)}: ${text || traceI18n.matchedContent}`
+                                          if (path) return `- ${path}: ${text || traceI18n.matchedContent}`
                                           return `- ${text}`
                                         })
                                         .filter(Boolean)
@@ -3338,10 +3360,10 @@ function AppLoaded(): JSX.Element {
                                         .map((p: string) => `- [${p}](${p})`)
                                         .join('\n')
                                     } else if (resultObj?.meta?.path) {
-                                      detailMarkdown = `- 已读取：${String(resultObj.meta.path)}`
+                                      detailMarkdown = `- ${traceI18n.readDone}: ${String(resultObj.meta.path)}`
                                     } else if (resultObj?.ok === false) {
-                                      const errMsg = String(resultObj?.error || '失败').trim()
-                                      detailMarkdown = errMsg ? `- 失败：${errMsg}` : ''
+                                      const errMsg = String(resultObj?.error || traceI18n.failed).trim()
+                                      detailMarkdown = errMsg ? `- ${traceI18n.failed}: ${errMsg}` : ''
                                     }
 
                                     const hasDetail =

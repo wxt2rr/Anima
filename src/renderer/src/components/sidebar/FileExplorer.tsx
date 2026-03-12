@@ -247,6 +247,10 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
   }
 
   const openFilePath = async (filePath: string) => {
+    const isMissingFileError = (err: unknown): boolean => {
+      const msg = String(err || '').toLowerCase()
+      return msg.includes('enoent') || msg.includes('no such file or directory')
+    }
     const normalized = String(filePath || '')
       .trim()
       .replace(/[?#].*$/, '');
@@ -268,6 +272,11 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
           content: res.content
         });
       } else {
+        if (isMissingFileError(res.error)) {
+          clearSelectedFile()
+          setLoadingFile(false)
+          return
+        }
         setSelectedFile({
           path: normalized,
           name,
@@ -291,6 +300,11 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
           selectedBlobUrlRef.current = blobUrl
           setSelectedFile({ path: normalized, name, type, blobUrl })
         } else {
+          if (isMissingFileError(res.error)) {
+            clearSelectedFile()
+            setLoadingFile(false)
+            return
+          }
           setSelectedFile({ path: normalized, name, type, error: res.error || 'Failed to read file' })
         }
       } else {
