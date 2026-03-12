@@ -1,10 +1,9 @@
 # Anima
+<img src="https://github.com/wxt2rr/Anima/blob/main/images/logo_padded.png" width="100">
 
 [中文](./README.zh-CN.md) | [English](./README.en.md)
 
 Anima 是一个面向 macOS 的 AI 桌面助手，采用 Electron + 本地 Python 后端架构。
-
-![Anima 封面图](https://github.com/wxt2rr/Anima/blob/main/images/logo_padded.png)
 
 ## 功能概览
 
