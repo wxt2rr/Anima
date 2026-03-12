@@ -4,7 +4,7 @@
 
 Anima 是一个面向 macOS 的 AI 桌面助手，采用 Electron + 本地 Python 后端架构。
 
-![Anima 封面图](https://your-image-host.example.com/anima/hero-zh.png)
+![Anima 封面图](https://github.com/wxt2rr/Anima/blob/main/images/logo_padded.png)
 
 ## 功能概览
 
@@ -18,7 +18,11 @@ Anima 是一个面向 macOS 的 AI 桌面助手，采用 Electron + 本地 Pytho
 - 内置 Python 后端随应用打包
 - GitHub Releases 自动更新
 
-![主界面截图占位](https://your-image-host.example.com/anima/screenshot-main-zh.png)
+![Main UI Placeholder](https://github.com/wxt2rr/Anima/blob/main/images/files.png)
+![Main UI Placeholder](https://github.com/wxt2rr/Anima/blob/main/images/git.png)
+![Main UI Placeholder](https://github.com/wxt2rr/Anima/blob/main/images/terminal.png)
+![Main UI Placeholder](https://github.com/wxt2rr/Anima/blob/main/images/web.png)
+![Main UI Placeholder](https://github.com/wxt2rr/Anima/blob/main/images/setting.png)
 
 ## 功能详解
 
@@ -127,7 +131,7 @@ npm run dist:mac
 
 项目已接入 `electron-updater` + `electron-builder`，发布到 GitHub Releases 后可自动拉取更新。
 
-![更新弹窗截图占位](https://your-image-host.example.com/anima/screenshot-updater-zh.png)
+![更新弹窗截图占位](https://github.com/wxt2rr/Anima/blob/main/images/updates.png)
 
 ## 发布流程
 
@@ -160,17 +164,6 @@ npm run release
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Anima.app
-```
-
-## 目录结构（简版）
-
-```text
-.
-├── src/              # Electron 前端与主进程代码
-├── pybackend/        # 本地 Python 后端
-├── skills/           # 内置技能
-├── build/            # 打包资源
-└── scripts/          # 发布/构建辅助脚本
 ```
 
 ## 许可证

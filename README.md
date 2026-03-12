@@ -4,7 +4,7 @@
 
 Anima is an AI desktop companion for macOS, built with Electron and a local Python backend.
 
-![Anima Hero](https://your-image-host.example.com/anima/hero-en.png)
+![Anima Hero](https://github.com/wxt2rr/Anima/blob/main/images/logo_padded.png)
 
 ## Highlights
 
@@ -18,7 +18,11 @@ Anima is an AI desktop companion for macOS, built with Electron and a local Pyth
 - Built-in Python backend bundled with the app
 - Auto update via GitHub Releases
 
-![Main UI Placeholder](https://your-image-host.example.com/anima/screenshot-main-en.png)
+![Main UI Placeholder](https://github.com/wxt2rr/Anima/blob/main/images/files.png)
+![Main UI Placeholder](https://github.com/wxt2rr/Anima/blob/main/images/git.png)
+![Main UI Placeholder](https://github.com/wxt2rr/Anima/blob/main/images/terminal.png)
+![Main UI Placeholder](https://github.com/wxt2rr/Anima/blob/main/images/web.png)
+![Main UI Placeholder](https://github.com/wxt2rr/Anima/blob/main/images/setting.png)
 
 ## Feature Details
 
@@ -127,7 +131,7 @@ Artifacts are generated under `dist/`:
 
 This project uses `electron-updater` + `electron-builder`. Once a release is published on GitHub Releases, the app can fetch and apply updates automatically.
 
-![Updater Placeholder](https://your-image-host.example.com/anima/screenshot-updater-en.png)
+![Updater Placeholder](https://github.com/wxt2rr/Anima/blob/main/images/updates.png)
 
 ## Release Flow
 
