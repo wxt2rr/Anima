@@ -1,10 +1,9 @@
-# Anima
+# Anima 
+<img src="https://github.com/wxt2rr/Anima/blob/main/images/logo_padded.png" width="100">
 
 [中文](./README.zh-CN.md) | [English](./README.en.md)
 
 Anima is an AI desktop companion for macOS, built with Electron and a local Python backend.
-
-![Anima Hero](https://github.com/wxt2rr/Anima/blob/main/images/logo_padded.png)
 
 ## Highlights
 
