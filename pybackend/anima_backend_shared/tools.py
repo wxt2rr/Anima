@@ -20,6 +20,110 @@ import urllib.request
 from .constants import MAX_FILE_BYTES_TOOL
 from .util import is_within, norm_abs, read_text_file, safe_env
 
+ANIMA_COMMAND_WHITELIST_ROOT = norm_abs("/Users/wangxt/.config/anima")
+
+DEFAULT_DANGEROUS_COMMANDS = [
+    "sudo",
+    "rm",
+    "shutdown",
+    "reboot",
+    "halt",
+    "poweroff",
+    "killall",
+    "pkill",
+    "kill",
+    "launchctl",
+    "systemsetup",
+    "networksetup",
+    "curl",
+    "wget",
+    "ssh",
+    "scp",
+    "sftp",
+]
+
+
+def _resolve_permission_mode(args: Dict[str, Any]) -> str:
+    mode = str(args.get("_animaPermissionMode") or "workspace_whitelist").strip()
+    return "full_access" if mode == "full_access" else "workspace_whitelist"
+
+
+def _is_path_allowed(target: str, workspace_dir: str, args: Dict[str, Any]) -> bool:
+    if _resolve_permission_mode(args) == "full_access":
+        return True
+    roots: List[str] = [ANIMA_COMMAND_WHITELIST_ROOT]
+    wdir = str(workspace_dir or "").strip()
+    if wdir:
+        roots.insert(0, norm_abs(wdir))
+    return any(is_within(root, target) for root in roots)
+
+
+def _safe_command_list(raw: Any, fallback: List[str]) -> List[str]:
+    if not isinstance(raw, list):
+        return list(fallback)
+    out: List[str] = []
+    for item in raw:
+        s = str(item or "").strip().lower()
+        if not s:
+            continue
+        out.append(s)
+    return out if out else list(fallback)
+
+
+def _safe_optional_command_list(raw: Any) -> List[str]:
+    if not isinstance(raw, list):
+        return []
+    out: List[str] = []
+    for item in raw:
+        s = str(item or "").strip().lower()
+        if not s:
+            continue
+        out.append(s)
+    return out
+
+
+def _matches_command_entry(command_text: str, entry: str) -> bool:
+    cmd = str(command_text or "").strip().lower()
+    e = str(entry or "").strip().lower()
+    if not cmd or not e:
+        return False
+    if cmd == e:
+        return True
+    if cmd.startswith(e + " "):
+        return True
+    first = cmd.split(None, 1)[0] if cmd.split() else ""
+    if first == e:
+        return True
+    return False
+
+
+def _matches_any_command(command_text: str, entries: List[str]) -> Optional[str]:
+    for entry in entries:
+        if _matches_command_entry(command_text, entry):
+            return entry
+    return None
+
+
+def _resolve_command_safety_settings() -> Tuple[List[str], List[str]]:
+    try:
+        from anima_backend_shared.settings import load_settings
+
+        settings_obj = load_settings()
+        settings = settings_obj.get("settings") if isinstance(settings_obj, dict) else {}
+        if not isinstance(settings, dict):
+            settings = {}
+        raw_blacklist = settings.get("commandBlacklist")
+        if raw_blacklist is None:
+            raw_blacklist = settings.get("commandBlacklistPatterns")
+        raw_whitelist = settings.get("commandWhitelist")
+        if raw_whitelist is None:
+            raw_whitelist = settings.get("commandWhitelistPatterns")
+        blacklist = _safe_command_list(raw_blacklist, DEFAULT_DANGEROUS_COMMANDS)
+        whitelist = _safe_optional_command_list(raw_whitelist)
+        return blacklist, whitelist
+    except Exception:
+        return list(DEFAULT_DANGEROUS_COMMANDS), []
+
 
 def _auth_header_value(api_key: str) -> str:
     s = str(api_key or "").strip()
@@ -588,7 +692,7 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         rel_path = str(args.get("path") or "").strip()
         if rel_path:
             target = norm_abs(str(Path(workspace_dir) / rel_path))
-            if not is_within(workspace_dir, target):
+            if not _is_path_allowed(target, workspace_dir, args):
                 raise RuntimeError("Path outside workspace")
             if not str(target).lower().endswith(".png"):
                 target = target + ".png"
@@ -678,7 +782,7 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         if str(spec.api_key or "").strip():
             headers["Authorization"] = _auth_header_value(spec.api_key)
 
-        res = _http_post_json(url=url, payload=payload, headers=headers, proxy_url=spec.proxy_url, timeout_s=120)
+        res = _http_post_json(url=url, payload=payload, headers=headers, proxy_url=spec.proxy_url, timeout_s=180)
         data = res.get("data")
         item = data[0] if isinstance(data, list) and data else None
         if not isinstance(item, dict):
@@ -692,7 +796,7 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
             except Exception:
                 raise RuntimeError("Failed to decode image bytes")
         elif isinstance(item.get("url"), str) and item.get("url").strip():
-            raw_bytes, ct = _download_public_url_bytes(url=str(item.get("url")), timeout_s=120, max_bytes=25 * 1024 * 1024)
+            raw_bytes, ct = _download_public_url_bytes(url=str(item.get("url")), timeout_s=180, max_bytes=25 * 1024 * 1024)
             if ct:
                 mime = ct
         else:
@@ -704,7 +808,7 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         rel_path = str(args.get("path") or "").strip()
         if rel_path:
             target = norm_abs(str(Path(workspace_dir) / rel_path))
-            if not is_within(workspace_dir, target):
+            if not _is_path_allowed(target, workspace_dir, args):
                 raise RuntimeError("Path outside workspace")
             if not str(target).lower().endswith(".png"):
                 target = target + ".png"
@@ -816,7 +920,7 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         rel_path = str(args.get("path") or "").strip()
         if rel_path:
             target = norm_abs(str(Path(workspace_dir) / rel_path))
-            if not is_within(workspace_dir, target):
+            if not _is_path_allowed(target, workspace_dir, args):
                 raise RuntimeError("Path outside workspace")
             if not re.search(r"\.(mp4|webm|mov)$", str(target).lower()):
                 target = target + ".mp4"
@@ -846,40 +950,39 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         if len(cmd) > 8000:
             raise RuntimeError("command too long")
 
-        blocked = [
-            r"(^|\s)sudo(\s|$)",
-            r"(^|\s)rm(\s|$)",
-            r"(^|\s)shutdown(\s|$)",
-            r"(^|\s)reboot(\s|$)",
-            r"(^|\s)halt(\s|$)",
-            r"(^|\s)poweroff(\s|$)",
-            r"(^|\s)killall(\s|$)",
-            r"(^|\s)pkill(\s|$)",
-            r"(^|\s)kill(\s|$)",
-            r"(^|\s)launchctl(\s|$)",
-            r"(^|\s)systemsetup(\s|$)",
-            r"(^|\s)networksetup(\s|$)",
-            r"(^|\s)curl(\s|$)",
-            r"(^|\s)wget(\s|$)",
-            r"(^|\s)ssh(\s|$)",
-            r"(^|\s)scp(\s|$)",
-            r"(^|\s)sftp(\s|$)",
-            r"(>|>>|<|<<)",
-        ]
+        permission_mode = _resolve_permission_mode(args)
         lowered = cmd.lower()
-        for pat in blocked:
-            if re.search(pat, lowered):
-                raise RuntimeError("Blocked command for safety")
+        if permission_mode != "full_access":
+            blocked, allowed = _resolve_command_safety_settings()
+            bypass = set()
+            raw_bypass = args.get("_animaDangerousCommandApprovals")
+            if isinstance(raw_bypass, list):
+                for item in raw_bypass:
+                    s = str(item or "").strip().lower()
+                    if s:
+                        bypass.add(s)
+            if lowered not in bypass:
+                hit_block = _matches_any_command(lowered, blocked)
+                hit_allow = _matches_any_command(lowered, allowed)
+                hit_redirect = bool(re.search(r"(>|>>|<|<<)", lowered))
+                if (hit_block and not hit_allow) or (hit_redirect and not hit_allow):
+                    payload = {
+                        "code": "dangerous_command_requires_approval",
+                        "command": cmd,
+                        "matchedPattern": hit_block or "redirect",
+                    }
+                    raise RuntimeError("ANIMA_DANGEROUS_COMMAND_APPROVAL:" + json.dumps(payload, ensure_ascii=False))
 
-        base_cwd = workspace_dir or str(Path.home())
+        base_cwd = norm_abs(workspace_dir) if workspace_dir else norm_abs(str(Path.home()))
         raw_cwd = str(args.get("cwd") or "").strip()
-        if raw_cwd:
-            target = norm_abs(str(Path(base_cwd) / raw_cwd)) if not os.path.isabs(raw_cwd) else norm_abs(raw_cwd)
-            if not is_within(base_cwd, target):
-                raise RuntimeError("cwd outside allowed directory")
+        target = norm_abs(str(Path(base_cwd) / raw_cwd)) if raw_cwd and not os.path.isabs(raw_cwd) else norm_abs(raw_cwd or base_cwd)
+        if permission_mode == "full_access":
             run_cwd = target
         else:
-            run_cwd = base_cwd
+            allowed_roots = [ANIMA_COMMAND_WHITELIST_ROOT, base_cwd]
+            if not any(is_within(root, target) for root in allowed_roots):
+                raise RuntimeError("cwd outside allowed directory")
+            run_cwd = target
 
         timeout_ms = int(args.get("timeoutMs") or 20000)
         timeout_ms = max(1000, min(timeout_ms, 120000))
@@ -921,7 +1024,7 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         path = str(args.get("path") or "").strip()
         max_entries = int(args.get("maxEntries") or 200)
         target = norm_abs(str(Path(workspace_dir) / path))
-        if not is_within(workspace_dir, target):
+        if not _is_path_allowed(target, workspace_dir, args):
             raise RuntimeError("Path outside workspace")
         p = Path(target)
         if not p.exists() or not p.is_dir():
@@ -939,7 +1042,7 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         path = str(args.get("path") or "").strip()
         max_bytes = int(args.get("maxBytes") or MAX_FILE_BYTES_TOOL)
         target = norm_abs(str(Path(workspace_dir) / path))
-        if not is_within(workspace_dir, target):
+        if not _is_path_allowed(target, workspace_dir, args):
             raise RuntimeError("Path outside workspace")
         text, meta = read_text_file(target, max_bytes=max_bytes)
         return json.dumps({"meta": meta, "text": text}, ensure_ascii=False)
@@ -952,7 +1055,7 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         if not isinstance(edits, list) or not edits:
             raise RuntimeError("edits is required")
         target = norm_abs(str(Path(workspace_dir) / path))
-        if not is_within(workspace_dir, target):
+        if not _is_path_allowed(target, workspace_dir, args):
             raise RuntimeError("Path outside workspace")
 
         old_content, meta = read_text_file(target, max_bytes=MAX_FILE_BYTES_TOOL)
@@ -1001,7 +1104,7 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         path = str(args.get("path") or "").strip()
         content = str(args.get("content") or "")
         target = norm_abs(str(Path(workspace_dir) / path))
-        if not is_within(workspace_dir, target):
+        if not _is_path_allowed(target, workspace_dir, args):
             raise RuntimeError("Path outside workspace")
 
         old_content = ""

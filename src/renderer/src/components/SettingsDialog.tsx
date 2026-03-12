@@ -1,7 +1,7 @@
 import { 
   Settings, MessageSquare, Database, Globe, 
   Cpu, Search, Plus, Trash2, CheckCircle2, XCircle, RefreshCw,
-  Copy, ChevronDown, ChevronRight, Eye, EyeOff, ExternalLink, Wand2, FolderOpen, Sparkles, Mic, Info, Keyboard
+  Copy, ChevronDown, ChevronRight, Eye, EyeOff, ExternalLink, Wand2, FolderOpen, Sparkles, Mic, Info, Keyboard, X
 } from 'lucide-react'
 import { resolveBackendBaseUrl, useStore, type Provider, type ProviderModel, type VoiceModelEntry } from '../store/useStore'
 import { THEMES, ThemeColor } from '../lib/themes'
@@ -3436,6 +3436,8 @@ function ChatSettings() {
     type: 'idle',
     text: ''
   })
+  const [commandBlacklistInput, setCommandBlacklistInput] = useState('')
+  const [commandWhitelistInput, setCommandWhitelistInput] = useState('')
   const t = (() => {
     const dict = {
       en: {
@@ -3452,6 +3454,12 @@ function ChatSettings() {
         creative: 'Creative',
         maxTokens: 'Max Tokens',
         maxTokensHint: 'Maximum length limit for single response (1-8192)',
+        commandBlacklist: 'Command Blacklist',
+        commandBlacklistHint: 'Input command entries (e.g. rm, curl). Under default permission, matched commands require manual approval.',
+        commandWhitelist: 'Command Whitelist',
+        commandWhitelistHint: 'Input command entries to bypass blacklist checks.',
+        addCommand: 'Add',
+        commandPlaceholder: 'Enter command',
         responseSettings: 'Response Settings',
         streamingResponse: 'Enable Streaming Response',
         streamingResponseHint: 'Show response in real-time as it generates.',
@@ -3534,6 +3542,12 @@ function ChatSettings() {
         creative: '创意',
         maxTokens: '最大令牌数',
         maxTokensHint: '单次回复的最大长度限制 (1-8192)',
+        commandBlacklist: '命令黑名单',
+        commandBlacklistHint: '输入命令词条（例如 rm、curl）。默认权限下命中会触发人工确认。',
+        commandWhitelist: '命令白名单',
+        commandWhitelistHint: '输入命令词条，可绕过黑名单检查。',
+        addCommand: '添加',
+        commandPlaceholder: '请输入命令',
         responseSettings: '响应设置',
         streamingResponse: '启用流式响应',
         streamingResponseHint: '启用后，AI 回复将实时显示，否则等待完整回复后一次性显示',
@@ -3616,6 +3630,12 @@ function ChatSettings() {
         creative: '創造的',
         maxTokens: '最大トークン数',
         maxTokensHint: '1回の応答の最大長制限 (1-8192)',
+        commandBlacklist: 'コマンドブラックリスト',
+        commandBlacklistHint: 'コマンド項目（例: rm、curl）を入力します。既定権限では一致時に手動承認が必要です。',
+        commandWhitelist: 'コマンドホワイトリスト',
+        commandWhitelistHint: 'ブラックリスト判定を回避するコマンド項目を入力します。',
+        addCommand: '追加',
+        commandPlaceholder: 'コマンドを入力',
         responseSettings: '応答設定',
         streamingResponse: 'ストリーミング応答を有効化',
         streamingResponseHint: '応答を生成しながらリアルタイムで表示します。',
@@ -3687,6 +3707,29 @@ function ChatSettings() {
     } as const
     return dict[settings.language as keyof typeof dict] || dict.en
   })()
+  const commandBlacklist = Array.isArray((settings as any).commandBlacklist) ? (settings as any).commandBlacklist.map((x: any) => String(x)) : []
+  const commandWhitelist = Array.isArray((settings as any).commandWhitelist) ? (settings as any).commandWhitelist.map((x: any) => String(x)) : []
+  const addCommandEntry = (kind: 'blacklist' | 'whitelist') => {
+    const raw = kind === 'blacklist' ? commandBlacklistInput : commandWhitelistInput
+    const value = String(raw || '').trim().toLowerCase()
+    if (!value) return
+    if (kind === 'blacklist') {
+      const next = Array.from(new Set([...(commandBlacklist || []), value]))
+      updateSettings({ commandBlacklist: next } as any)
+      setCommandBlacklistInput('')
+      return
+    }
+    const next = Array.from(new Set([...(commandWhitelist || []), value]))
+    updateSettings({ commandWhitelist: next } as any)
+    setCommandWhitelistInput('')
+  }
+  const removeCommandEntry = (kind: 'blacklist' | 'whitelist', entry: string) => {
+    if (kind === 'blacklist') {
+      updateSettings({ commandBlacklist: commandBlacklist.filter((x: string) => x !== entry) } as any)
+      return
+    }
+    updateSettings({ commandWhitelist: commandWhitelist.filter((x: string) => x !== entry) } as any)
+  }
   const imageProviderSelectValue = media.imageProviderId ? media.imageProviderId : '__chat__'
   const videoProviderSelectValue = media.videoProviderId ? media.videoProviderId : '__chat__'
 
@@ -3722,6 +3765,76 @@ function ChatSettings() {
                  onChange={(e) => updateSettings({ maxTokens: Number(e.target.value) })}
               />
               <p className="text-xs text-muted-foreground">{t.maxTokensHint}</p>
+           </div>
+
+           <div className="space-y-2">
+              <Label>{t.commandBlacklist}</Label>
+              <div className="flex items-center gap-2">
+                 <Input
+                    value={commandBlacklistInput}
+                    onChange={(e) => setCommandBlacklistInput(e.target.value)}
+                    placeholder={t.commandPlaceholder}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        addCommandEntry('blacklist')
+                      }
+                    }}
+                 />
+                 <Button type="button" variant="outline" size="icon" onClick={() => addCommandEntry('blacklist')}>
+                    <Plus className="w-4 h-4" />
+                 </Button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                 {commandBlacklist.map((item: string) => (
+                    <Badge key={`black-${item}`} variant="secondary" className="gap-1">
+                      {item}
+                      <button
+                        type="button"
+                        className="ml-1 text-muted-foreground hover:text-foreground"
+                        onClick={() => removeCommandEntry('blacklist', item)}
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </Badge>
+                 ))}
+              </div>
+              <p className="text-xs text-muted-foreground">{t.commandBlacklistHint}</p>
+           </div>
+
+           <div className="space-y-2">
+              <Label>{t.commandWhitelist}</Label>
+              <div className="flex items-center gap-2">
+                 <Input
+                    value={commandWhitelistInput}
+                    onChange={(e) => setCommandWhitelistInput(e.target.value)}
+                    placeholder={t.commandPlaceholder}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        addCommandEntry('whitelist')
+                      }
+                    }}
+                 />
+                 <Button type="button" variant="outline" size="icon" onClick={() => addCommandEntry('whitelist')}>
+                    <Plus className="w-4 h-4" />
+                 </Button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                 {commandWhitelist.map((item: string) => (
+                    <Badge key={`white-${item}`} variant="secondary" className="gap-1">
+                      {item}
+                      <button
+                        type="button"
+                        className="ml-1 text-muted-foreground hover:text-foreground"
+                        onClick={() => removeCommandEntry('whitelist', item)}
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </Badge>
+                 ))}
+              </div>
+              <p className="text-xs text-muted-foreground">{t.commandWhitelistHint}</p>
            </div>
         </div>
       </Card>

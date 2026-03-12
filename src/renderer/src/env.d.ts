@@ -47,6 +47,7 @@ declare global {
         createSession: (params: {
           workspaceDir: string
           threadId: string
+          permissionMode?: 'workspace_whitelist' | 'full_access'
           approvalMode?: 'per_action' | 'per_project' | 'always'
           agent: { id: string; name?: string; kind?: 'mock' | 'native_acp' | 'adapter' | 'acpx_bridge'; command?: string; args?: string[]; env?: Record<string, string>; framing?: 'auto' | 'jsonl' | 'content_length' }
         }) => Promise<{ ok: boolean; sessionId?: string; error?: string }>

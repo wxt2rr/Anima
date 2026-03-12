@@ -1099,6 +1099,7 @@ def handle_post_chat(handler: Any) -> None:
                         fn_args,
                         tool_call_id=tc_id,
                         workspace_dir=workspace_dir,
+                        composer=composer,
                         mcp_index=mcp_index,
                         trace_id=trace_id,
                     )

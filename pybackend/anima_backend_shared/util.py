@@ -1,8 +1,9 @@
 import json
 import os
+import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 def now_ms() -> int:
@@ -216,9 +217,53 @@ def is_within(base: str, target: str) -> bool:
         return False
 
 
+_wechat_env_cache: Optional[Dict[str, str]] = None
+
+
+def _load_wechat_env_from_shell() -> Dict[str, str]:
+    keys = ("WECHAT_APPID", "WECHAT_APPSECRET")
+    lines: List[str] = []
+    for k in keys:
+        lines.append(f'printf "{k}=%s\\n" "${k}"')
+    script = "; ".join(lines)
+    try:
+        p = subprocess.run(
+            ["/bin/zsh", "-i", "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=2.5,
+            env={**os.environ},
+        )
+    except Exception:
+        return {}
+    if p.returncode != 0:
+        return {}
+    out: Dict[str, str] = {}
+    for line in (p.stdout or "").splitlines():
+        if "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k = str(k).strip()
+        v = str(v).strip()
+        if k in keys and v:
+            out[k] = v
+    return out
+
+
 def safe_env() -> Dict[str, str]:
-    return {
+    global _wechat_env_cache
+    env = {
         "HOME": str(Path.home()),
         "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         "LANG": os.environ.get("LANG") or "en_US.UTF-8",
     }
+    # 后端进程通常不会读取交互式 shell 配置；这里兜底读取一次 zsh -i 环境并缓存。
+    if _wechat_env_cache is None:
+        _wechat_env_cache = _load_wechat_env_from_shell()
+    for key in ("WECHAT_APPID", "WECHAT_APPSECRET"):
+        val = os.environ.get(key)
+        if (val is None or not str(val).strip()) and _wechat_env_cache:
+            val = _wechat_env_cache.get(key)
+        if val is not None and str(val).strip():
+            env[key] = val
+    return env

@@ -222,6 +222,7 @@ export interface AcpAgent {
 }
 
 export type ChatDefaultMode = 'auto' | 'all' | 'disabled'
+export type ComposerPermissionMode = 'workspace_whitelist' | 'full_access'
 
 export type AttachmentMode = 'inline' | 'tool'
 
@@ -261,6 +262,8 @@ export interface Settings {
   projects?: Project[]
   defaultToolMode: ChatDefaultMode
   toolsEnabledIds: string[]
+  commandBlacklist?: string[]
+  commandWhitelist?: string[]
   mcpEnabledServerIds: string[]
   defaultSkillMode: ChatDefaultMode
   skillsEnabledIds: string[]
@@ -354,6 +357,7 @@ interface AppState {
       attachments: ComposerAttachment[]
       workspaceDir: string
       toolMode: ChatDefaultMode
+      permissionMode: ComposerPermissionMode
       enabledToolIds: string[]
       enabledMcpServerIds: string[]
       skillMode: ChatDefaultMode
@@ -524,6 +528,7 @@ const createDefaultComposer = (): AppState['ui']['composer'] => ({
   attachments: [],
   workspaceDir: '',
   toolMode: 'auto',
+  permissionMode: 'workspace_whitelist',
   enabledToolIds: [],
   enabledMcpServerIds: [],
   skillMode: 'auto',
@@ -533,6 +538,9 @@ const createDefaultComposer = (): AppState['ui']['composer'] => ({
   contextWindowOverride: 0,
   thinkingLevel: 'default'
 })
+
+const normalizeComposerPermissionMode = (value: unknown): ComposerPermissionMode =>
+  value === 'full_access' ? 'full_access' : 'workspace_whitelist'
 
 const createDefaultUi = (): AppState['ui'] => ({
   sidebarCollapsed: false,
@@ -1305,6 +1313,14 @@ export const useStore = create<AppState>()(
           if (rawSettings && typeof rawSettings === 'object' && !Array.isArray(rawSettings.projects)) {
             rawSettings.projects = []
           }
+          if (rawSettings && typeof rawSettings === 'object') {
+            if (!Array.isArray(rawSettings.commandBlacklist)) {
+              rawSettings.commandBlacklist = Array.isArray(rawSettings.commandBlacklistPatterns) ? rawSettings.commandBlacklistPatterns : []
+            }
+            if (!Array.isArray(rawSettings.commandWhitelist)) {
+              rawSettings.commandWhitelist = Array.isArray(rawSettings.commandWhitelistPatterns) ? rawSettings.commandWhitelistPatterns : []
+            }
+          }
           if (!rawSettings || typeof rawSettings !== 'object') throw new Error('Invalid settings payload')
           if (!Array.isArray(rawProviders)) throw new Error('Invalid providers payload')
           const mergedProviders = mergeLegacyAcpProviders(rawProviders as Provider[], rawSettings)
@@ -1712,6 +1728,7 @@ export const useStore = create<AppState>()(
           ...createDefaultComposer(),
           ...(nextUi.composer && typeof nextUi.composer === 'object' ? nextUi.composer : {})
         }
+        nextUi.composer.permissionMode = normalizeComposerPermissionMode(nextUi.composer.permissionMode)
         const activeChatId = typeof p.activeChatId === 'string' ? p.activeChatId : currentState.activeChatId
         return {
           ...currentState,
@@ -1727,6 +1744,7 @@ export const useStore = create<AppState>()(
           ...createDefaultComposer(),
           ...(ui.composer && typeof ui.composer === 'object' ? ui.composer : {})
         }
+        ui.composer.permissionMode = normalizeComposerPermissionMode(ui.composer.permissionMode)
         const activeChatId = typeof persisted.activeChatId === 'string' ? persisted.activeChatId : ''
         return {
           activeChatId,

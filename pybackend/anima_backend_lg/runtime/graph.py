@@ -14,6 +14,68 @@ from ..tools.executor import execute_tool, make_tool_message, select_tools
 from .sanitize import sanitize_history_messages
 from .types import RunState
 
+_PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
+_DEFAULT_SYSTEM_BASE_PROMPT = "你是Anima，由小涛创建的AI管家"
+_DEFAULT_SKILLS_PROMPT_TEMPLATE = """## Skills System
+
+You have access to a skills library that provides specialized capabilities and domain knowledge.
+
+**Available Skills:**
+
+{{SKILLS_LIST}}
+
+**How to Use Skills (Progressive Disclosure):**
+
+Skills follow a **progressive disclosure** pattern - you see their name and description above, but only read full instructions when needed:
+
+1. **Recognize when a skill applies**: Check if the user's task matches a skill's description
+2. **Read the skill's full instructions**: Use the path shown in the skill list above
+3. **Follow the skill's instructions**: SKILL.md contains step-by-step workflows, best practices, and examples
+4. **Access supporting files**: Skills may include helper scripts, configs, or reference docs - use absolute paths
+
+**When to Use Skills:**
+
+- User's request matches a skill's domain
+- You need specialized knowledge or structured workflows
+- A skill provides proven patterns for complex tasks
+
+**Executing Skill Scripts:**
+Skills may contain Python scripts or other executable files. Always use absolute paths from the skill list.
+
+**Example Workflow:**
+
+User: "Can you research the latest developments in quantum computing?"
+
+1. Check available skills and identify a matching research skill
+2. Read the skill using the path shown in the skill list
+3. Follow the skill workflow (search -> organize -> synthesize)
+4. Use any helper scripts with absolute paths
+
+Remember: Skills make you more capable and consistent. When in doubt, check if a skill exists for the task!"""
+_DEFAULT_TELEGRAM_TOOL_GUIDANCE = (
+    "工具使用规则：当需要在本机执行命令、读写工作区文件、搜索内容或联网获取信息时，必须通过工具完成。"
+    "不要只输出命令/脚本代码块并声称已执行；应先调用工具获得结果，再基于结果回复。"
+)
+
+
+def _load_prompt_text(file_name: str, fallback: str) -> str:
+    key = str(file_name or "").strip()
+    if not key:
+        return str(fallback or "")
+    try:
+        p = _PROMPTS_DIR / key
+        txt = p.read_text(encoding="utf-8").strip()
+        if txt:
+            return txt
+    except Exception:
+        pass
+    return str(fallback or "").strip()
+
+
+def _render_skills_prompt(skills_list_markdown: str) -> str:
+    template = _load_prompt_text("skills.md", _DEFAULT_SKILLS_PROMPT_TEMPLATE)
+    return template.replace("{{SKILLS_LIST}}", str(skills_list_markdown or "").strip())
+
 
 def _parse_tool_args(arg_text: Any) -> Dict[str, Any]:
     if isinstance(arg_text, dict):
@@ -647,6 +709,7 @@ def build_run_graph(provider: Any) -> Any:
                 fn_args,
                 tool_call_id=tc_id,
                 workspace_dir=workspace_dir,
+                composer=composer,
                 mcp_index=mcp_index,
                 trace_id=trace_id,
             )
@@ -800,7 +863,7 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
         s = {}
     composer = composer if isinstance(composer, dict) else {}
 
-    active_system_prompt = "你是Anima，由小涛创建的AI管家"
+    active_system_prompt = _load_prompt_text("system_base.md", _DEFAULT_SYSTEM_BASE_PROMPT)
 
     openclaw_block = _openclaw_workspace_prompt(settings_obj, composer)
     if openclaw_block:
@@ -885,19 +948,18 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
                     name = str(item.get("name") or item.get("id") or "").strip()
                     sid = str(item.get("id") or "").strip()
                     desc = str(item.get("description") or "").strip()
+                    path = str(item.get("file") or "").strip()
                     if not sid:
                         continue
+                    line = f"- {name} ({sid})"
                     if desc:
-                        lines.append(f"- {name} ({sid}): {desc}")
-                    else:
-                        lines.append(f"- {name} ({sid})")
+                        line += f": {desc}"
+                    if path:
+                        line += f" (file: {path})"
+                    lines.append(line)
                 if lines:
                     body = "\n".join(lines)
-                    skills_block = (
-                        "Skills:\n"
-                        "The following skills are available (metadata only). Use the load_skill tool with the skill id to load full instructions when needed.\n\n"
-                        + body
-                    )
+                    skills_block = _render_skills_prompt(body)
         except Exception:
             skills_block = ""
 
@@ -907,10 +969,7 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
 
     tool_guidance = ""
     if str(composer.get("channel") or "").strip() == "telegram":
-        tool_guidance = (
-            "工具使用规则：当需要在本机执行命令、读写工作区文件、搜索内容或联网获取信息时，必须通过工具完成。"
-            "不要只输出命令/脚本代码块并声称已执行；应先调用工具获得结果，再基于结果回复。"
-        )
+        tool_guidance = _load_prompt_text("tool_telegram.md", _DEFAULT_TELEGRAM_TOOL_GUIDANCE)
 
     parts = [active_system_prompt, history_block, memory_block, skills_block, plugins_block, tool_guidance, env_block, date_block]
     return "\n\n".join([p for p in parts if str(p).strip()])

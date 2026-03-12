@@ -135,6 +135,7 @@ def execute_tool(
     *,
     tool_call_id: str,
     workspace_dir: str,
+    composer: Optional[Dict[str, Any]] = None,
     mcp_index: Dict[str, Dict[str, Any]],
     trace_id: Optional[str] = None,
 ) -> Tuple[str, Dict[str, Any]]:
@@ -154,7 +155,13 @@ def execute_tool(
         if tool_name.startswith("mcp__"):
             out = execute_mcp_tool(tool_name, args, mcp_index)
         else:
-            out = execute_builtin_tool(tool_name, args, workspace_dir=workspace_dir)
+            mode = str(((composer or {}).get("permissionMode") or "workspace_whitelist")).strip() or "workspace_whitelist"
+            tool_args = dict(args or {})
+            tool_args["_animaPermissionMode"] = mode
+            approvals = (composer or {}).get("dangerousCommandApprovals")
+            if isinstance(approvals, list):
+                tool_args["_animaDangerousCommandApprovals"] = [str(x) for x in approvals if str(x).strip()]
+            out = execute_builtin_tool(tool_name, tool_args, workspace_dir=workspace_dir)
         tool_content = out
         ended_at = now_ms()
         trace.update(

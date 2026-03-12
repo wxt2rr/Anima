@@ -2187,5 +2187,78 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(str((out or {}).get("final_content") or ""), "ok")
 
+    def test_bash_full_access_allows_blocked_patterns(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        class _Proc:
+            returncode = 0
+            stdout = "ok\n"
+            stderr = ""
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(shared_tools.subprocess, "run", return_value=_Proc()) as p_run:
+                out = json.loads(
+                    shared_tools.execute_builtin_tool(
+                        "bash",
+                        {
+                            "command": "rm -rf ./tmpdir",
+                            "_animaPermissionMode": "full_access",
+                        },
+                        workspace_dir=td,
+                    )
+                )
+                self.assertTrue(bool(out.get("ok")))
+                self.assertEqual(int(out.get("exitCode")) if out.get("exitCode") is not None else -1, 0)
+                self.assertTrue(p_run.called)
+
+    def test_bash_default_mode_requires_approval_for_blacklist(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        cmd = "rm -rf ./tmpdir"
+        with tempfile.TemporaryDirectory() as td:
+            with patch(
+                "anima_backend_shared.settings.load_settings",
+                return_value={
+                    "settings": {
+                        "commandBlacklist": ["rm"],
+                        "commandWhitelist": [],
+                    }
+                },
+            ):
+                with self.assertRaises(RuntimeError) as ex:
+                    shared_tools.execute_builtin_tool(
+                        "bash",
+                        {
+                            "command": cmd,
+                            "_animaPermissionMode": "workspace_whitelist",
+                        },
+                        workspace_dir=td,
+                    )
+                msg = str(ex.exception)
+                self.assertTrue(msg.startswith("ANIMA_DANGEROUS_COMMAND_APPROVAL:"))
+                payload = json.loads(msg.split(":", 1)[1])
+                self.assertEqual(str(payload.get("command") or ""), cmd)
+
+                class _Proc:
+                    returncode = 0
+                    stdout = "ok\n"
+                    stderr = ""
+
+                with patch.object(shared_tools.subprocess, "run", return_value=_Proc()) as p_run:
+                    out = json.loads(
+                        shared_tools.execute_builtin_tool(
+                            "bash",
+                            {
+                                "command": cmd,
+                                "_animaPermissionMode": "workspace_whitelist",
+                                "_animaDangerousCommandApprovals": [cmd],
+                            },
+                            workspace_dir=td,
+                        )
+                    )
+                    self.assertTrue(bool(out.get("ok")))
+                    self.assertEqual(int(out.get("exitCode")) if out.get("exitCode") is not None else -1, 0)
+                    self.assertTrue(p_run.called)
+
 if __name__ == "__main__":
     unittest.main()

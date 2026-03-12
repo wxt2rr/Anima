@@ -21,6 +21,9 @@ import {
   type SessionKey
 } from './acpCore';
 
+type AcpPermissionMode = 'workspace_whitelist' | 'full_access';
+const ACP_WHITELIST_ROOT = normAbs('/Users/wangxt/.config/anima');
+
 class JsonRpcPeer {
   private nextId = 1;
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
@@ -222,6 +225,7 @@ type AcpSession = {
   threadId: string;
   agent: AcpAgentConfig;
   approvalMode: 'per_action' | 'per_project' | 'always';
+  permissionMode: AcpPermissionMode;
   approvedActions: Map<string, boolean>;
   webContentsId: number;
   remoteSessionId?: string;
@@ -319,7 +323,11 @@ async function ensureApproved(session: AcpSession, action: string, detail: strin
   const win = wc ? BrowserWindow.fromWebContents(wc) : null;
   const title = 'Anima Permission';
   const allowLabel = mode === 'per_project' ? 'Allow for project' : 'Allow once';
-  const message = `Allow agent action?\n\nAction:\n${action}\n\nTarget:\n${detail}\n\nWorkspace:\n${session.workspaceDir}\n\nOnly paths under the workspace are permitted.`;
+  const scopeNote =
+    session.permissionMode === 'full_access'
+      ? 'Current mode: full access (no path restrictions).'
+      : `Allowed paths:\n- ${session.workspaceDir}\n- ${ACP_WHITELIST_ROOT}`;
+  const message = `Allow agent action?\n\nAction:\n${action}\n\nTarget:\n${detail}\n\nWorkspace:\n${session.workspaceDir}\n\n${scopeNote}`;
   const opts: MessageBoxOptions = {
     type: 'question',
     buttons: ['Deny', allowLabel],
@@ -338,13 +346,18 @@ async function ensureApproved(session: AcpSession, action: string, detail: strin
   }
 }
 
+function isSessionPathAllowed(session: AcpSession, p: string): boolean {
+  if (session.permissionMode === 'full_access') return true;
+  return isWithin(session.workspaceDir, p) || isWithin(ACP_WHITELIST_ROOT, p);
+}
+
 async function handleClientToolRequest(session: AcpSession, method: string, params: any): Promise<any> {
   const workspaceDir = session.workspaceDir;
 
   if (method === 'fs/readFile') {
     const p = resolvePathInWorkspace(workspaceDir, String(params?.path || ''));
     if (!p) throw new Error('path is required');
-    if (!isWithin(workspaceDir, p)) throw new Error('Path outside workspace');
+    if (!isSessionPathAllowed(session, p)) throw new Error('Path outside workspace');
     await ensureApproved(session, 'fs/readFile', p);
     const content = await fs.readFile(p, 'utf8');
     return { ok: true, content };
@@ -353,7 +366,7 @@ async function handleClientToolRequest(session: AcpSession, method: string, para
   if (method === 'fs/writeFile') {
     const p = resolvePathInWorkspace(workspaceDir, String(params?.path || ''));
     if (!p) throw new Error('path is required');
-    if (!isWithin(workspaceDir, p)) throw new Error('Path outside workspace');
+    if (!isSessionPathAllowed(session, p)) throw new Error('Path outside workspace');
     await ensureApproved(session, 'fs/writeFile', p);
     const content = String(params?.content ?? '');
     await fs.mkdir(path.dirname(p), { recursive: true });
@@ -364,7 +377,7 @@ async function handleClientToolRequest(session: AcpSession, method: string, para
   if (method === 'fs/readDir') {
     const p = resolvePathInWorkspace(workspaceDir, String(params?.path || ''));
     if (!p) throw new Error('path is required');
-    if (!isWithin(workspaceDir, p)) throw new Error('Path outside workspace');
+    if (!isSessionPathAllowed(session, p)) throw new Error('Path outside workspace');
     await ensureApproved(session, 'fs/readDir', p);
     const dirents = await fs.readdir(p, { withFileTypes: true });
     return {
@@ -388,7 +401,7 @@ async function handleClientToolRequest(session: AcpSession, method: string, para
     const args = Array.isArray(params?.args) ? params.args.map((x: any) => String(x)) : [];
     const cwdRaw = String(params?.cwd || '').trim();
     const cwd = cwdRaw ? resolvePathInWorkspace(workspaceDir, cwdRaw) : workspaceDir;
-    if (!isWithin(workspaceDir, cwd)) throw new Error('Cwd outside workspace');
+    if (!isSessionPathAllowed(session, cwd)) throw new Error('Cwd outside workspace');
     await ensureApproved(session, 'terminal/run', `${cmd} ${args.join(' ')}`.trim());
     const timeoutMs = typeof params?.timeoutMs === 'number' ? params.timeoutMs : 120_000;
 
@@ -509,12 +522,22 @@ async function ensureSpawned(session: AcpSession) {
 export function registerAcpService() {
   ipcMain.handle(
     'acp:session:create',
-    async (event, params: { workspaceDir: string; threadId: string; agent: AcpAgentConfig; approvalMode?: 'per_action' | 'per_project' | 'always' }) => {
+    async (
+      event,
+      params: {
+        workspaceDir: string;
+        threadId: string;
+        agent: AcpAgentConfig;
+        approvalMode?: 'per_action' | 'per_project' | 'always';
+        permissionMode?: AcpPermissionMode;
+      }
+    ) => {
       try {
         const workspaceDir = normAbs(String(params?.workspaceDir || '').trim());
         const threadId = String(params?.threadId || '').trim();
         const agent = params?.agent;
         const agentId = String(agent?.id || '').trim();
+        const permissionMode = params?.permissionMode === 'full_access' ? 'full_access' : 'workspace_whitelist';
         if (!workspaceDir) return { ok: false, error: 'workspaceDir is required' };
         if (!threadId) return { ok: false, error: 'threadId is required' };
         if (!agentId) return { ok: false, error: 'agent.id is required' };
@@ -523,7 +546,10 @@ export function registerAcpService() {
         const existingId = sessionIdByKey.get(key);
         if (existingId) {
           const existing = sessionsById.get(existingId);
-          if (existing) return { ok: true, sessionId: existing.id };
+          if (existing) {
+            existing.permissionMode = permissionMode;
+            return { ok: true, sessionId: existing.id };
+          }
           sessionIdByKey.delete(key);
         }
 
@@ -535,6 +561,7 @@ export function registerAcpService() {
           threadId,
           agent: { ...agent, id: agentId },
           approvalMode: (params?.approvalMode || 'per_action') as any,
+          permissionMode,
           approvedActions: new Map<string, boolean>(),
           webContentsId: event.sender.id,
           createdAt: Date.now()

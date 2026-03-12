@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, useCallback, type ReactNode } from 'react'
-import { Send, StopCircle, Paperclip, PanelLeftOpen, MessageSquarePlus, Wrench, Sparkles, X, ChevronDown, Terminal, Mic, Folder, Search, PenLine, Brain, Compass, Eye } from 'lucide-react'
+import { Send, StopCircle, Paperclip, PanelLeftOpen, MessageSquarePlus, Wrench, Sparkles, X, ChevronDown, Terminal, Mic, Folder, Search, PenLine, Brain, Compass, Eye, Check } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -52,6 +52,34 @@ type SkillEntry = {
   isValid?: boolean
   errors?: string[]
   updatedAt?: number
+}
+
+type DangerousCommandApprovalPayload = {
+  code: string
+  command: string
+  matchedPattern?: string
+}
+
+const DANGEROUS_COMMAND_APPROVAL_PREFIX = 'ANIMA_DANGEROUS_COMMAND_APPROVAL:'
+
+function parseDangerousCommandApproval(input: unknown): DangerousCommandApprovalPayload | null {
+  const text = String(input || '').trim()
+  if (!text.startsWith(DANGEROUS_COMMAND_APPROVAL_PREFIX)) return null
+  const payloadText = text.slice(DANGEROUS_COMMAND_APPROVAL_PREFIX.length).trim()
+  if (!payloadText) return null
+  try {
+    const obj = JSON.parse(payloadText)
+    if (!obj || typeof obj !== 'object') return null
+    const command = String((obj as any).command || '').trim()
+    if (!command) return null
+    return {
+      code: String((obj as any).code || '').trim() || 'dangerous_command_requires_approval',
+      command,
+      matchedPattern: String((obj as any).matchedPattern || '').trim() || undefined
+    }
+  } catch {
+    return null
+  }
 }
 
 function CircularProgress({ value }: { value: number }) {
@@ -268,7 +296,7 @@ function AppLoaded(): JSX.Element {
   const reduceMotion = useReducedMotion()
 
   // Use a single state for mutually exclusive popovers
-  const [popoverPanel, setPopoverPanel] = useState<'' | 'attachments' | 'tools' | 'skills' | 'model'>('')
+  const [popoverPanel, setPopoverPanel] = useState<'' | 'attachments' | 'tools' | 'skills' | 'model' | 'thinking' | 'permission'>('')
   
   const [traceDetailOpenByKey, setTraceDetailOpenByKey] = useState<Record<string, boolean>>({})
   const [reasoningOpenByMsgId, setReasoningOpenByMsgId] = useState<Record<string, boolean>>({})
@@ -308,6 +336,7 @@ function AppLoaded(): JSX.Element {
   const userScrollLockedRef = useRef(false)
   const programmaticScrollRef = useRef(false)
   const programmaticScrollTimerRef = useRef<number | null>(null)
+  const userScrollIntentUntilRef = useRef(0)
   const lastScrollTopRef = useRef(0)
   const lastMessageKeyRef = useRef('')
   const lastSeenMessageKeyRef = useRef('')
@@ -358,9 +387,13 @@ function AppLoaded(): JSX.Element {
   const [summaryLoading, setSummaryLoading] = useState(false)
   const [summaryText, setSummaryText] = useState('')
   const [summaryUpdatedAt, setSummaryUpdatedAt] = useState<number | null>(null)
+  const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false)
+  const [dangerousCommandConfirmOpen, setDangerousCommandConfirmOpen] = useState(false)
+  const [dangerousCommandConfirmText, setDangerousCommandConfirmText] = useState('')
   const [chatIsAtBottom, setChatIsAtBottom] = useState(true)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const [virtualApi, setVirtualApi] = useState<VirtualListApi | null>(null)
+  const dangerousCommandConfirmResolverRef = useRef<((ok: boolean) => void) | null>(null)
 
   const activeChat = useMemo(() => chats.find((c) => c.id === activeChatId), [chats, activeChatId])
   const persistedCompression = useMemo(() => ((activeChat as any)?.meta?.compression as any) || null, [activeChat])
@@ -1326,7 +1359,7 @@ function AppLoaded(): JSX.Element {
     }
   }
 
-  const buildComposerPayload = () => {
+  const buildComposerPayload = (opts?: { dangerousCommandApprovals?: string[] }) => {
     const workspaceDir = resolveWorkspaceDir()
     const enabledToolIds = composer.enabledToolIds.length ? composer.enabledToolIds : settings.toolsEnabledIds
     const enabledMcpServerIds = composer.enabledMcpServerIds.length ? composer.enabledMcpServerIds : settings.mcpEnabledServerIds
@@ -1336,11 +1369,16 @@ function AppLoaded(): JSX.Element {
       (m: any) => typeof m !== 'string' && m.id === effectiveModel
     ) as ProviderModel | undefined
 
+    const dangerousCommandApprovals = Array.isArray(opts?.dangerousCommandApprovals)
+      ? opts?.dangerousCommandApprovals.filter((x) => String(x || '').trim()).map((x) => String(x).trim())
+      : []
+
     return {
       attachments: composer.attachments.map((a) => ({ path: a.path, mode: a.mode })),
       chatId: String(useStore.getState().activeChatId || activeChatId || '').trim(),
       workspaceDir,
       toolMode: composer.toolMode || settings.defaultToolMode,
+      permissionMode: composer.permissionMode || 'workspace_whitelist',
       enabledToolIds,
       enabledMcpServerIds,
       skillMode: composer.skillMode || settings.defaultSkillMode,
@@ -1350,7 +1388,8 @@ function AppLoaded(): JSX.Element {
       contextWindowOverride: composer.contextWindowOverride || selectedModelConfig?.config?.contextWindow || 0,
       maxOutputTokens: selectedModelConfig?.config?.maxOutputTokens,
       jsonConfig: selectedModelConfig?.config?.jsonConfig,
-      thinkingLevel
+      thinkingLevel,
+      dangerousCommandApprovals
     }
   }
 
@@ -1413,6 +1452,23 @@ function AppLoaded(): JSX.Element {
     }
   }
 
+  const permissionMode = composer.permissionMode || 'workspace_whitelist'
+
+  const handlePermissionModeChange = (nextMode: 'workspace_whitelist' | 'full_access') => {
+    if (nextMode === 'full_access' && permissionMode !== 'full_access') {
+      setFullAccessConfirmOpen(true)
+      return
+    }
+    updateComposer({ permissionMode: nextMode })
+  }
+
+  const confirmDangerousCommand = (command: string): Promise<boolean> =>
+    new Promise((resolve) => {
+      dangerousCommandConfirmResolverRef.current = resolve
+      setDangerousCommandConfirmText(command)
+      setDangerousCommandConfirmOpen(true)
+    })
+
   const t = (() => {
     const dict = {
       en: {
@@ -1438,6 +1494,18 @@ function AppLoaded(): JSX.Element {
           selectFolder: 'Select folder',
           openSettings: 'Open Settings',
           toolMode: 'Tool mode',
+          permission: 'Permission',
+          permissionDefault: 'Default permission',
+          permissionFull: 'Full access',
+          permissionConfirmTitle: 'Enable full access?',
+          permissionConfirmDesc:
+            'In full access mode, Anima can run commands outside workspace restrictions. Continue only if you trust the current task.',
+          permissionConfirmCancel: 'Cancel',
+          permissionConfirmContinue: 'Yes, continue',
+          dangerousCommandConfirmTitle: 'Approve dangerous command?',
+          dangerousCommandConfirmDesc: 'This command matched your blacklist under default permission. Continue only if you trust it.',
+          dangerousCommandConfirmCancel: 'Cancel',
+          dangerousCommandConfirmContinue: 'Approve and run',
           skillMode: 'Skill mode',
           auto: 'Auto',
           all: 'All',
@@ -1499,6 +1567,17 @@ function AppLoaded(): JSX.Element {
           selectFolder: '选择目录',
           openSettings: '打开设置',
           toolMode: '工具模式',
+          permission: '权限',
+          permissionDefault: '默认权限',
+          permissionFull: '完全访问权限',
+          permissionConfirmTitle: '启用完全访问权限？',
+          permissionConfirmDesc: '开启后将不再限制工作区和白名单范围，请仅在可信任务中使用。',
+          permissionConfirmCancel: '取消',
+          permissionConfirmContinue: '是，仍然继续',
+          dangerousCommandConfirmTitle: '确认执行危险命令？',
+          dangerousCommandConfirmDesc: '该命令在默认权限下命中了黑名单，仅在你确认可信时继续执行。',
+          dangerousCommandConfirmCancel: '取消',
+          dangerousCommandConfirmContinue: '确认并执行',
           skillMode: '技能模式',
           auto: '自动',
           all: '全部',
@@ -1560,6 +1639,18 @@ function AppLoaded(): JSX.Element {
           selectFolder: 'フォルダー選択',
           openSettings: '設定を開く',
           toolMode: 'ツールモード',
+          permission: '権限',
+          permissionDefault: 'デフォルト権限',
+          permissionFull: 'フルアクセス',
+          permissionConfirmTitle: 'フルアクセスを有効化しますか？',
+          permissionConfirmDesc:
+            'フルアクセスではワークスペース制限なしでコマンド実行できます。信頼できるタスクでのみ使用してください。',
+          permissionConfirmCancel: 'キャンセル',
+          permissionConfirmContinue: 'はい、続行',
+          dangerousCommandConfirmTitle: '危険コマンドを許可しますか？',
+          dangerousCommandConfirmDesc: 'このコマンドは既定権限のブラックリストに一致しました。信頼できる場合のみ続行してください。',
+          dangerousCommandConfirmCancel: 'キャンセル',
+          dangerousCommandConfirmContinue: '許可して実行',
           skillMode: 'スキルモード',
           auto: '自動',
           all: 'すべて',
@@ -1647,6 +1738,11 @@ function AppLoaded(): JSX.Element {
     }, 80)
   }, [])
 
+  const markUserScrollIntent = useCallback((holdMs = 260) => {
+    const now = performance.now()
+    userScrollIntentUntilRef.current = now + Math.max(80, holdMs)
+  }, [])
+
   const startAutoScroll = useCallback((opts?: { force?: boolean }) => {
     const el = chatScrollRef.current
     if (!el) return
@@ -1704,7 +1800,8 @@ function AppLoaded(): JSX.Element {
     lastScrollTopRef.current = currTop
     const gap = el.scrollHeight - (el.scrollTop + el.clientHeight)
     if (programmaticScrollRef.current) {
-      if (currTop < prevTop - 2) {
+      const hasUserIntent = performance.now() < userScrollIntentUntilRef.current
+      if (hasUserIntent && currTop < prevTop - 2) {
         userScrollLockedRef.current = true
         chatIsAtBottomRef.current = false
         setChatIsAtBottom(false)
@@ -1918,7 +2015,10 @@ function AppLoaded(): JSX.Element {
     }
   }
 
-  const handleSend = async (rawText: string): Promise<boolean> => {
+  const handleSend = async (
+    rawText: string,
+    opts?: { skipUserMessage?: boolean; dangerousCommandApprovals?: string[] }
+  ): Promise<boolean> => {
     const trimmed = String(rawText || '').trim()
     if (!trimmed || isLoading) return false
     
@@ -1961,17 +2061,20 @@ function AppLoaded(): JSX.Element {
         updateMessageById(activeChatId, currentAssistantId, { content, meta })
       }
     }
+    let nextRetryDangerousCommand: string | null = null
 
     const runSend = async () => {
-      const composerPayload = buildComposerPayload()
+      const composerPayload = buildComposerPayload({ dangerousCommandApprovals: opts?.dangerousCommandApprovals || [] })
 
-      addMessage({
-        role: 'user',
-        content: userMessage,
-        turnId,
-        meta: userAttachments.length ? { userAttachments, userAttachmentsWorkspaceDir } : undefined
-      } as any)
-      if (composer.attachments.length) updateComposer({ attachments: [] })
+      if (!opts?.skipUserMessage) {
+        addMessage({
+          role: 'user',
+          content: userMessage,
+          turnId,
+          meta: userAttachments.length ? { userAttachments, userAttachmentsWorkspaceDir } : undefined
+        } as any)
+      }
+      if (!opts?.skipUserMessage && composer.attachments.length) updateComposer({ attachments: [] })
       userScrollLockedRef.current = false
       chatIsAtBottomRef.current = true
       setChatIsAtBottom(true)
@@ -2008,6 +2111,7 @@ function AppLoaded(): JSX.Element {
         let traces: ToolTrace[] = []
         let assistantMeta: NonNullable<Message['meta']> = shouldShowAnalysis ? { reasoningStatus: 'pending', reasoningText: '' } : {}
         let reasoningText = ''
+        let dangerousApprovalFromTrace: DangerousCommandApprovalPayload | null = null
         let gotDone = false
         let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
         let compressionMsgId: string | null = null
@@ -2073,6 +2177,18 @@ function AppLoaded(): JSX.Element {
         }
 
         const upsertTrace = (trace: ToolTrace) => {
+          if (
+            trace.name === 'bash' &&
+            trace.status === 'failed' &&
+            !dangerousApprovalFromTrace &&
+            typeof trace.error?.message === 'string'
+          ) {
+            const parsed = parseDangerousCommandApproval(trace.error.message)
+            if (parsed) {
+              dangerousApprovalFromTrace = parsed
+              return
+            }
+          }
           const { updateMessageById, activeChatId, addMessage, persistMessageById, messages } = useStore.getState()
           
           let msgId = traceMessageIds[trace.id]
@@ -2157,6 +2273,7 @@ function AppLoaded(): JSX.Element {
             const createRes = await window.anima.acp.createSession({
               workspaceDir: composerPayload.workspaceDir,
               threadId,
+              permissionMode: composerPayload.permissionMode,
               agent: {
                 id: String(effectiveProvider?.id || '').trim(),
                 name: String(effectiveProvider?.name || effectiveProvider?.id || 'ACP').trim(),
@@ -2429,6 +2546,15 @@ function AppLoaded(): JSX.Element {
           }
         }
         stopCompressionTyping()
+        const dangerousApproval = dangerousApprovalFromTrace as DangerousCommandApprovalPayload | null
+        if (dangerousApproval) {
+          stopTyping()
+          const confirmed = await confirmDangerousCommand(dangerousApproval.command)
+          if (confirmed) {
+            nextRetryDangerousCommand = dangerousApproval.command
+            return
+          }
+        }
         if (compressionSeenStart && !compressionEnded) ensureCompressionMsg('done', compressionFullContent)
         if (gotDone) {
           if (reader) {
@@ -2494,7 +2620,22 @@ function AppLoaded(): JSX.Element {
         const rateLimit = data.rateLimit
         const traces = Array.isArray(data.traces) ? data.traces : []
         const artifacts = Array.isArray(data.artifacts) ? data.artifacts : []
-        
+
+        const dangerousTrace = traces.find((tr) => {
+          if (tr?.name !== 'bash' || tr?.status !== 'failed') return false
+          return Boolean(parseDangerousCommandApproval(tr?.error?.message))
+        })
+        if (dangerousTrace) {
+          const parsed = parseDangerousCommandApproval(dangerousTrace?.error?.message)
+          if (parsed) {
+            const confirmed = await confirmDangerousCommand(parsed.command)
+            if (confirmed) {
+              nextRetryDangerousCommand = parsed.command
+              return
+            }
+          }
+        }
+
         // Insert tool messages for non-streaming response
         const { insertMessageBefore } = useStore.getState()
         for (const trace of traces) {
@@ -2545,6 +2686,12 @@ function AppLoaded(): JSX.Element {
         window.clearInterval(typingTimerRef.current)
         typingTimerRef.current = null
       }
+      if (nextRetryDangerousCommand) {
+        const cmd = nextRetryDangerousCommand
+        window.setTimeout(() => {
+          void handleSend(userMessage, { skipUserMessage: true, dangerousCommandApprovals: [cmd] })
+        }, 0)
+      }
     }
     }
 
@@ -2584,7 +2731,7 @@ function AppLoaded(): JSX.Element {
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkMath]}
                     rehypePlugins={[rehypeKatex, rehypeRaw]}
-                    className="prose prose-sm dark:prose-invert max-w-none prose-p:text-[14px] prose-li:text-[14px] prose-table:text-[14px] prose-p:leading-relaxed prose-li:leading-relaxed text-foreground/90"
+                    className="prose prose-sm dark:prose-invert max-w-none prose-p:text-[13px] prose-li:text-[13px] prose-table:text-[13px] prose-p:leading-relaxed prose-li:leading-relaxed prose-headings:font-semibold prose-h1:text-[21px] prose-h1:leading-[1.25] prose-h2:text-[18px] prose-h2:leading-[1.3] prose-h3:text-[16px] prose-h3:leading-[1.35] text-foreground/90"
                     components={{
                       pre: ({ children }) => <>{children}</>,
                       code({ inline, className, children, ...props }: any) {
@@ -2733,6 +2880,76 @@ function AppLoaded(): JSX.Element {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        <Dialog open={fullAccessConfirmOpen} onOpenChange={setFullAccessConfirmOpen}>
+          <DialogContent className="max-w-[540px]">
+            <DialogHeader>
+              <DialogTitle>{t.composer.permissionConfirmTitle}</DialogTitle>
+            </DialogHeader>
+            <div className="text-sm text-muted-foreground leading-6">
+              {t.composer.permissionConfirmDesc}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setFullAccessConfirmOpen(false)}>
+                {t.composer.permissionConfirmCancel}
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  updateComposer({ permissionMode: 'full_access' })
+                  setFullAccessConfirmOpen(false)
+                }}
+              >
+                {t.composer.permissionConfirmContinue}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <Dialog
+          open={dangerousCommandConfirmOpen}
+          onOpenChange={(open) => {
+            setDangerousCommandConfirmOpen(open)
+            if (!open && dangerousCommandConfirmResolverRef.current) {
+              dangerousCommandConfirmResolverRef.current(false)
+              dangerousCommandConfirmResolverRef.current = null
+            }
+          }}
+        >
+          <DialogContent className="max-w-[620px]">
+            <DialogHeader>
+              <DialogTitle>{t.composer.dangerousCommandConfirmTitle}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="text-sm text-muted-foreground leading-6">{t.composer.dangerousCommandConfirmDesc}</div>
+              <pre className="rounded-md border bg-muted/40 p-3 text-xs overflow-auto whitespace-pre-wrap break-all">{dangerousCommandConfirmText}</pre>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const fn = dangerousCommandConfirmResolverRef.current
+                  dangerousCommandConfirmResolverRef.current = null
+                  setDangerousCommandConfirmOpen(false)
+                  setDangerousCommandConfirmText('')
+                  fn?.(false)
+                }}
+              >
+                {t.composer.dangerousCommandConfirmCancel}
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  const fn = dangerousCommandConfirmResolverRef.current
+                  dangerousCommandConfirmResolverRef.current = null
+                  setDangerousCommandConfirmOpen(false)
+                  setDangerousCommandConfirmText('')
+                  fn?.(true)
+                }}
+              >
+                {t.composer.dangerousCommandConfirmContinue}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {isSettingsWindow ? (
           <SettingsWindow />
@@ -2799,6 +3016,9 @@ function AppLoaded(): JSX.Element {
             <main
               ref={chatScrollRef as any}
               onScroll={handleChatScroll}
+              onWheel={() => markUserScrollIntent()}
+              onTouchStart={() => markUserScrollIntent(380)}
+              onTouchMove={() => markUserScrollIntent(380)}
               className="flex-1 overflow-y-auto pt-4 pl-6 pr-6 pb-4 no-drag"
             >
               {displayMessages.length === 0 ? (
@@ -3374,7 +3594,7 @@ function AppLoaded(): JSX.Element {
                                 <ReactMarkdown
                                   remarkPlugins={[remarkGfm, remarkMath]}
                                   rehypePlugins={[rehypeKatex, rehypeRaw]}
-                                  className="prose prose-sm dark:prose-invert max-w-none prose-p:text-[13px] prose-li:text-[13px] prose-table:text-[13px] prose-p:leading-relaxed prose-li:leading-relaxed text-foreground/90"
+                                  className="prose prose-sm dark:prose-invert max-w-none prose-p:text-[13px] prose-li:text-[13px] prose-table:text-[13px] prose-p:leading-relaxed prose-li:leading-relaxed prose-headings:font-semibold prose-h1:text-[21px] prose-h1:leading-[1.25] prose-h2:text-[18px] prose-h2:leading-[1.3] prose-h3:text-[16px] prose-h3:leading-[1.35] text-foreground/90"
                                   components={{
                                     pre: ({ children }) => <>{children}</>,
                                     code({ inline, className, children, ...props }: any) {
@@ -3908,19 +4128,102 @@ function AppLoaded(): JSX.Element {
                         </Popover>
 
                         {effectiveProvider?.type === 'deepseek' ? (
-                          <select
-                            className="h-9 rounded-full border border-black/6 bg-white/70 px-3 text-[11px] text-foreground"
-                            value={thinkingLevel}
-                            onChange={(e) => updateComposer({ thinkingLevel: e.target.value as any })}
-                            title={t.composer.thinking}
-                          >
-                            <option value="default">{t.composer.thinkingDefault}</option>
-                            <option value="off">{t.composer.thinkingOff}</option>
-                            <option value="low">{t.composer.thinkingLow}</option>
-                            <option value="medium">{t.composer.thinkingMedium}</option>
-                            <option value="high">{t.composer.thinkingHigh}</option>
-                          </select>
+                          <Popover open={popoverPanel === 'thinking'} onOpenChange={(open) => handlePopoverOpenChange('thinking', open)}>
+                            <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('thinking')} onMouseLeave={handleInputPanelMouseLeave}>
+                              <Button
+                                variant="ghost"
+                                className="h-9 rounded-full gap-1.5 px-3 text-xs font-normal text-foreground/82 hover:text-foreground hover:bg-black/5 shrink-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                              >
+                                <span className="truncate">
+                                  {{
+                                    default: t.composer.thinkingDefault,
+                                    off: t.composer.thinkingOff,
+                                    low: t.composer.thinkingLow,
+                                    medium: t.composer.thinkingMedium,
+                                    high: t.composer.thinkingHigh
+                                  }[thinkingLevel] || t.composer.thinkingDefault}
+                                </span>
+                                <ChevronDown className="w-3.5 h-3.5 opacity-50 shrink-0" />
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent
+                              className="w-40 p-1"
+                              align="start"
+                              side="top"
+                              sideOffset={8}
+                              onMouseEnter={() => handleMouseEnter('thinking')}
+                              onMouseLeave={handleMouseLeave}
+                            >
+                              {[
+                                { value: 'default', label: t.composer.thinkingDefault },
+                                { value: 'off', label: t.composer.thinkingOff },
+                                { value: 'low', label: t.composer.thinkingLow },
+                                { value: 'medium', label: t.composer.thinkingMedium },
+                                { value: 'high', label: t.composer.thinkingHigh }
+                              ].map((opt) => (
+                                <button
+                                  key={opt.value}
+                                  type="button"
+                                  className="w-full h-8 px-2 rounded-md text-xs flex items-center justify-between hover:bg-black/5"
+                                  onClick={() => {
+                                    updateComposer({ thinkingLevel: opt.value as any })
+                                    setPopoverPanel('')
+                                  }}
+                                >
+                                  <span className="flex items-center gap-1.5">
+                                    <Brain className="w-3.5 h-3.5 opacity-80" />
+                                    <span>{opt.label}</span>
+                                  </span>
+                                  {thinkingLevel === opt.value ? <Check className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5" />}
+                                </button>
+                              ))}
+                            </PopoverContent>
+                          </Popover>
                         ) : null}
+
+                        <Popover open={popoverPanel === 'permission'} onOpenChange={(open) => handlePopoverOpenChange('permission', open)}>
+                          <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('permission')} onMouseLeave={handleInputPanelMouseLeave}>
+                            <Button
+                              variant="ghost"
+                              className="h-9 rounded-full gap-1.5 px-3 text-xs font-normal text-foreground/82 hover:text-foreground hover:bg-black/5 shrink-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                              title={t.composer.permission}
+                            >
+                              <span className="truncate">
+                                {permissionMode === 'full_access' ? t.composer.permissionFull : t.composer.permissionDefault}
+                              </span>
+                              <ChevronDown className="w-3.5 h-3.5 opacity-50 shrink-0" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent
+                            className="w-44 p-1"
+                            align="start"
+                            side="top"
+                            sideOffset={8}
+                            onMouseEnter={() => handleMouseEnter('permission')}
+                            onMouseLeave={handleMouseLeave}
+                          >
+                            {[
+                              { value: 'workspace_whitelist', label: t.composer.permissionDefault },
+                              { value: 'full_access', label: t.composer.permissionFull }
+                            ].map((opt) => (
+                              <button
+                                key={opt.value}
+                                type="button"
+                                className="w-full h-8 px-2 rounded-md text-xs flex items-center justify-between hover:bg-black/5"
+                                onClick={() => {
+                                  setPopoverPanel('')
+                                  handlePermissionModeChange(opt.value as 'workspace_whitelist' | 'full_access')
+                                }}
+                              >
+                                <span className="flex items-center gap-1.5">
+                                  <Eye className="w-3.5 h-3.5 opacity-80" />
+                                  <span>{opt.label}</span>
+                                </span>
+                                {permissionMode === opt.value ? <Check className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5" />}
+                              </button>
+                            ))}
+                          </PopoverContent>
+                        </Popover>
 
                         <TooltipProvider>
                           <Tooltip delayDuration={0}>
