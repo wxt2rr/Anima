@@ -225,7 +225,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
   return (
     <Card
       style={{ width: ui.sidebarCollapsed ? 0 : width }}
-      className={`flex flex-col no-drag transition-all duration-300 ease-in-out relative overflow-hidden rounded-xl bg-muted/30 ${
+      className={`flex flex-col no-drag transition-all duration-300 ease-in-out relative overflow-hidden rounded-xl bg-white ${
         ui.sidebarCollapsed ? 'opacity-0 p-0 m-0 border-0' : ''
       }`}
     >
@@ -339,7 +339,9 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
                       <TooltipTrigger asChild>
                         <button
                           type="button"
-                          className={`p-1 rounded-lg transition-all ${p.pinned ? 'text-primary' : 'text-muted-foreground'} hover:bg-black/5 dark:hover:bg-white/10`}
+                          className={`p-1 rounded-lg transition-all hover:bg-black/5 dark:hover:bg-white/10 ${
+                            p.pinned ? 'text-primary' : 'text-muted-foreground'
+                          } ${projectMenuOpenId === pid ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                           onClick={(e) => {
                             e.stopPropagation()
                             togglePinProject(pid)
@@ -355,7 +357,9 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
                       <TooltipTrigger asChild>
                         <button
                           type="button"
-                          className="p-1 rounded-lg transition-all text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10 hover:text-foreground"
+                          className={`p-1 rounded-lg transition-all text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10 hover:text-foreground ${
+                            projectMenuOpenId === pid ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                          }`}
                           onClick={(e) => {
                             e.stopPropagation()
                             void createChatInProject(pid)
@@ -369,7 +373,9 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
 
                     <Popover open={projectMenuOpenId === pid} onOpenChange={(open) => setProjectMenuOpenId(open ? pid : null)}>
                       <PopoverTrigger
-                        className="p-1 rounded-lg transition-all text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10 hover:text-foreground"
+                        className={`p-1 rounded-lg transition-all text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10 hover:text-foreground ${
+                          projectMenuOpenId === pid ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                        }`}
                         onClick={(e) => e.stopPropagation()}
                       >
                         <MoreHorizontal className="w-3.5 h-3.5" />
@@ -440,12 +446,12 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
                                   onClick={() => void setActiveChat(chat.id)}
                                   className={`group relative flex items-center gap-2 px-3 py-1.5 rounded-xl cursor-pointer transition-all duration-200 ${
                                     active
-                                      ? 'bg-secondary text-foreground font-semibold shadow-sm'
+                                      ? 'bg-secondary text-foreground shadow-sm'
                                       : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
                                   }`}
                                 >
                                   <span className="w-3.5 h-3.5 shrink-0" />
-                                  <span className="truncate text-[13px] flex-1 leading-5">{title}</span>
+                                  <span className="truncate text-[13px] flex-1 leading-5 text-foreground">{title}</span>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <button
@@ -453,9 +459,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
                                           e.stopPropagation()
                                           setDeleteId(chat.id)
                                         }}
-                                        className={`p-1 rounded-lg transition-all text-muted-foreground hover:text-destructive ${
-                                          active ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/10'
-                                        }`}
+                                        className="p-1 rounded-lg transition-all text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/10"
                                       >
                                         <Trash2 className="w-3.5 h-3.5" />
                                       </button>

@@ -116,6 +116,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS messages (
             id TEXT PRIMARY KEY,
             chat_id TEXT NOT NULL,
+            turn_id TEXT,
             role TEXT NOT NULL,
             content TEXT NOT NULL,
             meta TEXT,
@@ -124,6 +125,10 @@ def init_db() -> None:
         )
     """
     )
+    try:
+        c.execute("ALTER TABLE messages ADD COLUMN turn_id TEXT")
+    except sqlite3.OperationalError:
+        pass
 
     c.execute(
         """
@@ -396,7 +401,7 @@ def get_chat(chat_id: str) -> Optional[Dict[str, Any]]:
     if not chat:
         return None
 
-    messages = conn.execute("SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC", (chat_id,)).fetchall()
+    messages = conn.execute("SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC, rowid ASC", (chat_id,)).fetchall()
 
     res = {"id": chat["id"], "title": chat["title"], "createdAt": chat["created_at"], "updatedAt": chat["updated_at"]}
     if chat["meta"]:
@@ -408,6 +413,10 @@ def get_chat(chat_id: str) -> Optional[Dict[str, Any]]:
     msgs = []
     for m in messages:
         d = {"id": m["id"], "role": m["role"], "content": m["content"], "timestamp": m["created_at"]}
+        if "turn_id" in m.keys():
+            turn_id = str(m["turn_id"] or "").strip()
+            if turn_id:
+                d["turnId"] = turn_id
         if m["meta"]:
             try:
                 d["meta"] = json.loads(m["meta"])
@@ -497,19 +506,23 @@ def add_message(chat_id: str, message: Dict[str, Any]) -> Dict[str, Any]:
         conn.execute("INSERT INTO chats (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)", (chat_id, "New Chat", now, now))
 
     msg_id = message.get("id") or str(uuid4())
+    turn_id = str(message.get("turnId") or "").strip() or None
     role = message.get("role") or "user"
     content = message.get("content") or ""
     meta = json.dumps(message.get("meta")) if message.get("meta") else None
     timestamp = message.get("timestamp") or now
 
     conn.execute(
-        "INSERT INTO messages (id, chat_id, role, content, meta, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (msg_id, chat_id, role, content, meta, timestamp),
+        "INSERT INTO messages (id, chat_id, turn_id, role, content, meta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (msg_id, chat_id, turn_id, role, content, meta, timestamp),
     )
     conn.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now, chat_id))
     conn.commit()
 
-    return {"id": msg_id, "role": role, "content": content, "meta": message.get("meta"), "timestamp": timestamp}
+    out = {"id": msg_id, "role": role, "content": content, "meta": message.get("meta"), "timestamp": timestamp}
+    if turn_id:
+        out["turnId"] = turn_id
+    return out
 
 
 def update_message(chat_id: str, msg_id: str, updates: Dict[str, Any]) -> None:
@@ -526,6 +539,9 @@ def update_message(chat_id: str, msg_id: str, updates: Dict[str, Any]) -> None:
     if "role" in updates:
         fields.append("role = ?")
         values.append(updates["role"])
+    if "turnId" in updates:
+        fields.append("turn_id = ?")
+        values.append(str(updates["turnId"] or "").strip() or None)
 
     if not fields:
         return
@@ -559,14 +575,15 @@ def import_chats(chats: List[Dict[str, Any]]) -> None:
         messages = chat.get("messages") or []
         for msg in messages:
             msg_id = msg.get("id") or str(uuid4())
+            turn_id = str(msg.get("turnId") or "").strip() or None
             role = msg.get("role") or "user"
             content = msg.get("content") or ""
             meta = json.dumps(msg.get("meta")) if msg.get("meta") else None
             msg_created = msg.get("timestamp") or updated_at
 
             conn.execute(
-                "INSERT INTO messages (id, chat_id, role, content, meta, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (msg_id, chat_id, role, content, meta, msg_created),
+                "INSERT INTO messages (id, chat_id, turn_id, role, content, meta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (msg_id, chat_id, turn_id, role, content, meta, msg_created),
             )
 
     conn.commit()
@@ -582,7 +599,7 @@ def is_db_empty() -> bool:
 def export_snapshot() -> Dict[str, Any]:
     conn = get_db_connection()
     chats = conn.execute("SELECT * FROM chats ORDER BY updated_at DESC").fetchall()
-    messages = conn.execute("SELECT * FROM messages ORDER BY created_at ASC").fetchall()
+    messages = conn.execute("SELECT * FROM messages ORDER BY created_at ASC, rowid ASC").fetchall()
     row = conn.execute("SELECT data, updated_at FROM app_settings WHERE id = 1").fetchone()
 
     by_chat_id: Dict[str, List[Dict[str, Any]]] = {}
@@ -594,7 +611,14 @@ def export_snapshot() -> Dict[str, Any]:
             except Exception:
                 meta_val = None
         by_chat_id.setdefault(m["chat_id"], []).append(
-            {"id": m["id"], "role": m["role"], "content": m["content"], "timestamp": m["created_at"], "meta": meta_val}
+            {
+                "id": m["id"],
+                "turnId": str(m["turn_id"]).strip() if ("turn_id" in m.keys() and m["turn_id"] is not None) else None,
+                "role": m["role"],
+                "content": m["content"],
+                "timestamp": m["created_at"],
+                "meta": meta_val,
+            }
         )
 
     exported_chats: List[Dict[str, Any]] = []
@@ -664,13 +688,14 @@ def import_snapshot(data: Dict[str, Any]) -> None:
             if not isinstance(msg, dict):
                 continue
             msg_id = str(msg.get("id") or uuid4())
+            turn_id = str(msg.get("turnId") or "").strip() or None
             role = str(msg.get("role") or "user")
             content = str(msg.get("content") or "")
             meta = json.dumps(msg.get("meta")) if msg.get("meta") else None
             ts = int(msg.get("timestamp") or now)
             conn.execute(
-                "INSERT INTO messages (id, chat_id, role, content, meta, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (msg_id, chat_id, role, content, meta, ts),
+                "INSERT INTO messages (id, chat_id, turn_id, role, content, meta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (msg_id, chat_id, turn_id, role, content, meta, ts),
             )
         conn.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now, chat_id))
         conn.commit()

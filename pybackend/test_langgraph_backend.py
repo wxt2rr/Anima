@@ -523,6 +523,175 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         out = h.wfile.buf.decode("utf-8")
         self.assertIn('"type": "done"', out)
 
+    def test_runs_stream_dangerous_command_emits_approval_and_pauses_run(self) -> None:
+        from anima_backend_lg.api.runs_stream import handle_post_runs_stream
+
+        class _FakeProvider:
+            def chat_completion(self, _messages, **_kwargs):
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "",
+                                "tool_calls": [
+                                    {
+                                        "id": "tc1",
+                                        "type": "function",
+                                        "function": {"name": "bash", "arguments": '{"command":"ls -la"}'},
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                }
+
+        def _fake_execute_tool(*_args, **_kwargs):
+            payload = {
+                "code": "dangerous_command_requires_approval",
+                "command": "ls -la",
+                "matchedPattern": "ls",
+            }
+            trace = {
+                "id": "tr1",
+                "toolCallId": "tc1",
+                "name": "bash",
+                "status": "failed",
+                "startedAt": 0,
+                "endedAt": 1,
+                "durationMs": 1,
+                "error": {"message": "ANIMA_DANGEROUS_COMMAND_APPROVAL:" + json.dumps(payload, ensure_ascii=False)},
+            }
+            return json.dumps({"ok": False, "error": trace["error"]["message"]}, ensure_ascii=False), trace
+
+        h = self._make_handler()
+        body = {"messages": [{"role": "user", "content": "hi"}], "composer": {"workspaceDir": "/tmp"}}
+        with patch("anima_backend_lg.api.runs_stream.load_settings", return_value={"settings": {}}):
+            with patch("anima_backend_lg.api.runs_stream.create_provider", return_value=_FakeProvider()):
+                with patch("anima_backend_lg.api.runs_stream.select_tools", return_value=([], {}, None)):
+                    with patch("anima_backend_lg.api.runs_stream.create_run", return_value=None):
+                        with patch("anima_backend_lg.api.runs_stream.execute_tool", side_effect=_fake_execute_tool):
+                            with patch("anima_backend_lg.api.runs_stream.update_run") as p_update:
+                                handle_post_runs_stream(h, body)
+                                self.assertTrue(any(len(c.args) >= 2 and c.args[1] == "paused" for c in p_update.call_args_list))
+
+        raw = h.wfile.buf.decode("utf-8")
+        events = []
+        for chunk in raw.split("\n\n"):
+            for line in chunk.split("\n"):
+                if not line.startswith("data: "):
+                    continue
+                events.append(json.loads(line[len("data: ") :]))
+        approval_evt = next((e for e in events if e.get("type") == "approval_required"), None)
+        self.assertTrue(isinstance(approval_evt, dict))
+        self.assertEqual(str(((approval_evt or {}).get("approval") or {}).get("command") or ""), "ls -la")
+        bash_trace_evt = next(
+            (
+                e
+                for e in events
+                if e.get("type") == "trace"
+                and isinstance(e.get("trace"), dict)
+                and str((e.get("trace") or {}).get("name") or "") == "bash"
+            ),
+            None,
+        )
+        self.assertIsNone(bash_trace_evt)
+
+    def test_run_resume_stream_from_paused_run_completes_same_run(self) -> None:
+        from anima_backend_lg.api.runs import handle_post_run_resume
+        from anima_backend_shared.database import create_run, get_run, set_app_settings, update_run
+
+        set_app_settings({"settings": {}})
+        run_id = f"resume_paused_run_{uuid.uuid4().hex}"
+        create_run(run_id, "t1", {"messages": [{"role": "user", "content": "hi"}], "composer": {"workspaceDir": "/tmp"}})
+        update_run(
+            run_id,
+            "paused",
+            {
+                "pauseContext": {
+                    "approvalId": "ap1",
+                    "approval": {"code": "dangerous_command_requires_approval", "command": "ls -la", "matchedPattern": "ls"},
+                    "pendingToolCall": {"id": "tc1", "name": "bash", "args": {"command": "ls -la"}},
+                    "messages": [
+                        {"role": "user", "content": "hi"},
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "bash", "arguments": '{"command":"ls -la"}'}}],
+                        },
+                    ],
+                    "traces": [],
+                    "artifacts": [],
+                    "composer": {"workspaceDir": "/tmp"},
+                    "temperature": 0.7,
+                    "maxTokens": 128,
+                }
+            },
+        )
+
+        class _WFile:
+            def __init__(self) -> None:
+                self.buf = b""
+
+            def write(self, b: bytes) -> None:
+                self.buf += b
+
+            def flush(self) -> None:
+                return
+
+        class _Handler:
+            def __init__(self) -> None:
+                self.headers = {}
+                self.wfile = _WFile()
+                self.query = {"stream": "1"}
+
+            def send_response(self, code) -> None:
+                self._code = int(code)
+
+            def send_header(self, k, v) -> None:
+                return
+
+            def end_headers(self) -> None:
+                return
+
+            def rfile_read(self) -> bytes:
+                return b'{"approvalId":"ap1","decision":"approve_once"}'
+
+        h = _Handler()
+        h.rfile = type("rf", (), {"read": lambda _self, n=-1: h.rfile_read()})()
+        h.headers = {"Content-Length": str(len(h.rfile_read()))}
+
+        trace = {
+            "id": "tr_resume_1",
+            "toolCallId": "tc1",
+            "name": "bash",
+            "status": "succeeded",
+            "startedAt": 0,
+            "endedAt": 1,
+            "durationMs": 1,
+        }
+        out_payload = {
+            "paused": False,
+            "final_content": "done",
+            "usage": None,
+            "traces": [],
+            "artifacts": [],
+            "reasoning": "",
+            "messages": [{"role": "assistant", "content": "done"}],
+            "rate_limit": None,
+        }
+
+        with patch("anima_backend_lg.api.runs.create_provider", return_value=MockProvider()):
+            with patch("anima_backend_lg.api.runs.execute_tool", return_value=(json.dumps({"ok": True}, ensure_ascii=False), trace)):
+                with patch("anima_backend_lg.api.runs._run_tool_loop", return_value=out_payload):
+                    handle_post_run_resume(h, run_id)
+
+        out = h.wfile.buf.decode("utf-8")
+        self.assertIn('"type": "done"', out)
+        run = get_run(run_id)
+        self.assertTrue(isinstance(run, dict))
+        self.assertEqual(str((run or {}).get("status") or ""), "succeeded")
+
     def test_runs_stream_emits_artifacts_in_trace_and_done(self) -> None:
         from anima_backend_lg.api.runs_stream import handle_post_runs_stream
 
@@ -2259,6 +2428,70 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
                     self.assertTrue(bool(out.get("ok")))
                     self.assertEqual(int(out.get("exitCode")) if out.get("exitCode") is not None else -1, 0)
                     self.assertTrue(p_run.called)
+
+    def test_bash_default_mode_allow_for_thread_bypasses_blacklist(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        cmd = "rm -rf ./tmpdir"
+        with tempfile.TemporaryDirectory() as td:
+            with patch(
+                "anima_backend_shared.settings.load_settings",
+                return_value={
+                    "settings": {
+                        "commandBlacklist": ["rm"],
+                        "commandWhitelist": [],
+                    }
+                },
+            ):
+                class _Proc:
+                    returncode = 0
+                    stdout = "ok\n"
+                    stderr = ""
+
+                with patch.object(shared_tools.subprocess, "run", return_value=_Proc()) as p_run:
+                    out = json.loads(
+                        shared_tools.execute_builtin_tool(
+                            "bash",
+                            {
+                                "command": cmd,
+                                "_animaPermissionMode": "workspace_whitelist",
+                                "_animaDangerousCommandAllowForThread": True,
+                            },
+                            workspace_dir=td,
+                        )
+                    )
+                    self.assertTrue(bool(out.get("ok")))
+                    self.assertEqual(int(out.get("exitCode")) if out.get("exitCode") is not None else -1, 0)
+                    self.assertTrue(p_run.called)
+
+    def test_bash_default_mode_requires_approval_for_blacklist_in_compound_command(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        cmd = "pwd && rm -rf ./tmpdir"
+        with tempfile.TemporaryDirectory() as td:
+            with patch(
+                "anima_backend_shared.settings.load_settings",
+                return_value={
+                    "settings": {
+                        "commandBlacklist": ["rm"],
+                        "commandWhitelist": [],
+                    }
+                },
+            ):
+                with self.assertRaises(RuntimeError) as ex:
+                    shared_tools.execute_builtin_tool(
+                        "bash",
+                        {
+                            "command": cmd,
+                            "_animaPermissionMode": "workspace_whitelist",
+                        },
+                        workspace_dir=td,
+                    )
+                msg = str(ex.exception)
+                self.assertTrue(msg.startswith("ANIMA_DANGEROUS_COMMAND_APPROVAL:"))
+                payload = json.loads(msg.split(":", 1)[1])
+                self.assertEqual(str(payload.get("command") or ""), cmd)
+                self.assertEqual(str(payload.get("matchedPattern") or ""), "rm")
 
 if __name__ == "__main__":
     unittest.main()

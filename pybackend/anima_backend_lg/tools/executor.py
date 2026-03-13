@@ -161,6 +161,8 @@ def execute_tool(
             approvals = (composer or {}).get("dangerousCommandApprovals")
             if isinstance(approvals, list):
                 tool_args["_animaDangerousCommandApprovals"] = [str(x) for x in approvals if str(x).strip()]
+            if bool((composer or {}).get("dangerousCommandAllowForThread")):
+                tool_args["_animaDangerousCommandAllowForThread"] = True
             out = execute_builtin_tool(tool_name, tool_args, workspace_dir=workspace_dir)
         tool_content = out
         ended_at = now_ms()

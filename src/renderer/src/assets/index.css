@@ -100,10 +100,10 @@
 
 @keyframes anima-flow-text {
   0% {
-    background-position: 0% 50%;
+    background-position: -320% 50%;
   }
   100% {
-    background-position: 200% 50%;
+    background-position: 320% 50%;
   }
 }
 
@@ -117,23 +117,40 @@
   }
 }
 
+@keyframes anima-typing-fade {
+  0% {
+    opacity: 0.5;
+    filter: blur(0.8px);
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
 @layer utilities {
   .anima-flow-text {
     background-image: linear-gradient(
       90deg,
-      hsl(var(--foreground) / 0.55),
-      hsl(var(--foreground) / 0.95),
-      hsl(var(--foreground) / 0.55)
+      hsl(var(--foreground) / 0.35),
+      hsl(var(--primary) / 0.95),
+      hsl(var(--foreground) / 0.98),
+      hsl(var(--primary) / 0.95),
+      hsl(var(--foreground) / 0.35)
     );
-    background-size: 200% 100%;
+    background-size: 320% 100%;
     background-position: 0% 50%;
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
-    animation: anima-flow-text 1.6s linear infinite;
+    animation: anima-flow-text 4.2s linear infinite;
   }
 
   .anima-float {
     animation: anima-float 3.2s ease-in-out infinite;
+  }
+
+  .anima-typing-fade {
+    animation: anima-typing-fade 0.3s ease-out;
   }
 }

@@ -17,6 +17,31 @@ from ..tools.executor import execute_tool, make_tool_message, select_tools
 from ..runtime.graph import build_system_prompt_text, inject_system_message
 from ..runtime.sanitize import sanitize_history_messages
 
+_DANGEROUS_APPROVAL_PREFIX = "ANIMA_DANGEROUS_COMMAND_APPROVAL:"
+
+
+def _parse_dangerous_approval_error(message: Any) -> Optional[Dict[str, Any]]:
+    text = str(message or "").strip()
+    if not text.startswith(_DANGEROUS_APPROVAL_PREFIX):
+        return None
+    payload_text = text[len(_DANGEROUS_APPROVAL_PREFIX) :].strip()
+    if not payload_text:
+        return None
+    try:
+        obj = json.loads(payload_text)
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    command = str(obj.get("command") or "").strip()
+    if not command:
+        return None
+    return {
+        "code": str(obj.get("code") or "").strip() or "dangerous_command_requires_approval",
+        "command": command,
+        "matchedPattern": str(obj.get("matchedPattern") or "").strip() or "",
+    }
+
 
 def _apply_thinking_level(provider: Any, composer: Dict[str, Any], extra_body: Optional[Dict[str, Any]], max_tokens: int) -> tuple[Optional[Dict[str, Any]], int]:
     spec = getattr(provider, "_spec", None)
@@ -733,6 +758,42 @@ def _run_tool_loop(
                     running_trace["artifacts"] = trace.get("artifacts")
                     artifacts.extend([x for x in trace.get("artifacts") if isinstance(x, dict)])
 
+            approval_payload = _parse_dangerous_approval_error((running_trace.get("error") or {}).get("message"))
+            if approval_payload:
+                approval_id = str(uuid.uuid4())
+                return {
+                    "paused": True,
+                    "approval": {
+                        **approval_payload,
+                        "approvalId": approval_id,
+                        "toolCallId": tc_id,
+                        "toolName": fn_name,
+                    },
+                    "pause_context": {
+                        "approvalId": approval_id,
+                        "approval": approval_payload,
+                        "pendingToolCall": {
+                            "id": tc_id,
+                            "name": fn_name,
+                            "args": fn_args,
+                        },
+                        "messages": next_messages,
+                        "traces": traces,
+                        "artifacts": artifacts,
+                        "step": step,
+                        "composer": composer,
+                        "temperature": temperature,
+                        "maxTokens": max_tokens,
+                        "extraBody": extra_body,
+                    },
+                    "messages": next_messages,
+                    "traces": traces,
+                    "artifacts": artifacts,
+                    "usage": usage,
+                    "reasoning": "\n\n".join([r for r in reasoning_parts if str(r).strip()]).strip(),
+                    "rate_limit": get_last_rate_limit(provider),
+                }
+
             traces.append(running_trace)
             try:
                 _emit({"type": "tool_trace", "trace": running_trace})
@@ -757,6 +818,7 @@ def _run_tool_loop(
     output_messages.append({"role": "assistant", "content": str(final_content or "")})
 
     return {
+        "paused": False,
         "final_content": str(final_content or ""),
         "usage": usage,
         "traces": traces,
@@ -852,6 +914,29 @@ def handle_post_runs_non_stream_via_stream_executor(body: Dict[str, Any]) -> Tup
             extra_body=extra_body,
             emit_event=None,
         )
+        if bool(out.get("paused")):
+            approval = out.get("approval") if isinstance(out.get("approval"), dict) else {}
+            pause_context = out.get("pause_context") if isinstance(out.get("pause_context"), dict) else {}
+            update_run(
+                run_id,
+                "paused",
+                {
+                    "content": "",
+                    "usage": out.get("usage"),
+                    "traces": out.get("traces"),
+                    "artifacts": out.get("artifacts"),
+                    "reasoning": out.get("reasoning") or "",
+                    "messages": out.get("messages"),
+                    "pauseContext": pause_context,
+                },
+            )
+            return int(HTTPStatus.CONFLICT), {
+                "ok": False,
+                "code": "approval_required",
+                "runId": run_id,
+                "threadId": thread_id,
+                "approval": approval,
+            }
 
         update_run(
             run_id,
@@ -1045,6 +1130,32 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
             extra_body=extra_body,
             emit_event=emit_event,
         )
+        if bool(out.get("paused")):
+            approval = out.get("approval") if isinstance(out.get("approval"), dict) else {}
+            pause_context = out.get("pause_context") if isinstance(out.get("pause_context"), dict) else {}
+            update_run(
+                run_id,
+                "paused",
+                {
+                    "content": "",
+                    "usage": out.get("usage"),
+                    "traces": out.get("traces"),
+                    "artifacts": out.get("artifacts"),
+                    "reasoning": out.get("reasoning") or "",
+                    "messages": out.get("messages"),
+                    "pauseContext": pause_context,
+                },
+            )
+            try:
+                emit_event(
+                    {
+                        "type": "approval_required",
+                        "approval": approval,
+                    }
+                )
+            except Exception:
+                return
+            return
 
         update_run(
             run_id,

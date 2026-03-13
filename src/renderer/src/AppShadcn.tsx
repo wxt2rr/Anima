@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, useCallback, type ReactNode } from 'react'
-import { Send, StopCircle, Paperclip, PanelLeftOpen, MessageSquarePlus, Wrench, Sparkles, X, ChevronDown, Terminal, Mic, Folder, Search, PenLine, Brain, Compass, Eye, Check } from 'lucide-react'
+import { Send, StopCircle, Paperclip, PanelLeftOpen, MessageSquarePlus, Wrench, Sparkles, X, ChevronDown, Mic, Folder, Brain, Eye, Check, GitBranch } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -58,6 +58,8 @@ type DangerousCommandApprovalPayload = {
   code: string
   command: string
   matchedPattern?: string
+  runId?: string
+  approvalId?: string
 }
 
 const DANGEROUS_COMMAND_APPROVAL_PREFIX = 'ANIMA_DANGEROUS_COMMAND_APPROVAL:'
@@ -300,6 +302,7 @@ function AppLoaded(): JSX.Element {
   
   const [traceDetailOpenByKey, setTraceDetailOpenByKey] = useState<Record<string, boolean>>({})
   const [reasoningOpenByMsgId, setReasoningOpenByMsgId] = useState<Record<string, boolean>>({})
+  const [collapsedTurnOpenById, setCollapsedTurnOpenById] = useState<Record<string, boolean>>({})
   const audioContextRef = useRef<AudioContext | null>(null)
   const lastSoundAtRef = useRef(0)
   const abortControllerRef = useRef<AbortController | null>(null)
@@ -342,6 +345,7 @@ function AppLoaded(): JSX.Element {
   const lastSeenMessageKeyRef = useRef('')
   const userMsgElMapRef = useRef<Map<string, HTMLElement>>(new Map())
   const highlightUserMsgTimerRef = useRef<number | null>(null)
+  const dangerousApprovalThreadsRef = useRef<Set<string>>(new Set())
   const [highlightUserMsgId, setHighlightUserMsgId] = useState('')
   const [userNavItems, setUserNavItems] = useState<Array<{ id: string; topRatio: number; widthPx: number; content: string }>>([])
   const [navHover, setNavHover] = useState<{ id: string; topRatio: number; content: string } | null>(null)
@@ -350,6 +354,8 @@ function AppLoaded(): JSX.Element {
     messages, 
     chats,
     addMessage, 
+    updateMessageById,
+    persistMessageById,
     persistLastMessage, 
     activeChatId,
     updateChat,
@@ -388,12 +394,9 @@ function AppLoaded(): JSX.Element {
   const [summaryText, setSummaryText] = useState('')
   const [summaryUpdatedAt, setSummaryUpdatedAt] = useState<number | null>(null)
   const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false)
-  const [dangerousCommandConfirmOpen, setDangerousCommandConfirmOpen] = useState(false)
-  const [dangerousCommandConfirmText, setDangerousCommandConfirmText] = useState('')
   const [chatIsAtBottom, setChatIsAtBottom] = useState(true)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const [virtualApi, setVirtualApi] = useState<VirtualListApi | null>(null)
-  const dangerousCommandConfirmResolverRef = useRef<((ok: boolean) => void) | null>(null)
 
   const activeChat = useMemo(() => chats.find((c) => c.id === activeChatId), [chats, activeChatId])
   const persistedCompression = useMemo(() => ((activeChat as any)?.meta?.compression as any) || null, [activeChat])
@@ -426,6 +429,116 @@ function AppLoaded(): JSX.Element {
     next.splice(idx + 1, 0, synthetic)
     return next
   }, [messages, hasRuntimeCompression, persistedCompressionSummary, persistedCompressionUntilId, activeChatId])
+
+  const effectiveTurnIdByMessageId = useMemo(() => {
+    const map: Record<string, string> = {}
+    let fallbackSeq = 0
+    let currentTurnId = ''
+    for (const m of displayMessages as any[]) {
+      const mid = String(m?.id || '').trim()
+      if (!mid) continue
+      const explicitTurnId = String(m?.turnId || '').trim()
+      if (explicitTurnId) {
+        currentTurnId = explicitTurnId
+        map[mid] = explicitTurnId
+        continue
+      }
+      if (m?.role === 'user' || !currentTurnId) {
+        fallbackSeq += 1
+        currentTurnId = `legacy-turn:${fallbackSeq}`
+      }
+      map[mid] = currentTurnId
+    }
+    return map
+  }, [displayMessages])
+
+  const latestTurnId = useMemo(() => {
+    for (let i = displayMessages.length - 1; i >= 0; i -= 1) {
+      const mid = String((displayMessages[i] as any)?.id || '').trim()
+      const tid = mid ? String(effectiveTurnIdByMessageId[mid] || '').trim() : ''
+      if (tid) return tid
+    }
+    return ''
+  }, [displayMessages, effectiveTurnIdByMessageId])
+
+  const turnProcessStatsById = useMemo(() => {
+    const map: Record<
+      string,
+      { reasoningCount: number; toolCount: number; skillCount: number; hasProcess: boolean; finalAssistantMessageId: string }
+    > = {}
+    const skillSets: Record<string, Set<string>> = {}
+    const skillCalls: Record<string, number> = {}
+    const parseSkillId = (tr: any): string => {
+      const raw = String(tr?.argsPreview?.text || '').trim()
+      if (!raw) return ''
+      try {
+        const obj = JSON.parse(raw)
+        const sid = String(obj?.id || '').trim()
+        return sid
+      } catch {
+        return ''
+      }
+    }
+    for (const m of displayMessages as any[]) {
+      const mid = String(m?.id || '').trim()
+      const tid = mid ? String(effectiveTurnIdByMessageId[mid] || '').trim() : ''
+      if (!tid) continue
+      const current = map[tid] || { reasoningCount: 0, toolCount: 0, skillCount: 0, hasProcess: false, finalAssistantMessageId: '' }
+      if (m?.role === 'assistant') {
+        current.finalAssistantMessageId = String(m?.id || '').trim() || current.finalAssistantMessageId
+        const reasoning = String(m?.meta?.reasoningText || '').trim()
+        if (reasoning) current.reasoningCount += 1
+      } else if (m?.role === 'tool') {
+        const traces = Array.isArray(m?.meta?.toolTraces) ? m.meta.toolTraces : []
+        if (traces.length) {
+          current.toolCount += traces.length
+          for (const tr of traces) {
+            const rawName = String(tr?.name || '').trim()
+            const name = rawName.replace(/^tool_start:/, '').replace(/^tool_done:/, '').replace(/^tool_end:/, '').trim()
+            if (name !== 'load_skill') continue
+            skillCalls[tid] = (skillCalls[tid] || 0) + 1
+            const sid = parseSkillId(tr)
+            if (!sid) continue
+            if (!skillSets[tid]) skillSets[tid] = new Set<string>()
+            skillSets[tid].add(sid)
+          }
+        }
+      }
+      current.skillCount = skillSets[tid]?.size || skillCalls[tid] || 0
+      current.hasProcess = current.reasoningCount > 0 || current.toolCount > 0 || current.skillCount > 0
+      map[tid] = current
+    }
+    return map
+  }, [displayMessages, effectiveTurnIdByMessageId])
+
+  const turnFirstAssistantMessageIdById = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const m of displayMessages as any[]) {
+      const mid = String(m?.id || '').trim()
+      const tid = mid ? String(effectiveTurnIdByMessageId[mid] || '').trim() : ''
+      if (!tid || m?.role !== 'assistant') continue
+      if (!map[tid]) map[tid] = mid
+    }
+    return map
+  }, [displayMessages, effectiveTurnIdByMessageId])
+
+  const dangerousApprovalsByTurn = useMemo(() => {
+    const map: Record<string, Array<{ command: string; status: 'approved_once' | 'approved_thread' | 'rejected' }>> = {}
+    const normalizeCommand = (raw: unknown) => String(raw || '').replace(/\s+/g, ' ').trim()
+    for (const m of displayMessages as any[]) {
+      const mid = String(m?.id || '').trim()
+      const turnId = mid ? String(effectiveTurnIdByMessageId[mid] || '').trim() : ''
+      if (!turnId || m?.role !== 'assistant') continue
+      const command = normalizeCommand(m?.meta?.dangerousCommandApproval?.command)
+      const status = String(m?.meta?.dangerousCommandApproval?.status || '').trim()
+      if (!command) continue
+      if (status === 'approved_once' || status === 'approved_thread' || status === 'rejected') {
+        if (!Array.isArray(map[turnId])) map[turnId] = []
+        map[turnId].push({ command, status })
+      }
+    }
+    return map
+  }, [displayMessages, effectiveTurnIdByMessageId])
 
   useEffect(() => {
     void resolveBackendBaseUrl()
@@ -1026,6 +1139,48 @@ function AppLoaded(): JSX.Element {
   const activeProject = activeProjectId ? projects.find((p: any) => String(p?.id || '').trim() === activeProjectId) || null : null
   const activeProjectDir = String((activeProject as any)?.dir || '').trim()
   const activeProjectName = String((activeProject as any)?.name || '').trim()
+  const [topGitBranch, setTopGitBranch] = useState('')
+  const [topGitRepoDir, setTopGitRepoDir] = useState('')
+
+  useEffect(() => {
+    let canceled = false
+    const loadTopGitBranch = async () => {
+      const fallbackWorkspaceDir = String(settings.workspaceDir || '').trim()
+      const base = String(activeProjectDir || fallbackWorkspaceDir).trim()
+      if (!base) {
+        if (!canceled) {
+          setTopGitBranch('')
+          setTopGitRepoDir('')
+        }
+        return
+      }
+      try {
+        const repoRes = await window.anima.git.checkIsRepo(base)
+        if (!repoRes?.ok || !repoRes.isRepo) {
+          if (!canceled) {
+            setTopGitBranch('')
+            setTopGitRepoDir('')
+          }
+          return
+        }
+        const branchRes = await window.anima.git.getBranches(base)
+        const branch = String(branchRes?.current || branchRes?.branches?.[0] || 'HEAD').trim()
+        if (!canceled) {
+          setTopGitBranch(branch)
+          setTopGitRepoDir(base)
+        }
+      } catch {
+        if (!canceled) {
+          setTopGitBranch('')
+          setTopGitRepoDir('')
+        }
+      }
+    }
+    void loadTopGitBranch()
+    return () => {
+      canceled = true
+    }
+  }, [activeProjectDir, settings.workspaceDir])
 
   const formatTokenCount = (n?: number) => {
     if (n == null || Number.isNaN(n)) return '—'
@@ -1359,7 +1514,7 @@ function AppLoaded(): JSX.Element {
     }
   }
 
-  const buildComposerPayload = (opts?: { dangerousCommandApprovals?: string[] }) => {
+  const buildComposerPayload = (opts?: { dangerousCommandApprovals?: string[]; dangerousCommandAllowForThread?: boolean }) => {
     const workspaceDir = resolveWorkspaceDir()
     const enabledToolIds = composer.enabledToolIds.length ? composer.enabledToolIds : settings.toolsEnabledIds
     const enabledMcpServerIds = composer.enabledMcpServerIds.length ? composer.enabledMcpServerIds : settings.mcpEnabledServerIds
@@ -1373,9 +1528,14 @@ function AppLoaded(): JSX.Element {
       ? opts?.dangerousCommandApprovals.filter((x) => String(x || '').trim()).map((x) => String(x).trim())
       : []
 
+    const chatId = String(useStore.getState().activeChatId || activeChatId || '').trim()
+    const dangerousCommandAllowForThread =
+      Boolean(opts?.dangerousCommandAllowForThread) ||
+      (chatId ? dangerousApprovalThreadsRef.current.has(chatId) : false)
+
     return {
       attachments: composer.attachments.map((a) => ({ path: a.path, mode: a.mode })),
-      chatId: String(useStore.getState().activeChatId || activeChatId || '').trim(),
+      chatId,
       workspaceDir,
       toolMode: composer.toolMode || settings.defaultToolMode,
       permissionMode: composer.permissionMode || 'workspace_whitelist',
@@ -1389,7 +1549,8 @@ function AppLoaded(): JSX.Element {
       maxOutputTokens: selectedModelConfig?.config?.maxOutputTokens,
       jsonConfig: selectedModelConfig?.config?.jsonConfig,
       thinkingLevel,
-      dangerousCommandApprovals
+      dangerousCommandApprovals,
+      dangerousCommandAllowForThread
     }
   }
 
@@ -1462,13 +1623,6 @@ function AppLoaded(): JSX.Element {
     updateComposer({ permissionMode: nextMode })
   }
 
-  const confirmDangerousCommand = (command: string): Promise<boolean> =>
-    new Promise((resolve) => {
-      dangerousCommandConfirmResolverRef.current = resolve
-      setDangerousCommandConfirmText(command)
-      setDangerousCommandConfirmOpen(true)
-    })
-
   const t = (() => {
     const dict = {
       en: {
@@ -1481,6 +1635,20 @@ function AppLoaded(): JSX.Element {
         noProviderActive: 'No Provider Active',
         settings: 'Settings',
         noProject: 'No project selected',
+        foldProcessSummary: (thinking: number, tools: number, skills: number) =>
+          `Thought ${thinking} times, tools ${tools} calls, skills ${skills}`,
+        foldProcessExpand: 'Expand process',
+        foldProcessCollapse: 'Collapse process',
+        dangerousApprovalQuestion: 'Do you want to run this dangerous command?',
+        dangerousApprovalOptionOnce: 'Yes',
+        dangerousApprovalOptionAlways: 'Yes, do not intercept again in this conversation',
+        dangerousApprovalOptionReject: 'No',
+        dangerousApprovalSubmit: 'Submit',
+        dangerousApprovalPending: 'Waiting for your choice',
+        dangerousApprovalRejected: 'Canceled',
+        dangerousApprovalStatusApprovedOnce: 'Allowed',
+        dangerousApprovalStatusApprovedThread: 'Allowed (this conversation)',
+        dangerousApprovalStatusRejected: 'Rejected',
         proxyOrKeyError: (msg: string) => `Error: ${msg}\n\nPlease check your API Key and Network settings.`,
         composer: {
           attachments: 'Attachments',
@@ -1554,6 +1722,20 @@ function AppLoaded(): JSX.Element {
         noProviderActive: '未启用提供商',
         settings: '设置',
         noProject: '未选择项目',
+        foldProcessSummary: (thinking: number, tools: number, skills: number) =>
+          `思考了${thinking}次，工具调用${tools}次，技能使用${skills}个`,
+        foldProcessExpand: '展开过程',
+        foldProcessCollapse: '收起过程',
+        dangerousApprovalQuestion: '是否执行这个危险命令？',
+        dangerousApprovalOptionOnce: '是',
+        dangerousApprovalOptionAlways: '是，本次对话不再拦截',
+        dangerousApprovalOptionReject: '否',
+        dangerousApprovalSubmit: '提交',
+        dangerousApprovalPending: '等待你的选择',
+        dangerousApprovalRejected: '已取消',
+        dangerousApprovalStatusApprovedOnce: '已允许',
+        dangerousApprovalStatusApprovedThread: '本次对话已允许',
+        dangerousApprovalStatusRejected: '已拒绝',
         proxyOrKeyError: (msg: string) => `错误：${msg}\n\n请检查 API Key 与网络代理设置。`,
         composer: {
           attachments: '附件',
@@ -1626,6 +1808,20 @@ function AppLoaded(): JSX.Element {
         noProviderActive: 'プロバイダー未有効',
         settings: '設定',
         noProject: 'プロジェクト未選択',
+        foldProcessSummary: (thinking: number, tools: number, skills: number) =>
+          `思考 ${thinking} 回、ツール ${tools} 回、スキル ${skills} 件`,
+        foldProcessExpand: 'プロセスを表示',
+        foldProcessCollapse: 'プロセスを折りたたむ',
+        dangerousApprovalQuestion: 'この危険なコマンドを実行しますか？',
+        dangerousApprovalOptionOnce: 'はい',
+        dangerousApprovalOptionAlways: 'はい、この会話では以後ブロックしない',
+        dangerousApprovalOptionReject: 'いいえ',
+        dangerousApprovalSubmit: '送信',
+        dangerousApprovalPending: '選択待ち',
+        dangerousApprovalRejected: 'キャンセル済み',
+        dangerousApprovalStatusApprovedOnce: '許可済み',
+        dangerousApprovalStatusApprovedThread: 'この会話で許可済み',
+        dangerousApprovalStatusRejected: '拒否済み',
         proxyOrKeyError: (msg: string) => `エラー: ${msg}\n\nAPI Key とネットワーク設定を確認してください。`,
         composer: {
           attachments: '添付',
@@ -1696,6 +1892,25 @@ function AppLoaded(): JSX.Element {
   const deriveReasoningSummaryFromTraces = (traces: ToolTrace[]) => {
     if (!traces.length) return undefined
     return `${t.trace.toolCount(traces.length)}`
+  }
+
+  const addDangerousApprovalMessage = (payload: DangerousCommandApprovalPayload, turnId: string) => {
+    addMessage({
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      content: '',
+      turnId,
+      meta: {
+        dangerousCommandApproval: {
+          command: payload.command,
+          matchedPattern: payload.matchedPattern,
+          runId: payload.runId,
+          approvalId: payload.approvalId,
+          status: 'pending',
+          selectedOption: 'approve_once'
+        }
+      }
+    } as any)
   }
 
   useEffect(() => {
@@ -2017,10 +2232,22 @@ function AppLoaded(): JSX.Element {
 
   const handleSend = async (
     rawText: string,
-    opts?: { skipUserMessage?: boolean; dangerousCommandApprovals?: string[] }
+    opts?: {
+      skipUserMessage?: boolean
+      dangerousCommandApprovals?: string[]
+      dangerousCommandAllowForThread?: boolean
+      resumeFromThread?: boolean
+      resumeRunId?: string
+      resumeApprovalId?: string
+      resumeDecision?: 'approve_once' | 'approve_thread' | 'reject'
+      turnIdOverride?: string
+    }
   ): Promise<boolean> => {
     const trimmed = String(rawText || '').trim()
-    if (!trimmed || isLoading) return false
+    const resumeFromThread = Boolean(opts?.resumeFromThread)
+    const resumeRunId = String(opts?.resumeRunId || '').trim()
+    const isRunResume = Boolean(resumeRunId)
+    if ((!trimmed && !resumeFromThread && !isRunResume) || isLoading) return false
     
     const isAcpProvider = String(effectiveProvider?.type || '').trim() === 'acp'
     if (!effectiveProvider) {
@@ -2052,7 +2279,7 @@ function AppLoaded(): JSX.Element {
     const controller = new AbortController()
     abortControllerRef.current = controller
 
-    const turnId = crypto.randomUUID()
+    const turnId = String(opts?.turnIdOverride || '').trim() || crypto.randomUUID()
     let currentAssistantId = crypto.randomUUID()
 
     const updateLastMessage = (content: string, meta?: any) => {
@@ -2061,10 +2288,11 @@ function AppLoaded(): JSX.Element {
         updateMessageById(activeChatId, currentAssistantId, { content, meta })
       }
     }
-    let nextRetryDangerousCommand: string | null = null
-
     const runSend = async () => {
-      const composerPayload = buildComposerPayload({ dangerousCommandApprovals: opts?.dangerousCommandApprovals || [] })
+      const composerPayload = buildComposerPayload({
+        dangerousCommandApprovals: opts?.dangerousCommandApprovals || [],
+        dangerousCommandAllowForThread: opts?.dangerousCommandAllowForThread
+      })
 
       if (!opts?.skipUserMessage) {
         addMessage({
@@ -2098,7 +2326,7 @@ function AppLoaded(): JSX.Element {
           meta: shouldShowAnalysis ? { reasoningStatus: 'pending', reasoningText: '' } : undefined
         } as any)
 
-        const runMessages = [{ role: 'user' as const, content: userMessage }]
+        const runMessages = (resumeFromThread || isRunResume) ? [] : [{ role: 'user' as const, content: userMessage }]
         const threadId = ensuredChatId || turnId
 
       if (settings.enableStreamingResponse) {
@@ -2336,6 +2564,10 @@ function AppLoaded(): JSX.Element {
                 }
                 if (e.type === 'trace' && e.trace) {
                   upsertTrace(e.trace)
+                  if (dangerousApprovalFromTrace) {
+                    void window.anima.acp.cancel({ sessionId, runId: turnId }).catch(() => {})
+                    resolve()
+                  }
                   return
                 }
                 if (e.type === 'error') {
@@ -2388,18 +2620,29 @@ function AppLoaded(): JSX.Element {
 
         if (shouldRunProvider) {
           const baseUrl = await resolveBackendBaseUrl()
-          const res = await fetch(`${baseUrl}/api/runs?stream=1`, {
+          const resumePath = isRunResume ? `/api/runs/${encodeURIComponent(resumeRunId)}/resume?stream=1` : '/api/runs?stream=1'
+          const res = await fetch(`${baseUrl}${resumePath}`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    messages: runMessages,
-                    composer: composerPayload,
-                    temperature: settings.temperature,
-                    maxTokens: settings.maxTokens,
-                    runId: turnId,
-                    threadId,
-                    useThreadMessages: true
-                  }),
+                  body: JSON.stringify(
+                    isRunResume
+                      ? {
+                          approvalId: String(opts?.resumeApprovalId || '').trim(),
+                          decision: String(opts?.resumeDecision || 'approve_once').trim(),
+                          composer: composerPayload,
+                          temperature: settings.temperature,
+                          maxTokens: settings.maxTokens
+                        }
+                      : {
+                          messages: runMessages,
+                          composer: composerPayload,
+                          temperature: settings.temperature,
+                          maxTokens: settings.maxTokens,
+                          runId: turnId,
+                          threadId,
+                          useThreadMessages: true
+                        }
+                  ),
                   signal: controller.signal
                 })
           if (!res.ok) {
@@ -2438,6 +2681,7 @@ function AppLoaded(): JSX.Element {
                 if (!jsonText) continue
                 const evt = JSON.parse(jsonText) as {
                   type?: string
+                  runId?: string
                   content?: string
                   stage?: string
                   step?: number
@@ -2447,6 +2691,12 @@ function AppLoaded(): JSX.Element {
                   traces?: ToolTrace[]
                   artifacts?: Artifact[]
                   trace?: ToolTrace
+                  approval?: {
+                    code?: string
+                    command?: string
+                    matchedPattern?: string
+                    approvalId?: string
+                  }
                   mode?: string
                   summaryPreview?: string
                   summaryUpdatedAt?: number
@@ -2460,6 +2710,20 @@ function AppLoaded(): JSX.Element {
                   startTyping()
                 } else if (evt.type === 'run') {
                   continue
+                } else if (evt.type === 'approval_required' && evt.approval) {
+                  const command = String(evt.approval.command || '').trim()
+                  if (command) {
+                    dangerousApprovalFromTrace = {
+                      code: String(evt.approval.code || '').trim() || 'dangerous_command_requires_approval',
+                      command,
+                      matchedPattern: String(evt.approval.matchedPattern || '').trim() || undefined,
+                      runId: String(evt.runId || resumeRunId || '').trim() || undefined,
+                      approvalId: String(evt.approval.approvalId || '').trim() || undefined
+                    }
+                    scanning = false
+                    reading = false
+                    break
+                  }
                 } else if (evt.type === 'stage' && typeof evt.stage === 'string' && evt.stage) {
                   assistantMeta = { ...assistantMeta, stage: evt.stage }
                   updateLastMessage(fullContent, assistantMeta)
@@ -2549,11 +2813,12 @@ function AppLoaded(): JSX.Element {
         const dangerousApproval = dangerousApprovalFromTrace as DangerousCommandApprovalPayload | null
         if (dangerousApproval) {
           stopTyping()
-          const confirmed = await confirmDangerousCommand(dangerousApproval.command)
-          if (confirmed) {
-            nextRetryDangerousCommand = dangerousApproval.command
-            return
+          if (reader) await reader.cancel().catch(() => {})
+          if (!String(dangerousApproval.runId || '').trim()) {
+            dangerousApproval.runId = String(turnId || '').trim() || undefined
           }
+          addDangerousApprovalMessage(dangerousApproval, turnId)
+          return
         }
         if (compressionSeenStart && !compressionEnded) ensureCompressionMsg('done', compressionFullContent)
         if (gotDone) {
@@ -2591,29 +2856,67 @@ function AppLoaded(): JSX.Element {
         await persistLastMessage()
       } else {
         const baseUrl = await resolveBackendBaseUrl()
-        const res = await fetch(`${baseUrl}/api/runs`, {
+        const resumeRunId = String(opts?.resumeRunId || '').trim()
+        const isRunResume = Boolean(resumeRunId)
+        const resumePath = isRunResume ? `/api/runs/${encodeURIComponent(resumeRunId)}/resume` : '/api/runs'
+        const res = await fetch(`${baseUrl}${resumePath}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            messages: runMessages,
-            composer: composerPayload,
-            temperature: settings.temperature,
-            maxTokens: settings.maxTokens,
-            runId: turnId,
-            threadId,
-            useThreadMessages: true
-          }),
+          body: JSON.stringify(
+            isRunResume
+              ? {
+                  approvalId: String(opts?.resumeApprovalId || '').trim(),
+                  decision: String(opts?.resumeDecision || 'approve_once').trim(),
+                  composer: composerPayload,
+                  temperature: settings.temperature,
+                  maxTokens: settings.maxTokens
+                }
+              : {
+                  messages: runMessages,
+                  composer: composerPayload,
+                  temperature: settings.temperature,
+                  maxTokens: settings.maxTokens,
+                  runId: turnId,
+                  threadId,
+                  useThreadMessages: true
+                }
+          ),
           signal: controller.signal
         })
         
         if (!res.ok) {
           const text = await res.text()
           const data = text ? JSON.parse(text) : null
+          if (res.status === 409 && String(data?.code || '').trim() === 'approval_required' && data?.approval) {
+            const command = String(data.approval.command || '').trim()
+            if (command) {
+              addDangerousApprovalMessage(
+                {
+                  code: String(data.approval.code || '').trim() || 'dangerous_command_requires_approval',
+                  command,
+                  matchedPattern: String(data.approval.matchedPattern || '').trim() || undefined,
+                  runId: String(data.runId || resumeRunId || '').trim() || undefined,
+                  approvalId: String(data.approval.approvalId || '').trim() || undefined
+                },
+                turnId
+              )
+              return
+            }
+          }
           const msg = data?.error || `HTTP ${res.status}`
           throw new Error(String(msg))
         }
 
-        const data = await res.json() as { ok: boolean; content?: string; usage?: BackendUsage; rateLimit?: BackendRateLimit; traces?: ToolTrace[]; artifacts?: Artifact[]; reasoning?: string }
+        const data = await res.json() as {
+          ok: boolean
+          runId?: string
+          content?: string
+          usage?: BackendUsage
+          rateLimit?: BackendRateLimit
+          traces?: ToolTrace[]
+          artifacts?: Artifact[]
+          reasoning?: string
+        }
         
         const content = typeof data.content === 'string' ? data.content : ''
         const usage = data.usage
@@ -2628,11 +2931,9 @@ function AppLoaded(): JSX.Element {
         if (dangerousTrace) {
           const parsed = parseDangerousCommandApproval(dangerousTrace?.error?.message)
           if (parsed) {
-            const confirmed = await confirmDangerousCommand(parsed.command)
-            if (confirmed) {
-              nextRetryDangerousCommand = parsed.command
-              return
-            }
+            parsed.runId = String(data.runId || '').trim() || parsed.runId
+            addDangerousApprovalMessage(parsed, turnId)
+            return
           }
         }
 
@@ -2685,12 +2986,6 @@ function AppLoaded(): JSX.Element {
       if (typingTimerRef.current) {
         window.clearInterval(typingTimerRef.current)
         typingTimerRef.current = null
-      }
-      if (nextRetryDangerousCommand) {
-        const cmd = nextRetryDangerousCommand
-        window.setTimeout(() => {
-          void handleSend(userMessage, { skipUserMessage: true, dangerousCommandApprovals: [cmd] })
-        }, 0)
       }
     }
     }
@@ -2904,53 +3199,6 @@ function AppLoaded(): JSX.Element {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-        <Dialog
-          open={dangerousCommandConfirmOpen}
-          onOpenChange={(open) => {
-            setDangerousCommandConfirmOpen(open)
-            if (!open && dangerousCommandConfirmResolverRef.current) {
-              dangerousCommandConfirmResolverRef.current(false)
-              dangerousCommandConfirmResolverRef.current = null
-            }
-          }}
-        >
-          <DialogContent className="max-w-[620px]">
-            <DialogHeader>
-              <DialogTitle>{t.composer.dangerousCommandConfirmTitle}</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-3">
-              <div className="text-sm text-muted-foreground leading-6">{t.composer.dangerousCommandConfirmDesc}</div>
-              <pre className="rounded-md border bg-muted/40 p-3 text-xs overflow-auto whitespace-pre-wrap break-all">{dangerousCommandConfirmText}</pre>
-            </div>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  const fn = dangerousCommandConfirmResolverRef.current
-                  dangerousCommandConfirmResolverRef.current = null
-                  setDangerousCommandConfirmOpen(false)
-                  setDangerousCommandConfirmText('')
-                  fn?.(false)
-                }}
-              >
-                {t.composer.dangerousCommandConfirmCancel}
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={() => {
-                  const fn = dangerousCommandConfirmResolverRef.current
-                  dangerousCommandConfirmResolverRef.current = null
-                  setDangerousCommandConfirmOpen(false)
-                  setDangerousCommandConfirmText('')
-                  fn?.(true)
-                }}
-              >
-                {t.composer.dangerousCommandConfirmContinue}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
         {isSettingsWindow ? (
           <SettingsWindow />
         ) : (
@@ -2990,25 +3238,27 @@ function AppLoaded(): JSX.Element {
                 )}
               </div>
 
-              <div className="absolute left-0 right-0 top-[6px] flex items-center justify-center pointer-events-none">
-                <div className="flex items-center gap-2 text-xs text-primary">
-                  <span>{messages.length} 条消息</span>
-                  <span>·</span>
-                  <Folder className="w-3.5 h-3.5" />
-                  <TooltipProvider>
-                    <Tooltip delayDuration={300}>
-                      <TooltipTrigger asChild>
-                        <span className="max-w-[300px] truncate pointer-events-auto cursor-help font-medium">
-                          {activeProjectName || t.noProject}
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {activeProjectDir || t.noProject}
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+              {topGitRepoDir ? (
+                <div className="absolute left-0 right-0 top-[6px] flex items-center justify-center pointer-events-none">
+                  <div className="flex items-center gap-2 text-xs text-primary">
+                    <span>{messages.length} 条消息</span>
+                    <span>·</span>
+                    <GitBranch className="w-3.5 h-3.5" />
+                    <TooltipProvider>
+                      <Tooltip delayDuration={300}>
+                        <TooltipTrigger asChild>
+                          <span className="max-w-[300px] truncate pointer-events-auto cursor-help font-medium">
+                            {topGitBranch}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {topGitRepoDir}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
                 </div>
-              </div>
+              ) : null}
             </header>
 
             <div className="flex flex-1 overflow-hidden">
@@ -3042,32 +3292,198 @@ function AppLoaded(): JSX.Element {
                     onApi={setVirtualApi}
                     renderItem={(msg: any, ctx) => {
                       const active = Boolean(ctx.active)
+                      const msgIdForTurn = String(msg?.id || '').trim()
+                      const turnId = msgIdForTurn ? String(effectiveTurnIdByMessageId[msgIdForTurn] || '').trim() : ''
+                      const collapseHistoricalProcess = (settings as any).collapseHistoricalProcess !== false
+                      const isHistoricalTurn = Boolean(collapseHistoricalProcess && turnId && turnId !== latestTurnId)
+                      const turnExpanded = Boolean(turnId && collapsedTurnOpenById[turnId])
+                      const shouldHideProcess = Boolean(isHistoricalTurn && !turnExpanded)
+                      const turnStats = turnId ? turnProcessStatsById[turnId] : undefined
+                      const isFirstAssistantOfTurn =
+                        msg.role === 'assistant' &&
+                        Boolean(turnId) &&
+                        String(msg?.id || '').trim() === String(turnFirstAssistantMessageIdById[turnId] || '').trim()
+                      const isFinalAssistantOfTurn =
+                        msg.role === 'assistant' &&
+                        Boolean(turnStats?.finalAssistantMessageId) &&
+                        String(msg?.id || '').trim() === String(turnStats?.finalAssistantMessageId || '').trim()
+                      const isLatestTurn = Boolean(turnId && turnId === latestTurnId)
+                      const showTurnProcessSummary = Boolean(turnStats?.hasProcess && isFirstAssistantOfTurn && !isLatestTurn)
+                      const isLatestMessage = ctx.index === displayMessages.length - 1
+                      const isTypingAssistantMessage = Boolean(msg.role === 'assistant' && isLoading && isLatestMessage)
                       if (msg.role !== 'user' && msg.role !== 'tool') {
                         const meta: any = msg.meta || {}
                         const hasReasoning = typeof meta.reasoningText === 'string' && meta.reasoningText.trim().length > 0
                         const hasTokens = Boolean(settings.showTokenUsage && meta.totalTokens != null)
                         const hasContent = typeof msg.content === 'string' && msg.content.trim().length > 0
                         const hasCompression = meta.compressionState === 'running' || meta.compressionState === 'done'
+                        const hasDangerousApproval =
+                          Boolean(meta?.dangerousCommandApproval) &&
+                          typeof meta?.dangerousCommandApproval?.command === 'string' &&
+                          meta?.dangerousCommandApproval?.command.trim().length > 0
 
-                        if (!hasContent && !hasReasoning && !hasTokens && !hasCompression) return null
+                        if (!hasContent && !hasReasoning && !hasTokens && !hasCompression && !hasDangerousApproval && !showTurnProcessSummary) return null
                       }
+
+                      if (msg.role === 'assistant' && shouldHideProcess && !isFinalAssistantOfTurn && !isFirstAssistantOfTurn) {
+                        return null
+                      }
+
+                      if (msg.role === 'tool' && shouldHideProcess) {
+                        return null
+                      }
+
+                      const turnDangerousApprovals = turnId ? dangerousApprovalsByTurn[turnId] || [] : []
 
                       if (msg.role === 'tool' && !active) {
                         const traces = Array.isArray(msg.meta?.toolTraces) ? msg.meta.toolTraces : []
-                        const names = traces
-                          .map((t: any) => String(t?.name || '').trim())
-                          .map((n: string) => n.replace(/^tool_start:/, '').replace(/^tool_done:/, '').replace(/^tool_end:/, '').trim())
-                          .filter((n: string) => n && n !== 'model_call' && n !== 'tool_call')
-                        const label = names.length ? `${names[0]}${names.length > 1 ? ` 等 ${names.length} 个` : ''}` : `${traces.length} 个工具调用`
+                        const label = `${traces.length} 个工具调用`
                         return (
                           <div className="w-full py-0.5">
-                            <div className="text-[12px] text-muted-foreground">{label}</div>
+                            <div className="text-[12px] text-muted-foreground flex items-center gap-2">
+                              <span>{label}</span>
+                            </div>
                           </div>
                         )
                       }
 
+                      if (msg.role === 'assistant') {
+                        const meta: any = msg.meta || {}
+                        const approval = meta?.dangerousCommandApproval
+                        if (approval && typeof approval.command === 'string' && approval.command.trim()) {
+                          const selectedOption = String(approval.selectedOption || 'approve_once') as
+                            | 'approve_once'
+                            | 'approve_thread'
+                            | 'approve_whitelist'
+                            | 'reject'
+                          const status = String(approval.status || 'pending')
+                          if (status !== 'pending' || approval.dismissed) return null
+                          const disabled = status !== 'pending'
+                          const options: Array<{ id: 'approve_once' | 'approve_thread' | 'reject'; label: string }> = [
+                            { id: 'approve_once', label: t.dangerousApprovalOptionOnce },
+                            { id: 'approve_thread', label: t.dangerousApprovalOptionAlways },
+                            { id: 'reject', label: t.dangerousApprovalOptionReject }
+                          ]
+                          const patchApproval = (patch: Record<string, any>) => {
+                            const nextMeta = {
+                              ...meta,
+                              dangerousCommandApproval: { ...approval, ...patch }
+                            }
+                            updateMessageById(activeChatId || '', String(msg.id || ''), { meta: nextMeta } as any)
+                            if (activeChatId) {
+                              void persistMessageById(activeChatId, String(msg.id || ''), String(msg.content || ''), nextMeta as any)
+                            }
+                          }
+                          const submitApproval = () => {
+                            if (disabled) return
+                            const command = String(approval.command || '').trim()
+                            if (!command) return
+                            const activeCid = String(activeChatId || '').trim()
+                            const allowForThread = selectedOption === 'approve_thread' || selectedOption === 'approve_whitelist'
+                            if (selectedOption === 'reject') {
+                              patchApproval({ status: 'rejected', dismissed: true })
+                            } else if (allowForThread) {
+                              if (activeCid) dangerousApprovalThreadsRef.current.add(activeCid)
+                              patchApproval({ status: 'approved_thread', dismissed: true })
+                            } else {
+                              patchApproval({ status: 'approved_once', dismissed: true })
+                            }
+                            const runId = String(approval.runId || '').trim()
+                            const approvalId = String(approval.approvalId || '').trim()
+                            const decision =
+                              selectedOption === 'reject'
+                                ? 'reject'
+                                : allowForThread
+                                  ? 'approve_thread'
+                                  : 'approve_once'
+                            if (runId) {
+                              void handleSend('', {
+                                skipUserMessage: true,
+                                dangerousCommandApprovals: selectedOption === 'reject' ? [] : [command],
+                                dangerousCommandAllowForThread: allowForThread,
+                                resumeRunId: runId,
+                                resumeApprovalId: approvalId,
+                                resumeDecision: decision,
+                                turnIdOverride: String(msg?.turnId || '').trim() || undefined
+                              })
+                              return
+                            }
+                            void handleSend('', {
+                              skipUserMessage: true,
+                              dangerousCommandApprovals: selectedOption === 'reject' ? [] : [command],
+                              dangerousCommandAllowForThread: allowForThread,
+                              resumeFromThread: true,
+                              turnIdOverride: String(msg?.turnId || '').trim() || undefined
+                            })
+                          }
+                          return (
+                            <div className="py-1.5">
+                              <div className="rounded-2xl border border-black/6 bg-white p-4 space-y-3">
+                                <div className="text-[14px] font-medium">{t.dangerousApprovalQuestion}</div>
+                                <pre className="rounded-md border bg-muted/50 px-3 py-2 text-[12px] font-mono whitespace-pre-wrap break-all">{approval.command}</pre>
+                                <div className="space-y-1">
+                                  {options.map((opt, idx) => {
+                                    const selected = selectedOption === opt.id
+                                    return (
+                                      <button
+                                        key={opt.id}
+                                        type="button"
+                                        disabled={disabled}
+                                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-[13px] ${
+                                          selected ? 'bg-muted' : 'hover:bg-muted/60'
+                                        } ${disabled ? 'opacity-70 cursor-default' : ''}`}
+                                        onClick={() => patchApproval({ selectedOption: opt.id })}
+                                      >
+                                        <span className="w-4 shrink-0 text-muted-foreground">{idx + 1}.</span>
+                                        <span className="flex-1">{opt.label}</span>
+                                        {selected ? <Check className="w-3.5 h-3.5 text-muted-foreground" /> : null}
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[12px] text-muted-foreground">
+                                    {status === 'pending' ? t.dangerousApprovalPending : status === 'rejected' ? t.dangerousApprovalRejected : ''}
+                                  </span>
+                                  <Button size="sm" className="h-8 rounded-full px-4" disabled={disabled} onClick={submitApproval}>
+                                    {t.dangerousApprovalSubmit}
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        }
+                      }
+
                       return (
                       <div className="w-full">
+                      {showTurnProcessSummary ? (
+                        <div className="py-0.5">
+                          <button
+                            type="button"
+                            className="group w-full flex items-center gap-2 min-w-0 py-0.5 rounded-md text-left hover:bg-muted/10 transition-colors motion-reduce:transition-none"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              if (!turnId) return
+                              setCollapsedTurnOpenById((prev) => ({ ...prev, [turnId]: !turnExpanded }))
+                            }}
+                            aria-expanded={turnExpanded}
+                          >
+                            <span className="text-[12px] font-medium text-muted-foreground group-hover:text-foreground truncate">
+                              {t.foldProcessSummary(turnStats!.reasoningCount, turnStats!.toolCount, turnStats!.skillCount)}
+                            </span>
+                            <span
+                              aria-hidden="true"
+                              className={`h-4 w-4 shrink-0 text-muted-foreground/70 transition-opacity motion-reduce:transition-none flex items-center justify-center ${
+                                turnExpanded ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                              }`}
+                            >
+                              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${turnExpanded ? 'rotate-0' : '-rotate-90'}`} />
+                            </span>
+                          </button>
+                        </div>
+                      ) : null}
                       {msg.role === 'user' ? (
                         <div className={`py-3 flex justify-end ${msg.id === lastUserMessageId ? 'sticky top-2 z-20' : ''}`}>
                            <div className="flex flex-col items-end gap-2">
@@ -3113,20 +3529,18 @@ function AppLoaded(): JSX.Element {
                            </div>
                         </div>
                       ) : msg.role === 'tool' ? (
-                        <div className="py-0">
+                        <div className="py-0.5">
                             {Array.isArray(msg.meta?.toolTraces) && msg.meta?.toolTraces.length > 0 && (() => {
                               const traces = msg.meta?.toolTraces || []
 
                               return (
-                                <div className="space-y-1">
+                                <div className="space-y-0.5">
                                   {traces.map((tr: any) => {
                                     const detailKey = `${msg.id}:${tr.id}`
                                     const detailOpen = !!traceDetailOpenByKey[detailKey]
                                     const isRunning = tr.status === 'running'
                                     const isFailed = tr.status === 'failed'
 
-                                    const iconClass = `w-3.5 h-3.5 ${isRunning ? 'text-blue-500 animate-pulse' : isFailed ? 'text-red-500' : 'text-muted-foreground'}`
-                                    let icon = <Compass className={iconClass} />
                                     let entity = tr.name
                                     const displayTraceName = (() => {
                                       const raw = String(tr.name || '').trim()
@@ -3265,27 +3679,59 @@ function AppLoaded(): JSX.Element {
                                     }
                                     let resultSummary = ''
                                     let detailMarkdown = ''
+                                    const traceKind: 'execute' | 'search' | 'browse' | 'read' | 'edit' =
+                                      tr.name === 'rg_search' || tr.name === 'glob_files' || tr.name === 'WebSearch'
+                                        ? 'search'
+                                        : tr.name === 'read_file'
+                                          ? 'read'
+                                          : tr.name === 'write_file' || tr.name === 'replace_file' || tr.name === 'edit_file'
+                                            ? 'edit'
+                                            : tr.name === 'WebFetch'
+                                              ? 'browse'
+                                              : 'execute'
+                                    const traceStatusText = (() => {
+                                      const textMap = {
+                                        zh: {
+                                          execute: { running: '在执行', done: '已执行', failed: '执行失败' },
+                                          search: { running: '在搜索', done: '已搜索', failed: '搜索失败' },
+                                          browse: { running: '在浏览', done: '已浏览', failed: '浏览失败' },
+                                          read: { running: '在阅读', done: '已读取', failed: '读取失败' },
+                                          edit: { running: '在编辑', done: '已编辑', failed: '编辑失败' }
+                                        },
+                                        ja: {
+                                          execute: { running: '実行中', done: '実行完了', failed: '実行失敗' },
+                                          search: { running: '検索中', done: '検索完了', failed: '検索失敗' },
+                                          browse: { running: '閲覧中', done: '閲覧完了', failed: '閲覧失敗' },
+                                          read: { running: '読込中', done: '読込完了', failed: '読込失敗' },
+                                          edit: { running: '編集中', done: '編集完了', failed: '編集失敗' }
+                                        },
+                                        en: {
+                                          execute: { running: 'Running', done: 'Executed', failed: 'Failed' },
+                                          search: { running: 'Searching', done: 'Searched', failed: 'Search failed' },
+                                          browse: { running: 'Browsing', done: 'Browsed', failed: 'Browse failed' },
+                                          read: { running: 'Reading', done: 'Read', failed: 'Read failed' },
+                                          edit: { running: 'Editing', done: 'Edited', failed: 'Edit failed' }
+                                        }
+                                      } as const
+                                      const lang = traceLang === 'zh' ? 'zh' : traceLang === 'ja' ? 'ja' : 'en'
+                                      const key = isFailed ? 'failed' : isRunning ? 'running' : 'done'
+                                      return textMap[lang][traceKind][key]
+                                    })()
 
                                     if (tr.name === 'bash') {
-                                      icon = <Terminal className={iconClass} />
                                       entity = normalizeValue(argsObj.command)
                                     } else if (tr.name === 'rg_search' || tr.name === 'glob_files') {
-                                      icon = <Search className={iconClass} />
                                       entity = normalizeValue(argsObj.pattern)
                                       if (argsObj.path) entity += ` in ${normalizeValue(argsObj.path)}`
                                     } else if (tr.name === 'read_file') {
-                                      icon = <Eye className={iconClass} />
                                       entity = normalizeValue(argsObj.path)
                                     } else if (tr.name === 'write_file' || tr.name === 'replace_file' || tr.name === 'edit_file') {
-                                      icon = <PenLine className={iconClass} />
                                       entity = normalizeValue(argsObj.path)
                                     } else if (tr.name === 'WebSearch') {
-                                      icon = <Search className={iconClass} />
                                       entity = normalizeValue(argsObj.query)
                                       const count = Array.isArray(resultItems) ? resultItems.length : undefined
                                       resultSummary = typeof count === 'number' ? traceI18n.searchResultSummary(count) : ''
                                     } else if (tr.name === 'WebFetch') {
-                                      icon = <Eye className={iconClass} />
                                       entity = normalizeValue(argsObj.url)
                                     } else {
                                       entity = normalizeValue(entity)
@@ -3297,6 +3743,26 @@ function AppLoaded(): JSX.Element {
                                         tr.name === 'replace_file' ||
                                         tr.name === 'edit_file') &&
                                       Boolean(entity)
+                                    const normalizeCommand = (raw: unknown) => String(raw || '').replace(/\s+/g, ' ').trim()
+                                    const bashCommandNormalized = tr.name === 'bash' ? normalizeCommand(argsObj.command) : ''
+                                    const matchedApproval =
+                                      tr.name === 'bash'
+                                        ? turnDangerousApprovals.find((a) => normalizeCommand(a.command) === bashCommandNormalized)
+                                        : undefined
+                                    const toolApprovalText =
+                                      matchedApproval?.status === 'approved_once'
+                                        ? t.dangerousApprovalStatusApprovedOnce
+                                        : matchedApproval?.status === 'approved_thread'
+                                          ? t.dangerousApprovalStatusApprovedThread
+                                          : matchedApproval?.status === 'rejected'
+                                            ? t.dangerousApprovalStatusRejected
+                                            : ''
+                                    const runningStatusText = (() => {
+                                      if (!isRunning) return traceStatusText
+                                      const subject = String(entity || '').trim()
+                                      if (!subject) return traceStatusText
+                                      return `${traceStatusText} ${subject}`
+                                    })()
 
                                     if (tr.name === 'WebSearch' && Array.isArray(resultItems)) {
                                       const circled = [
@@ -3373,7 +3839,7 @@ function AppLoaded(): JSX.Element {
                                       (tr.status === 'failed' && Boolean(tr.error?.message))
 
                                     return (
-                                      <div key={tr.id} className="group rounded-lg hover:bg-muted/40 transition-colors px-2 py-0 -mx-2">
+                                      <div key={tr.id} className="group rounded-lg hover:bg-muted/40 transition-colors py-0.5">
                                         <div
                                           className={`flex items-center gap-2 ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
                                           onClick={() => {
@@ -3381,26 +3847,13 @@ function AppLoaded(): JSX.Element {
                                             setTraceDetailOpenByKey((s) => ({ ...s, [detailKey]: !s[detailKey] }))
                                           }}
                                         >
-                                          <div className="relative flex items-center justify-center w-4 h-4 shrink-0">
-                                            <span className="absolute inset-0 flex items-center justify-center transition-opacity group-hover:opacity-0">
-                                              {icon}
-                                            </span>
-                                            {hasDetail ? (
-                                              <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="absolute inset-0 h-4 w-4 p-0 text-muted-foreground/50 hover:text-foreground opacity-0 group-hover:opacity-100 transition-all"
-                                                onClick={() => setTraceDetailOpenByKey((s) => ({ ...s, [detailKey]: !s[detailKey] }))}
-                                              >
-                                                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${detailOpen ? 'rotate-180' : ''}`} />
-                                              </Button>
-                                            ) : null}
-                                          </div>
+                                          <span
+                                            className={`shrink-0 text-[12px] font-medium ${isRunning ? 'anima-flow-text' : 'text-muted-foreground group-hover:text-foreground'}`}
+                                          >
+                                            {runningStatusText}
+                                          </span>
                                           
                                           <div className="min-w-0 flex-1 flex items-center gap-2">
-                                            {displayTraceName ? (
-                                              <span className="font-mono text-[12px] text-foreground hover:text-foreground/80 cursor-pointer">{displayTraceName}</span>
-                                            ) : null}
                                             {canOpenEntityInFiles ? (
                                               <button
                                                 type="button"
@@ -3427,6 +3880,21 @@ function AppLoaded(): JSX.Element {
                                             <span className="text-[11px] text-muted-foreground/40 whitespace-nowrap tabular-nums">
                                               {typeof tr.durationMs === 'number' ? `${tr.durationMs}ms` : ''}
                                             </span>
+                                            {hasDetail ? (
+                                              <span
+                                                aria-hidden="true"
+                                                className={`h-4 w-4 shrink-0 text-muted-foreground/70 transition-opacity motion-reduce:transition-none flex items-center justify-center ${
+                                                  detailOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                                                }`}
+                                              >
+                                                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${detailOpen ? 'rotate-0' : '-rotate-90'}`} />
+                                              </span>
+                                            ) : null}
+                                            {tr.name === 'bash' && toolApprovalText ? (
+                                              <span className="rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground bg-muted/30">
+                                                {toolApprovalText}
+                                              </span>
+                                            ) : null}
                                           </div>
                                         </div>
 
@@ -3530,6 +3998,7 @@ function AppLoaded(): JSX.Element {
                         <div className="py-0.5">
                           <div className="space-y-0.5">
                             {(() => {
+                              if (shouldHideProcess) return null
                               const meta = msg.meta || {}
                               const status = meta.reasoningStatus
                               const text = typeof meta.reasoningText === 'string' ? meta.reasoningText.trim() : ''
@@ -3561,7 +4030,7 @@ function AppLoaded(): JSX.Element {
                                 <div>
                                   <button
                                     type="button"
-                                    className="group w-full flex items-center gap-2 min-w-0 py-1.5 rounded-md text-left hover:bg-muted/10 transition-colors motion-reduce:transition-none"
+                                    className="group w-full flex items-center gap-2 min-w-0 py-0.5 rounded-md text-left hover:bg-muted/10 transition-colors motion-reduce:transition-none"
                                     onClick={(e) => {
                                       e.preventDefault()
                                       e.stopPropagation()
@@ -3569,28 +4038,30 @@ function AppLoaded(): JSX.Element {
                                     }}
                                     aria-expanded={open}
                                   >
-                                    <Brain className="w-3.5 h-3.5 text-muted-foreground/80 shrink-0" />
-                                    <span className="text-[12px] font-medium text-muted-foreground shrink-0">
+                                    <span
+                                      className={`text-[12px] font-medium shrink-0 ${
+                                        isThinking ? 'anima-flow-text' : 'text-muted-foreground group-hover:text-foreground'
+                                      }`}
+                                    >
                                       {headerText}
                                     </span>
                                     <span
                                       aria-hidden="true"
-                                      className="ml-auto opacity-0 group-hover:opacity-100 h-6 w-6 -mr-1 rounded-md hover:bg-black/5 dark:hover:bg-white/10 text-muted-foreground transition-opacity motion-reduce:transition-none flex items-center justify-center"
+                                      className={`h-4 w-4 shrink-0 text-muted-foreground/70 transition-opacity motion-reduce:transition-none flex items-center justify-center ${
+                                        open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                                      }`}
                                     >
                                       <ChevronDown
                                         className={`w-3.5 h-3.5 transition-transform motion-reduce:transition-none ${
-                                          open ? 'rotate-180' : ''
+                                          open ? 'rotate-0' : '-rotate-90'
                                         }`}
                                       />
                                     </span>
                                   </button>
 
                                   {open ? (
-                                    <div className="mt-1 border-l-2 border-muted/20 pl-3 text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words">
+                                    <div className="mt-1 text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words">
                                       {text}
-                                      {isThinking && (
-                                        <span className="inline-block w-1.5 h-3 bg-muted-foreground/50 ml-1 animate-pulse align-middle" />
-                                      )}
                                     </div>
                                   ) : null}
                                 </div>
@@ -3616,7 +4087,9 @@ function AppLoaded(): JSX.Element {
                                 <ReactMarkdown
                                   remarkPlugins={[remarkGfm, remarkMath]}
                                   rehypePlugins={[rehypeKatex, rehypeRaw]}
-                                  className="prose prose-sm dark:prose-invert max-w-none prose-p:text-[13px] prose-li:text-[13px] prose-table:text-[13px] prose-p:leading-relaxed prose-li:leading-relaxed prose-headings:font-semibold prose-h1:text-[21px] prose-h1:leading-[1.25] prose-h2:text-[18px] prose-h2:leading-[1.3] prose-h3:text-[16px] prose-h3:leading-[1.35] text-foreground/90"
+                                  className={`prose prose-sm dark:prose-invert max-w-none prose-p:text-[13px] prose-li:text-[13px] prose-table:text-[13px] prose-p:leading-relaxed prose-li:leading-relaxed prose-p:font-medium prose-li:font-medium prose-headings:font-semibold prose-h1:text-[21px] prose-h1:leading-[1.25] prose-h2:text-[18px] prose-h2:leading-[1.3] prose-h3:text-[16px] prose-h3:leading-[1.35] text-foreground/90 ${
+                                    isTypingAssistantMessage ? 'anima-typing-fade' : ''
+                                  }`}
                                   components={{
                                     pre: ({ children }) => <>{children}</>,
                                     code({ inline, className, children, ...props }: any) {
@@ -3746,7 +4219,13 @@ function AppLoaded(): JSX.Element {
                                 </ReactMarkdown>
                               </div>
                             ) : (
-                              <p className="whitespace-pre-wrap text-foreground/90">{msg.content || ''}</p>
+                              <p
+                                className={`whitespace-pre-wrap text-[13px] leading-relaxed font-medium text-foreground/90 ${
+                                  isTypingAssistantMessage ? 'anima-typing-fade' : ''
+                                }`}
+                              >
+                                {msg.content || ''}
+                              </p>
                             )}
                             {(() => {
                               const st = String((msg.meta as any)?.stage || '').trim()

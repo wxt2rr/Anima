@@ -87,13 +87,19 @@ def _matches_command_entry(command_text: str, entry: str) -> bool:
     e = str(entry or "").strip().lower()
     if not cmd or not e:
         return False
-    if cmd == e:
-        return True
-    if cmd.startswith(e + " "):
-        return True
-    first = cmd.split(None, 1)[0] if cmd.split() else ""
-    if first == e:
-        return True
+    # 复合命令（如 "pwd && ls -la"）需要逐段匹配，避免只检查首段导致漏判。
+    parts = re.split(r"(?:&&|\|\||\||;|\n)+", cmd)
+    for part in parts:
+        s = str(part or "").strip()
+        if not s:
+            continue
+        if s == e:
+            return True
+        if s.startswith(e + " "):
+            return True
+        first = s.split(None, 1)[0] if s.split() else ""
+        if first == e:
+            return True
     return False
 
 
@@ -961,7 +967,8 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
                     s = str(item or "").strip().lower()
                     if s:
                         bypass.add(s)
-            if lowered not in bypass:
+            allow_for_thread = bool(args.get("_animaDangerousCommandAllowForThread"))
+            if not allow_for_thread and lowered not in bypass:
                 hit_block = _matches_any_command(lowered, blocked)
                 hit_allow = _matches_any_command(lowered, allowed)
                 hit_redirect = bool(re.search(r"(>|>>|<|<<)", lowered))

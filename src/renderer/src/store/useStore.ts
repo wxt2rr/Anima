@@ -42,6 +42,15 @@ export interface Message {
     compressionState?: 'running' | 'done'
     userAttachments?: { path: string }[]
     userAttachmentsWorkspaceDir?: string
+    dangerousCommandApproval?: {
+      command: string
+      matchedPattern?: string
+      runId?: string
+      approvalId?: string
+      status?: 'pending' | 'approved_once' | 'approved_thread' | 'approved_whitelist' | 'rejected'
+      selectedOption?: 'approve_once' | 'approve_thread' | 'approve_whitelist' | 'reject'
+      dismissed?: boolean
+    }
   }
 }
 
@@ -255,6 +264,7 @@ export interface Settings {
   streamingNoProgressTimeoutMs?: number
   showTokenUsage: boolean
   enableMarkdown: boolean
+  collapseHistoricalProcess: boolean
   renderSingleDollarMath: boolean
   enableInfoCardVisualization: boolean
 
@@ -691,6 +701,13 @@ export const useStore = create<AppState>()(
     (set, get) => {
       const now = Date.now()
       const initialChatId = nanoid()
+      let lastMessageTimestamp = now
+      const nextMessageTimestamp = (state: AppState): number => {
+        const tailTs = Number((state.messages[state.messages.length - 1] as any)?.timestamp || 0)
+        const nextTs = Math.max(Date.now(), lastMessageTimestamp + 1, tailTs + 1)
+        lastMessageTimestamp = nextTs
+        return nextTs
+      }
       return {
         messages: [],
         chats: [
@@ -1095,7 +1112,8 @@ export const useStore = create<AppState>()(
       addMessage: (msg, options) =>
         set((state) => {
           const now = Date.now()
-          const created = { id: nanoid(), ...msg, timestamp: now }
+          const createdTs = nextMessageTimestamp(state)
+          const created = { id: nanoid(), ...msg, timestamp: createdTs }
 
           const activeChatId = state.activeChatId || state.chats[0]?.id || ''
           const shouldPersist = options?.persist !== false
@@ -1139,7 +1157,8 @@ export const useStore = create<AppState>()(
       insertMessageBefore: (targetId, msg) =>
         set((state) => {
           const now = Date.now()
-          const created = { id: nanoid(), ...msg, timestamp: now }
+          const createdTs = nextMessageTimestamp(state)
+          const created = { id: nanoid(), ...msg, timestamp: createdTs }
           const activeChatId = state.activeChatId
           
           if (!activeChatId) return {}

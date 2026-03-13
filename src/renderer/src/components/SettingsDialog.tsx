@@ -585,7 +585,7 @@ function VoiceSettings({ t }: { t: any }) {
              <div className="flex items-center justify-between">
                 <div className="space-y-1">
                    <div className="font-medium">{vt.enable}</div>
-                   <div className="text-sm text-muted-foreground">{vt.enableHint}</div>
+                   <div className="text-[13px] text-muted-foreground">{vt.enableHint}</div>
                 </div>
                 <Switch 
                    checked={voice.enabled}
@@ -615,14 +615,14 @@ function VoiceSettings({ t }: { t: any }) {
                       ))}
                    </SelectContent>
                 </Select>
-                <p className="text-sm text-muted-foreground">{vt.modelDesc}</p>
+                <p className="text-[13px] text-muted-foreground">{vt.modelDesc}</p>
                 {selectedModelId ? (
                   <div className="text-xs text-muted-foreground">
                     {pickModelLangLine(selectedModelId)}
                   </div>
                 ) : null}
                 {!selectedModelId ? (
-                  <div className="text-sm text-muted-foreground">{vt.downloadHint}</div>
+                  <div className="text-[13px] text-muted-foreground">{vt.downloadHint}</div>
                 ) : null}
              </div>
 
@@ -642,7 +642,7 @@ function VoiceSettings({ t }: { t: any }) {
                       <SelectItem value="ja">Japanese</SelectItem>
                    </SelectContent>
                 </Select>
-                <p className="text-sm text-muted-foreground">{vt.langHint}</p>
+                <p className="text-[13px] text-muted-foreground">{vt.langHint}</p>
              </div>
           </CardContent>
        </Card>
@@ -656,18 +656,18 @@ function VoiceSettings({ t }: { t: any }) {
                刷新
              </Button>
            </div>
-           <p className="text-sm text-muted-foreground">{vt.modelDesc}</p>
-           <div className="text-sm text-muted-foreground">
+           <p className="text-[13px] text-muted-foreground">{vt.modelDesc}</p>
+           <div className="text-[13px] text-muted-foreground">
              {lang === 'zh'
                ? '建议：一般场景选 Medium；在噪声大/口音重时选 Large；设备性能较弱选 Small/Base；仅试用选 Tiny。'
                : 'Suggestion: Medium for most cases; Large for noisy speech; Small/Base for low-end devices; Tiny for quick trials.'}
            </div>
            <div className="space-y-2">
              {catalogStatus === 'loading' ? (
-               <div className="text-sm text-muted-foreground">加载中…</div>
+               <div className="text-[13px] text-muted-foreground">加载中…</div>
              ) : null}
              {catalogStatus === 'error' ? (
-               <div className="text-sm text-destructive">加载失败</div>
+               <div className="text-[13px] text-destructive">加载失败</div>
              ) : null}
              {catalogModels.map((m) => {
                const isInstalled = installedIds.has(m.id)
@@ -696,7 +696,7 @@ function VoiceSettings({ t }: { t: any }) {
                 <div key={m.id} className="border rounded-md px-3 py-2 space-y-2">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="text-sm font-medium truncate flex items-center gap-2">
+                      <div className="text-[13px] font-medium truncate flex items-center gap-2">
                         <span className="truncate">{m.name}</span>
                         {badges.length ? (
                           <span className="flex items-center gap-1 shrink-0">
@@ -804,12 +804,12 @@ function VoiceSettings({ t }: { t: any }) {
            </div>
            <div className="space-y-2">
              {localModels.length === 0 ? (
-               <div className="text-sm text-muted-foreground">未添加本地模型</div>
+               <div className="text-[13px] text-muted-foreground">未添加本地模型</div>
              ) : null}
              {localModels.map((m) => (
                <div key={m.id} className="flex items-center justify-between gap-3 border rounded-md px-3 py-2">
                  <div className="min-w-0">
-                   <div className="text-sm font-medium truncate">{m.name || m.id}</div>
+                   <div className="text-[13px] font-medium truncate">{m.name || m.id}</div>
                    <div className="text-xs text-muted-foreground truncate">{m.path}</div>
                  </div>
                  <div className="shrink-0 flex items-center gap-2">
@@ -1016,7 +1016,7 @@ function ShortcutsSettings() {
     <div className="p-6 space-y-4 h-full overflow-y-auto custom-scrollbar">
       <Card>
         <CardContent className="p-6 space-y-2">
-          <div className="text-sm font-semibold">{t.title}</div>
+          <div className="text-[13px] font-semibold">{t.title}</div>
           <div className="text-xs text-muted-foreground">{t.hint}</div>
         </CardContent>
       </Card>
@@ -1024,7 +1024,7 @@ function ShortcutsSettings() {
       {grouped.map(([groupName, items]) => (
         <Card key={groupName}>
           <CardContent className="p-6 space-y-3">
-            <div className="text-sm font-semibold">{groupName}</div>
+            <div className="text-[13px] font-semibold">{groupName}</div>
             <div className="grid grid-cols-1 gap-2">
               <div className="flex items-center justify-between text-xs text-muted-foreground">
                 <div>{t.columns.action}</div>
@@ -1040,7 +1040,7 @@ function ShortcutsSettings() {
                 return (
                   <div key={s.id} className="flex items-center justify-between gap-4">
                     <div className="min-w-0 flex items-center gap-2">
-                      <div className="text-sm text-foreground/90 truncate">{title}</div>
+                      <div className="text-[13px] text-foreground/90 truncate">{title}</div>
                       <Badge variant="secondary" className="text-[10px] font-normal">
                         {state === 'default' ? t.default : state === 'custom' ? t.custom : t.disabled}
                       </Badge>
@@ -1065,10 +1065,10 @@ function ShortcutsSettings() {
             <DialogTitle>{t.captureTitle}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <div className="text-sm text-muted-foreground">{t.captureDesc}</div>
+            <div className="text-[13px] text-muted-foreground">{t.captureDesc}</div>
             {editing ? (
               <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 space-y-2">
-                <div className="text-sm font-medium">{titleById.get(editing) || editing}</div>
+                <div className="text-[13px] font-medium">{titleById.get(editing) || editing}</div>
                 <div className="flex items-center justify-between">
                   <div className="text-xs text-muted-foreground">Current</div>
                   <div className="flex items-center gap-1">
@@ -1082,7 +1082,7 @@ function ShortcutsSettings() {
                 </div>
               </div>
             ) : null}
-            {captureHint ? <div className="text-sm text-destructive">{captureHint}</div> : null}
+            {captureHint ? <div className="text-[13px] text-destructive">{captureHint}</div> : null}
           </div>
           <DialogFooter className="gap-2">
             {editing ? (
@@ -1457,7 +1457,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="flex h-[720px] w-[1080px] overflow-hidden rounded-2xl bg-background border border-border shadow-2xl animate-in fade-in zoom-in-95 duration-200 font-sans">
+      <div className="flex h-[720px] w-[1080px] overflow-hidden rounded-xl bg-background border border-border shadow-2xl animate-in fade-in zoom-in-95 duration-200 font-sans text-[13px]">
         
         {/* Sidebar */}
         <div className="w-60 border-r border-border bg-white flex flex-col py-6">
@@ -1491,7 +1491,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
         </div>
 
         {/* Content Area */}
-        <div className="flex-1 flex flex-col bg-[#F5F7FA]">
+        <div className="flex-1 flex flex-col bg-background">
            {activeTab !== 'providers' && (
               <div className="flex items-center justify-between p-6 border-b border-border bg-white">
                 <h2 className="font-semibold text-lg">
@@ -1513,7 +1513,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
             {activeTab === 'about' && <AboutSettings />}
           </div>
           
-          <div className="h-16 px-8 border-t border-border bg-[#F5F7FA] flex justify-between items-center text-xs text-muted-foreground">
+          <div className="h-16 px-8 border-t border-border bg-background flex justify-between items-center text-[13px] text-muted-foreground">
              <span>{t.savedHint}</span>
              <div className="flex items-center gap-3">
                <Button 
@@ -1688,11 +1688,11 @@ export const SettingsWindow = memo(function SettingsWindow() {
   const onClose = () => window.close()
 
   return (
-    <div className="flex h-screen w-full bg-white text-foreground transition-colors duration-300 overflow-hidden p-3 gap-3 font-sans relative">
+    <div className="flex h-screen w-full bg-white text-foreground transition-colors duration-300 overflow-hidden p-3 gap-3 font-sans text-[13px] relative">
       <div className="draggable absolute inset-x-0 top-0 h-3" />
       <UpdateDialog />
-      <div className="w-64 bg-white rounded-2xl shadow-sm flex flex-col overflow-hidden shrink-0">
-        <div className="h-[52px] flex items-center shrink-0 draggable select-none pl-[80px] border-b border-black/5 dark:border-white/5">
+      <div className="w-64 bg-white rounded-xl border border-border shadow-sm flex flex-col overflow-hidden shrink-0">
+        <div className="h-[52px] flex items-center shrink-0 draggable select-none pl-[80px] border-b border-border">
         </div>
 
         <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto custom-scrollbar">
@@ -1717,8 +1717,8 @@ export const SettingsWindow = memo(function SettingsWindow() {
         </nav>
       </div>
 
-      <div className="flex-1 bg-white rounded-2xl shadow-sm flex flex-col overflow-hidden min-w-0 border border-black/5 dark:border-white/5">
-        <div className="h-[52px] flex items-center justify-between px-6 shrink-0 draggable border-b border-black/5 dark:border-white/5 select-none bg-white">
+      <div className="flex-1 bg-white rounded-xl shadow-sm flex flex-col overflow-hidden min-w-0 border border-border">
+        <div className="h-[52px] flex items-center justify-between px-6 shrink-0 draggable border-b border-border select-none bg-white">
           <h2 className="font-semibold text-lg cursor-default">
             {tabs.find((t) => t.id === activeTab)?.label}
           </h2>
@@ -1738,7 +1738,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           {activeTab === 'about' && <AboutSettings />}
         </div>
 
-        <div className="h-14 px-6 border-t border-black/5 dark:border-white/5 bg-white flex justify-between items-center text-xs text-muted-foreground shrink-0">
+        <div className="h-14 px-6 border-t border-border bg-white flex justify-between items-center text-[13px] text-muted-foreground shrink-0">
           <span>{t.savedHint}</span>
           <div className="flex items-center gap-3">
             <Button
@@ -1886,18 +1886,18 @@ function AboutSettings() {
       <Card>
         <CardContent className="pt-6 space-y-4">
           <div className="grid grid-cols-[120px_1fr] gap-y-3 gap-x-4 items-center">
-            <div className="text-sm text-muted-foreground">{t.name}</div>
-            <div className="text-sm font-medium">{info.name || 'Anima'}</div>
+            <div className="text-[13px] text-muted-foreground">{t.name}</div>
+            <div className="text-[13px] font-medium">{info.name || 'Anima'}</div>
 
-            <div className="text-sm text-muted-foreground">{t.version}</div>
-            <div className="text-sm font-mono">{version || '--'}</div>
+            <div className="text-[13px] text-muted-foreground">{t.version}</div>
+            <div className="text-[13px] font-mono">{version || '--'}</div>
 
-            <div className="text-sm text-muted-foreground">{t.author}</div>
-            <div className="text-sm">{author}</div>
+            <div className="text-[13px] text-muted-foreground">{t.author}</div>
+            <div className="text-[13px]">{author}</div>
 
-            <div className="text-sm text-muted-foreground">{t.github}</div>
+            <div className="text-[13px] text-muted-foreground">{t.github}</div>
             <div className="flex items-center gap-2 min-w-0">
-              <div className="text-sm font-mono truncate">{repoUrl}</div>
+              <div className="text-[13px] font-mono truncate">{repoUrl}</div>
               <Button variant="outline" size="sm" onClick={() => void openExternal(repoUrl)}>
                 {t.open}
               </Button>
@@ -1909,7 +1909,7 @@ function AboutSettings() {
       <Card>
         <CardContent className="pt-6 space-y-3">
           <div className="flex items-center justify-between gap-3">
-            <div className="text-sm text-muted-foreground">{statusText}</div>
+            <div className="text-[13px] text-muted-foreground">{statusText}</div>
             {hasUpdate ? (
               <Button onClick={handleCheckUpdate}>{t.checkUpdate}</Button>
             ) : null}
@@ -2396,7 +2396,7 @@ function ProvidersSettings() {
   return (
     <div className="flex h-full">
       {/* Providers List - Left Column */}
-      <div className="w-64 border-r border-black/5 dark:border-white/5 p-4 flex flex-col gap-3 bg-secondary/10">
+      <div className="w-64 border-r border-border p-4 flex flex-col gap-3 bg-background">
         <div className="relative">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground z-10" />
           <Input
@@ -2445,7 +2445,7 @@ function ProvidersSettings() {
                 onClick={() => setSelectedProviderId(provider.id)}
                 className={`w-full justify-between h-auto py-2.5 px-3 font-normal cursor-grab active:cursor-grabbing ${
                   selectedProviderId === provider.id
-                    ? 'bg-background shadow-sm border border-black/5 dark:border-white/5'
+                    ? 'bg-background shadow-sm border border-border'
                     : ''
                 }`}
               >
@@ -2468,7 +2468,7 @@ function ProvidersSettings() {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top Actions Bar */}
         <div className="px-8 py-4">
-          <div className="flex items-center justify-end gap-3 bg-secondary/10 border border-black/5 dark:border-white/5 rounded-xl px-4 py-3">
+          <div className="flex items-center justify-end gap-3 bg-background border border-border rounded-xl px-4 py-3">
             <Button
               onClick={() => {
                 setCustomProviderMode('api')
@@ -2516,7 +2516,7 @@ function ProvidersSettings() {
                        />
                     </div>
                   </div>
-                  <p className="text-muted-foreground text-sm leading-relaxed">
+                  <p className="text-muted-foreground text-[13px] leading-relaxed">
                     {activeProvider.description}
                   </p>
                 </CardContent>
@@ -2529,7 +2529,7 @@ function ProvidersSettings() {
                     onClick={() => setShowProxyEndpoints(!showProxyEndpoints)}
                     className="w-full flex items-center justify-between px-6 py-4 h-auto hover:bg-secondary rounded-none"
                  >
-                    <div className="flex items-center gap-2 font-medium text-sm">
+                    <div className="flex items-center gap-2 font-medium text-[13px]">
                        <Cpu className="w-4 h-4" />
                        {t.proxyEndpoints}
                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5 h-auto font-medium">{t.advanced}</Badge>
@@ -2539,7 +2539,7 @@ function ProvidersSettings() {
                  
                  {showProxyEndpoints && (
                     <CardContent className="p-6 space-y-6 border-t border-border">
-                       <p className="text-sm text-muted-foreground">
+                       <p className="text-[13px] text-muted-foreground">
                           {t.proxyDesc(activeProvider.name)}
                        </p>
 
@@ -2560,7 +2560,7 @@ function ProvidersSettings() {
                                    <Copy className="w-4 h-4" />
                                 </Button>
                              </div>
-                             <code className="block w-full bg-secondary rounded-lg px-4 py-3 text-sm font-mono text-muted-foreground break-all">
+                             <code className="block w-full bg-secondary rounded-lg px-4 py-3 text-[13px] font-mono text-muted-foreground break-all">
                                 http://localhost:23001/proxy/openai/v1/responses
                              </code>
                           </div>
@@ -2584,7 +2584,7 @@ function ProvidersSettings() {
                                    <Copy className="w-4 h-4" />
                                 </Button>
                              </div>
-                             <code className="block w-full bg-secondary rounded-lg px-4 py-3 text-sm font-mono text-muted-foreground break-all">
+                             <code className="block w-full bg-secondary rounded-lg px-4 py-3 text-[13px] font-mono text-muted-foreground break-all">
                                 http://localhost:23001/anthropic-proxy/openai/v1/messages
                              </code>
                           </div>
@@ -2594,7 +2594,7 @@ function ProvidersSettings() {
                        {/* Claude Code Section */}
                       <div className="border border-primary/20 bg-primary/5 rounded-lg p-4 space-y-3">
                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2 text-primary font-medium text-sm">
+                            <div className="flex items-center gap-2 text-primary font-medium text-[13px]">
                                <span>{'>_'}</span>
                                {t.useWithClaude}
                             </div>
@@ -2671,7 +2671,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                       </div>
                     </div>
 
-                    <div className="text-sm">
+                    <div className="text-[13px]">
                       <div className="flex items-center justify-between">
                         <span className="text-muted-foreground">{settings.language === 'zh' ? 'Profile' : 'Profile'}</span>
                         <span className="font-mono">{qwenProfileId}</span>
@@ -2713,7 +2713,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                       </div>
                     </div>
 
-                    <div className="text-sm">
+                    <div className="text-[13px]">
                       <div className="flex items-center justify-between">
                         <span className="text-muted-foreground">{settings.language === 'zh' ? 'Profile' : 'Profile'}</span>
                         <span className="font-mono">{codexProfileId}</span>
@@ -2941,7 +2941,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                            
                            <div className="border rounded-md divide-y max-h-[300px] overflow-y-auto">
                              {normalizeModels(activeProvider.config.models).map((model) => (
-                               <div key={model.id} className="flex items-center justify-between p-3 text-sm">
+                               <div key={model.id} className="flex items-center justify-between p-3 text-[13px]">
                                  <div className="flex items-center gap-3">
                                    <Switch 
                                      checked={model.isEnabled}
@@ -3069,7 +3069,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                     <Copy className="w-4 h-4" />
                   </Button>
                 </div>
-                <code className="block w-full bg-secondary rounded-lg px-4 py-3 text-sm font-mono text-muted-foreground break-all">
+                <code className="block w-full bg-secondary rounded-lg px-4 py-3 text-[13px] font-mono text-muted-foreground break-all">
                   {qwenLogin.verificationUrl || '-'}
                 </code>
               </div>
@@ -3088,7 +3088,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
             <div className="space-y-2">
               <Label>{settings.language === 'zh' ? '验证码（如提示）' : 'User code (if prompted)'}</Label>
               <div className="flex items-center justify-between gap-3 bg-secondary rounded-lg px-4 py-3">
-                <span className="font-mono text-sm">{qwenLogin.userCode || '-'}</span>
+                <span className="font-mono text-[13px]">{qwenLogin.userCode || '-'}</span>
                 <Button
                   variant="outline"
                   size="sm"
@@ -3100,7 +3100,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
               </div>
             </div>
 
-            <div className="text-sm">
+            <div className="text-[13px]">
               {qwenLogin.state === 'pending' && (
                 <span className="text-muted-foreground">
                   {settings.language === 'zh' ? '等待授权完成…' : 'Waiting for approval…'}
@@ -3149,7 +3149,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                     <Copy className="w-4 h-4" />
                   </Button>
                 </div>
-                <code className="block w-full bg-secondary rounded-lg px-4 py-3 text-sm font-mono text-muted-foreground break-all">
+                <code className="block w-full bg-secondary rounded-lg px-4 py-3 text-[13px] font-mono text-muted-foreground break-all">
                   {codexLogin.verificationUrl || '-'}
                 </code>
               </div>
@@ -3165,7 +3165,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
               )}
             </div>
 
-            <div className="text-sm">
+            <div className="text-[13px]">
               {codexLogin.state === 'pending' && (
                 <span className="text-muted-foreground">
                   {settings.language === 'zh' ? '等待授权完成…' : 'Waiting for approval…'}
@@ -3461,6 +3461,8 @@ function ChatSettings() {
         addCommand: 'Add',
         commandPlaceholder: 'Enter command',
         responseSettings: 'Response Settings',
+        collapseHistoricalProcess: 'Collapse historical process by default',
+        collapseHistoricalProcessHint: 'For all turns except the latest one, hide thinking/tool/skill process and keep final assistant reply only.',
         streamingResponse: 'Enable Streaming Response',
         streamingResponseHint: 'Show response in real-time as it generates.',
         showTokenUsage: 'Show Token Usage',
@@ -3549,6 +3551,8 @@ function ChatSettings() {
         addCommand: '添加',
         commandPlaceholder: '请输入命令',
         responseSettings: '响应设置',
+        collapseHistoricalProcess: '默认折叠历史过程',
+        collapseHistoricalProcessHint: '除最后一条消息外，默认折叠思考/工具/skill过程，仅保留最终 AI 回复内容。',
         streamingResponse: '启用流式响应',
         streamingResponseHint: '启用后，AI 回复将实时显示，否则等待完整回复后一次性显示',
         showTokenUsage: '显示令牌使用情况',
@@ -3637,6 +3641,8 @@ function ChatSettings() {
         addCommand: '追加',
         commandPlaceholder: 'コマンドを入力',
         responseSettings: '応答設定',
+        collapseHistoricalProcess: '履歴プロセスを既定で折りたたむ',
+        collapseHistoricalProcessHint: '最新メッセージ以外では、思考/ツール/スキル過程を折りたたみ、最終のAI応答のみ表示します。',
         streamingResponse: 'ストリーミング応答を有効化',
         streamingResponseHint: '応答を生成しながらリアルタイムで表示します。',
         showTokenUsage: 'トークン使用量を表示',
@@ -3738,7 +3744,7 @@ function ChatSettings() {
       {/* Chat Parameters */}
       <Card className="p-5 space-y-6">
         <div className="flex items-center gap-2">
-           <h3 className="text-sm font-semibold">{t.chatParams}</h3>
+           <h3 className="text-[13px] font-semibold">{t.chatParams}</h3>
         </div>
 
         <div className="space-y-4">
@@ -3841,9 +3847,21 @@ function ChatSettings() {
 
       {/* Response Settings */}
       <Card className="p-5 space-y-4">
-         <h3 className="text-sm font-semibold">{t.responseSettings}</h3>
+         <h3 className="text-[13px] font-semibold">{t.responseSettings}</h3>
          
          <div className="space-y-4">
+            <div className="flex items-start gap-3">
+               <Checkbox
+                  id="collapseHistoricalProcess"
+                  checked={settings.collapseHistoricalProcess !== false}
+                  onCheckedChange={(c) => updateSettings({ collapseHistoricalProcess: c as boolean })}
+               />
+               <div className="grid gap-1.5 leading-none">
+                  <label htmlFor="collapseHistoricalProcess" className="text-[13px] font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">{t.collapseHistoricalProcess}</label>
+                  <p className="text-xs text-muted-foreground">{t.collapseHistoricalProcessHint}</p>
+               </div>
+            </div>
+
             <div className="flex items-start gap-3">
                <Checkbox 
                   id="streaming"
@@ -3851,7 +3869,7 @@ function ChatSettings() {
                   onCheckedChange={(c) => updateSettings({ enableStreamingResponse: c as boolean })}
                />
                <div className="grid gap-1.5 leading-none">
-                  <label htmlFor="streaming" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">{t.streamingResponse}</label>
+                  <label htmlFor="streaming" className="text-[13px] font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">{t.streamingResponse}</label>
                   <p className="text-xs text-muted-foreground">{t.streamingResponseHint}</p>
                </div>
             </div>
@@ -3863,7 +3881,7 @@ function ChatSettings() {
                   onCheckedChange={(c) => updateSettings({ showTokenUsage: c as boolean })}
                />
                <div className="grid gap-1.5 leading-none">
-                  <label htmlFor="tokenUsage" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">{t.showTokenUsage}</label>
+                  <label htmlFor="tokenUsage" className="text-[13px] font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">{t.showTokenUsage}</label>
                   <p className="text-xs text-muted-foreground">{t.showTokenUsageHint}</p>
                </div>
             </div>
@@ -3875,7 +3893,7 @@ function ChatSettings() {
                   onCheckedChange={(c) => updateSettings({ enableMarkdown: c as boolean })}
                />
                <div className="grid gap-1.5 leading-none">
-                  <label htmlFor="markdown" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">{t.markdown}</label>
+                  <label htmlFor="markdown" className="text-[13px] font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">{t.markdown}</label>
                   <p className="text-xs text-muted-foreground">{t.markdownHint}</p>
                </div>
             </div>
@@ -3888,7 +3906,7 @@ function ChatSettings() {
                   onCheckedChange={(c) => updateSettings({ renderSingleDollarMath: c as boolean })}
                />
                <div className="grid gap-1.5 leading-none">
-                  <label htmlFor="math" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">{t.singleDollarMath}</label>
+                  <label htmlFor="math" className="text-[13px] font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">{t.singleDollarMath}</label>
                   <p className="text-xs text-muted-foreground">{t.singleDollarMathHint}</p>
                </div>
             </div>
@@ -3900,7 +3918,7 @@ function ChatSettings() {
                   onCheckedChange={(c) => updateSettings({ enableInfoCardVisualization: c as boolean })}
                />
                <div className="grid gap-1.5 leading-none">
-                  <label htmlFor="infoCard" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">{t.infoCard}</label>
+                  <label htmlFor="infoCard" className="text-[13px] font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">{t.infoCard}</label>
                   <p className="text-xs text-muted-foreground">{t.infoCardHint}</p>
                </div>
             </div>
@@ -3909,7 +3927,7 @@ function ChatSettings() {
 
       {/* Media */}
       <Card className="p-5 space-y-4">
-        <h3 className="text-sm font-semibold">{t.mediaSettings}</h3>
+        <h3 className="text-[13px] font-semibold">{t.mediaSettings}</h3>
         <div className="space-y-4">
           <div className="flex items-start gap-3">
             <Checkbox
@@ -3918,7 +3936,7 @@ function ChatSettings() {
               onCheckedChange={(c) => updateMedia({ imageEnabled: c as boolean })}
             />
             <div className="grid gap-1.5 leading-none">
-              <label htmlFor="imageGenEnabled" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">
+              <label htmlFor="imageGenEnabled" className="text-[13px] font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">
                 {t.imageGenEnabled}
               </label>
             </div>
@@ -3961,7 +3979,7 @@ function ChatSettings() {
               onCheckedChange={(c) => updateMedia({ videoEnabled: c as boolean })}
             />
             <div className="grid gap-1.5 leading-none">
-              <label htmlFor="videoGenEnabled" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">
+              <label htmlFor="videoGenEnabled" className="text-[13px] font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">
                 {t.videoGenEnabled}
               </label>
             </div>
@@ -3995,7 +4013,7 @@ function ChatSettings() {
       </Card>
 
       <Card className="p-5 space-y-4">
-        <h3 className="text-sm font-semibold">{t.artifactsCleanup}</h3>
+        <h3 className="text-[13px] font-semibold">{t.artifactsCleanup}</h3>
         <p className="text-xs text-muted-foreground">{t.cleanupArtifactsHint}</p>
         <div className="flex items-center gap-3">
           <Button
@@ -4035,7 +4053,7 @@ function ChatSettings() {
       <Card className="p-5 space-y-6">
          <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-semibold">{t.autoCompression}</h3>
+            <h3 className="text-[13px] font-semibold">{t.autoCompression}</h3>
          </div>
 
          <div className="space-y-4">
@@ -4046,7 +4064,7 @@ function ChatSettings() {
                   onCheckedChange={(c) => updateSettings({ enableAutoCompression: c as boolean })}
                />
                <div className="grid gap-1.5 leading-none">
-                  <label htmlFor="compression" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">{t.enableAutoCompression}</label>
+                  <label htmlFor="compression" className="text-[13px] font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">{t.enableAutoCompression}</label>
                   <p className="text-xs text-muted-foreground leading-relaxed pt-1">{t.compressionDesc}</p>
                </div>
             </div>
@@ -4271,7 +4289,7 @@ function ImSettings() {
         <div className="flex items-start gap-3">
           <Switch checked={enabled} onCheckedChange={(c) => updateTelegram({ enabled: c as boolean })} />
           <div className="grid gap-1.5 leading-none">
-            <div className="text-sm font-medium leading-none">{t.enableTelegram}</div>
+            <div className="text-[13px] font-medium leading-none">{t.enableTelegram}</div>
           </div>
         </div>
       </Card>
@@ -4314,7 +4332,7 @@ function ImSettings() {
         <div className="flex items-start gap-3">
           <Switch checked={allowGroups} onCheckedChange={(c) => updateTelegram({ allowGroups: c as boolean })} />
           <div className="grid gap-1.5 leading-none">
-            <div className="text-sm font-medium leading-none">{t.allowGroups}</div>
+            <div className="text-[13px] font-medium leading-none">{t.allowGroups}</div>
             <div className="text-xs text-muted-foreground">{t.allowGroupsHint}</div>
           </div>
         </div>
@@ -4397,19 +4415,19 @@ function ImSettings() {
       </Card>
 
       <Card className="p-5 space-y-4">
-        <div className="text-sm font-semibold">{t.openclaw}</div>
+        <div className="text-[13px] font-semibold">{t.openclaw}</div>
 
         <div className="flex items-start gap-3">
           <Switch checked={openclawEnabled} onCheckedChange={(c) => updateOpenclaw({ enabled: c as boolean })} />
           <div className="grid gap-1.5 leading-none">
-            <div className="text-sm font-medium leading-none">{t.enableOpenclaw}</div>
+            <div className="text-[13px] font-medium leading-none">{t.enableOpenclaw}</div>
           </div>
         </div>
 
         <div className="flex items-start gap-3">
           <Switch checked={heartbeatEnabled} onCheckedChange={(c) => updateOpenclaw({ heartbeatEnabled: c as boolean })} />
           <div className="grid gap-1.5 leading-none">
-            <div className="text-sm font-medium leading-none">{t.enableHeartbeat}</div>
+            <div className="text-[13px] font-medium leading-none">{t.enableHeartbeat}</div>
           </div>
         </div>
 
@@ -4427,7 +4445,7 @@ function ImSettings() {
       </Card>
 
       <Card className="p-5 space-y-4">
-        <div className="text-sm font-semibold">{t.workspaceDir}</div>
+        <div className="text-[13px] font-semibold">{t.workspaceDir}</div>
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <Input
@@ -4570,7 +4588,7 @@ function SkillsSettings() {
   return (
       <div className="p-6 h-full overflow-hidden flex flex-col">
       <div className="flex items-center justify-between">
-        <div className="text-sm text-muted-foreground">{skills.length === 0 ? t.notFound : t.found(skills.length)}</div>
+        <div className="text-[13px] text-muted-foreground">{skills.length === 0 ? t.notFound : t.found(skills.length)}</div>
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
@@ -4600,7 +4618,7 @@ function SkillsSettings() {
                 <Sparkles className="relative w-9 h-9 text-muted-foreground motion-safe:anima-float group-hover:text-foreground transition-colors motion-reduce:transition-none" />
               </div>
             </div>
-            <div className="text-sm font-semibold text-foreground">{t.emptyTitle}</div>
+            <div className="text-[13px] font-semibold text-foreground">{t.emptyTitle}</div>
             <div className="text-xs text-muted-foreground max-w-[520px] leading-5">{t.emptyHint(displayPath)}</div>
           </div>
         </div>
@@ -4616,7 +4634,7 @@ function SkillsSettings() {
                 <Card key={s.id} className="p-4">
                   <div className="grid grid-cols-[1fr_140px] items-start gap-x-4 gap-y-2">
                     <div className="min-w-0 space-y-1">
-                      <div className="text-sm font-semibold">{s.name}</div>
+                      <div className="text-[13px] font-semibold">{s.name}</div>
                       {s.description ? <div className="text-xs text-muted-foreground break-words">{s.description}</div> : null}
                       {s.isValid === false ? (
                         <div className="text-xs text-destructive">
@@ -4631,7 +4649,7 @@ function SkillsSettings() {
                         disabled={s.isValid === false}
                         onCheckedChange={(c) => toggleEnabled(s.id, c)}
                       />
-                      <span className="text-sm whitespace-nowrap">{isEnabled ? t.enabled : t.disabled}</span>
+                      <span className="text-[13px] whitespace-nowrap">{isEnabled ? t.enabled : t.disabled}</span>
                     </div>
 
                     <div className="text-[11px] text-muted-foreground break-all min-w-0">{s.dir}</div>
@@ -4777,7 +4795,7 @@ function MemorySettings() {
       <Card className="p-5">
         <div className="flex items-start justify-between gap-6">
           <div className="space-y-1">
-            <div className="text-sm font-semibold">{t.feature}</div>
+            <div className="text-[13px] font-semibold">{t.feature}</div>
             <div className="text-xs text-muted-foreground">{t.featureDesc}</div>
           </div>
           <div className="flex items-center gap-2">
@@ -4793,7 +4811,7 @@ function MemorySettings() {
       <Card className="p-5 space-y-4">
         <div className="flex items-start justify-between gap-6">
           <div className="space-y-1">
-            <div className="text-sm font-semibold">{t.retrieval}</div>
+            <div className="text-[13px] font-semibold">{t.retrieval}</div>
           </div>
           <div className="flex items-center gap-2">
             <Switch
@@ -4831,10 +4849,10 @@ function MemorySettings() {
       </Card>
 
       <Card className="p-5 space-y-4">
-        <div className="text-sm font-semibold">{t.summary}</div>
+        <div className="text-[13px] font-semibold">{t.summary}</div>
         <div className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2">
           <div className="flex flex-col">
-            <span className="text-sm font-medium">{t.enableSummary}</span>
+            <span className="text-[13px] font-medium">{t.enableSummary}</span>
           </div>
           <Switch
             checked={settings.memoryAutoSummarizeEnabled}
@@ -4844,7 +4862,7 @@ function MemorySettings() {
       </Card>
 
       <Card className="p-5 space-y-2">
-        <div className="text-sm font-semibold">{t.toolModel}</div>
+        <div className="text-[13px] font-semibold">{t.toolModel}</div>
         <div className="space-y-2">
           <Select
             value={settings.memoryToolModelId}
@@ -4867,7 +4885,7 @@ function MemorySettings() {
       </Card>
 
       <Card className="p-5 space-y-2">
-        <div className="text-sm font-semibold">{t.embedding}</div>
+        <div className="text-[13px] font-semibold">{t.embedding}</div>
         <div className="space-y-2">
           <Input
             list="anima-embedding-models"
@@ -4884,7 +4902,7 @@ function MemorySettings() {
       </Card>
 
       <Card className="p-5 space-y-3">
-        <div className="text-sm font-semibold">{t.stats}</div>
+        <div className="text-[13px] font-semibold">{t.stats}</div>
         <div className="grid grid-cols-3 gap-3">
           <div className="rounded-lg border border-border bg-background px-4 py-3">
             <div className="text-xs text-muted-foreground">{t.total}</div>
@@ -4902,7 +4920,7 @@ function MemorySettings() {
       </Card>
 
       <Card className="p-5 space-y-3">
-        <div className="text-sm font-semibold">{t.addMemory}</div>
+        <div className="text-[13px] font-semibold">{t.addMemory}</div>
         <Textarea
           className="min-h-[100px]"
           value={draft}
@@ -4926,7 +4944,7 @@ function MemorySettings() {
       </Card>
 
       <Card className="p-5 space-y-3">
-        <div className="text-sm font-semibold">{t.searchMemory}</div>
+        <div className="text-[13px] font-semibold">{t.searchMemory}</div>
         <div className="relative">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
@@ -4940,7 +4958,7 @@ function MemorySettings() {
 
       <Card className="p-5 space-y-3">
         <div className="flex items-center justify-between gap-3">
-          <div className="text-sm font-semibold">{t.memoryList}</div>
+          <div className="text-[13px] font-semibold">{t.memoryList}</div>
           <Button
             variant="outline"
             onClick={() => updateSettings({ memories: [] })}
@@ -4953,7 +4971,7 @@ function MemorySettings() {
 
         <div className="space-y-2">
           {filteredMemories.length === 0 ? (
-            <div className="text-sm text-muted-foreground">{t.empty}</div>
+            <div className="text-[13px] text-muted-foreground">{t.empty}</div>
           ) : (
             filteredMemories.map((m) => (
               <div key={m.id} className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2">
@@ -5093,16 +5111,16 @@ function DataSettings() {
   return (
     <div className="p-6 space-y-6 h-full overflow-y-auto">
       <Card className="p-5 space-y-3">
-        <h3 className="text-sm font-semibold">{t.dbPath}</h3>
-        <p className="text-sm text-muted-foreground">{t.dbPathHint}</p>
+        <h3 className="text-[13px] font-semibold">{t.dbPath}</h3>
+        <p className="text-[13px] text-muted-foreground">{t.dbPathHint}</p>
         <div className="rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground break-all">
           {dbPath || '-'}
         </div>
       </Card>
 
       <Card className="p-5 space-y-3">
-        <h3 className="text-sm font-semibold">{t.export}</h3>
-        <p className="text-sm text-muted-foreground">{t.exportHint}</p>
+        <h3 className="text-[13px] font-semibold">{t.export}</h3>
+        <p className="text-[13px] text-muted-foreground">{t.exportHint}</p>
         <Button
           onClick={() => void downloadJson()}
           className="gap-2"
@@ -5112,8 +5130,8 @@ function DataSettings() {
       </Card>
 
       <Card className="p-5 space-y-3">
-        <h3 className="text-sm font-semibold">{t.import}</h3>
-        <p className="text-sm text-muted-foreground">{t.importHint}</p>
+        <h3 className="text-[13px] font-semibold">{t.import}</h3>
+        <p className="text-[13px] text-muted-foreground">{t.importHint}</p>
         <input
           ref={fileInputRef}
           type="file"
@@ -5149,8 +5167,8 @@ function DataSettings() {
       </Card>
 
       <Card className="p-5 space-y-3 border-destructive/20">
-        <h3 className="text-sm font-semibold text-destructive">{t.danger}</h3>
-        <p className="text-sm text-muted-foreground">{t.dangerHint}</p>
+        <h3 className="text-[13px] font-semibold text-destructive">{t.danger}</h3>
+        <p className="text-[13px] text-muted-foreground">{t.dangerHint}</p>
         <Button
           variant="destructive"
           onClick={() => void clearAll()}
