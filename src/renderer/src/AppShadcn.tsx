@@ -2997,7 +2997,14 @@ function AppLoaded(): JSX.Element {
   return (
     <div className="h-screen w-full overflow-hidden rounded-[20px] bg-white text-foreground transition-colors duration-300 relative">
       <div className="draggable absolute inset-x-0 top-0 h-2" />
-      <div className="flex h-full w-full overflow-hidden p-2 gap-0">
+      {!ui.sidebarCollapsed && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute left-0 top-0 bottom-0 bg-[#EBE9EA]"
+          style={{ width: `${leftWidth + 12}px` }}
+        />
+      )}
+      <div className="flex h-full w-full overflow-hidden gap-0">
         <SettingsDialog />
         <UpdateDialog />
         <Dialog
@@ -3210,8 +3217,8 @@ function AppLoaded(): JSX.Element {
                 onMouseDown={(e) => { e.preventDefault(); setIsResizingLeft(true); }}
               />
             </div>
-            <div className="flex-1 flex flex-col h-full overflow-hidden relative">
-            <header className="h-[52px] shrink-0 draggable relative z-30">
+            <div className="mt-2 mr-2 mb-2 flex-1 flex flex-col h-auto overflow-hidden relative rounded-l-xl bg-white">
+              <header className="h-[52px] shrink-0 draggable relative z-30">
               <div className="absolute left-4 top-[4px] flex items-center">
                 <div className="w-[80px] h-7" />
                 {ui.sidebarCollapsed && (
@@ -3238,27 +3245,29 @@ function AppLoaded(): JSX.Element {
                 )}
               </div>
 
-              {topGitRepoDir ? (
-                <div className="absolute left-0 right-0 top-[6px] flex items-center justify-center pointer-events-none">
-                  <div className="flex items-center gap-2 text-xs text-primary">
-                    <span>{messages.length} 条消息</span>
-                    <span>·</span>
-                    <GitBranch className="w-3.5 h-3.5" />
-                    <TooltipProvider>
-                      <Tooltip delayDuration={300}>
-                        <TooltipTrigger asChild>
-                          <span className="max-w-[300px] truncate pointer-events-auto cursor-help font-medium">
-                            {topGitBranch}
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          {topGitRepoDir}
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </div>
+              <div className="absolute left-0 right-0 top-[6px] flex items-center justify-center pointer-events-none">
+                <div className="flex items-center gap-2 text-xs text-primary">
+                  <span>{messages.length} 条消息</span>
+                  {topGitRepoDir ? (
+                    <>
+                      <span>·</span>
+                      <GitBranch className="w-3.5 h-3.5" />
+                      <TooltipProvider>
+                        <Tooltip delayDuration={300}>
+                          <TooltipTrigger asChild>
+                            <span className="max-w-[300px] truncate pointer-events-auto cursor-help font-medium">
+                              {topGitBranch}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {topGitRepoDir}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </>
+                  ) : null}
                 </div>
-              ) : null}
+              </div>
             </header>
 
             <div className="flex flex-1 overflow-hidden">
@@ -4752,13 +4761,13 @@ function AppLoaded(): JSX.Element {
                     }
                   />
               </div>
-            </footer>
+              </footer>
             </div>
             </div>
-          </div>
-          <div className="relative h-full shrink-0 flex">
-            <RightSidebar width={rightWidth} onResizeStart={() => setIsResizingRight(true)} />
-          </div>
+            </div>
+            <div className="relative h-full shrink-0 flex">
+              <RightSidebar width={rightWidth} onResizeStart={() => setIsResizingRight(true)} />
+            </div>
           </>
         )}
       </div>

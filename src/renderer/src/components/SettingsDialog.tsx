@@ -579,7 +579,7 @@ function VoiceSettings({ t }: { t: any }) {
   if (!settings) return null
 
   return (
-    <div className="p-6 space-y-6 h-full overflow-y-auto custom-scrollbar">
+    <div className="p-6 space-y-6">
        <Card>
           <CardContent className="pt-6">
              <div className="flex items-center justify-between">
@@ -1013,7 +1013,7 @@ function ShortcutsSettings() {
   }, [bindingToOwners, editing, saveOverride, t, titleById])
 
   return (
-    <div className="p-6 space-y-4 h-full overflow-y-auto custom-scrollbar">
+    <div className="p-6 space-y-4">
       <Card>
         <CardContent className="p-6 space-y-2">
           <div className="text-[13px] font-semibold">{t.title}</div>
@@ -1688,11 +1688,11 @@ export const SettingsWindow = memo(function SettingsWindow() {
   const onClose = () => window.close()
 
   return (
-    <div className="flex h-screen w-full bg-white text-foreground transition-colors duration-300 overflow-hidden p-3 gap-3 font-sans text-[13px] relative">
+    <div className="flex h-full w-full bg-white text-foreground transition-colors duration-300 overflow-hidden gap-0 font-sans text-[13px] relative">
       <div className="draggable absolute inset-x-0 top-0 h-3" />
       <UpdateDialog />
       <div className="w-64 bg-white rounded-xl border border-border shadow-sm flex flex-col overflow-hidden shrink-0">
-        <div className="h-[52px] flex items-center shrink-0 draggable select-none pl-[80px] border-b border-border">
+        <div className="h-[52px] flex items-center shrink-0 draggable select-none pl-[80px]">
         </div>
 
         <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto custom-scrollbar">
@@ -1717,28 +1717,29 @@ export const SettingsWindow = memo(function SettingsWindow() {
         </nav>
       </div>
 
-      <div className="flex-1 bg-white rounded-xl shadow-sm flex flex-col overflow-hidden min-w-0 border border-border">
-        <div className="h-[52px] flex items-center justify-between px-6 shrink-0 draggable border-b border-border select-none bg-white">
-          <h2 className="font-semibold text-lg cursor-default">
-            {tabs.find((t) => t.id === activeTab)?.label}
-          </h2>
+      <div className="flex-1 bg-white rounded-xl flex flex-col overflow-hidden min-w-0 pt-5">
+        <div className="flex-1 overflow-y-auto relative no-drag bg-white custom-scrollbar">
+          <div className="max-w-[760px] mx-auto w-full px-6 pt-0 pb-1">
+            <h2 className="font-semibold text-lg cursor-default">
+              {tabs.find((t) => t.id === activeTab)?.label}
+            </h2>
+          </div>
+          <div className="max-w-[760px] mx-auto w-full">
+            {activeTab === 'providers' && <ProvidersSettings />}
+            {activeTab === 'general' && <GeneralSettings />}
+            {activeTab === 'chat' && <ChatSettings />}
+            {activeTab === 'memory' && <MemorySettings />}
+            {activeTab === 'im' && <ImSettings />}
+            {activeTab === 'skills' && <SkillsSettings />}
+            {activeTab === 'network' && <NetworkSettings />}
+            {activeTab === 'data' && <DataSettings />}
+            {activeTab === 'voice' && <VoiceSettings t={t} />}
+            {activeTab === 'shortcuts' && <ShortcutsSettings />}
+            {activeTab === 'about' && <AboutSettings />}
+          </div>
         </div>
 
-        <div className="flex-1 overflow-hidden relative no-drag bg-white">
-          {activeTab === 'providers' && <ProvidersSettings />}
-          {activeTab === 'general' && <GeneralSettings />}
-          {activeTab === 'chat' && <ChatSettings />}
-          {activeTab === 'memory' && <MemorySettings />}
-          {activeTab === 'im' && <ImSettings />}
-          {activeTab === 'skills' && <SkillsSettings />}
-          {activeTab === 'network' && <NetworkSettings />}
-          {activeTab === 'data' && <DataSettings />}
-          {activeTab === 'voice' && <VoiceSettings t={t} />}
-          {activeTab === 'shortcuts' && <ShortcutsSettings />}
-          {activeTab === 'about' && <AboutSettings />}
-        </div>
-
-        <div className="h-14 px-6 border-t border-border bg-white flex justify-between items-center text-[13px] text-muted-foreground shrink-0">
+        <div className="h-14 px-6 bg-white flex justify-between items-center text-[13px] text-muted-foreground shrink-0">
           <span>{t.savedHint}</span>
           <div className="flex items-center gap-3">
             <Button
@@ -2396,13 +2397,13 @@ function ProvidersSettings() {
   return (
     <div className="flex h-full">
       {/* Providers List - Left Column */}
-      <div className="w-64 border-r border-border p-4 flex flex-col gap-3 bg-background">
+      <div className="w-64 border-r border-border/60 p-4 pr-5 flex flex-col gap-3 bg-transparent">
         <div className="relative">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground z-10" />
           <Input
             type="text"
             placeholder={t.search}
-            className="pl-9 bg-background"
+            className="pl-9 bg-white"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -2443,15 +2444,15 @@ function ProvidersSettings() {
               <Button
                 variant={selectedProviderId === provider.id ? "secondary" : "ghost"}
                 onClick={() => setSelectedProviderId(provider.id)}
-                className={`w-full justify-between h-auto py-2.5 px-3 font-normal cursor-grab active:cursor-grabbing ${
+                className={`w-full justify-between h-auto py-2.5 px-3 font-normal rounded-lg hover:bg-muted/50 cursor-grab active:cursor-grabbing ${
                   selectedProviderId === provider.id
-                    ? 'bg-background shadow-sm border border-border'
+                    ? 'bg-white border border-border/70 shadow-none'
                     : ''
                 }`}
               >
                 <div className="flex items-center gap-3">
-                   <div className={`w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold border shrink-0 ${
-                      selectedProviderId === provider.id ? 'bg-secondary border-transparent' : 'bg-background border-transparent'
+                   <div className={`w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold shrink-0 ${
+                      selectedProviderId === provider.id ? 'bg-secondary/70' : 'bg-transparent'
                    }`}>
                       {getProviderIconUrl(provider) ? <img src={getProviderIconUrl(provider)} className="w-4 h-4" /> : provider.name[0]}
                    </div>
@@ -2467,9 +2468,10 @@ function ProvidersSettings() {
       {/* Provider Details - Right Column */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top Actions Bar */}
-        <div className="px-8 py-4">
-          <div className="flex items-center justify-end gap-3 bg-background border border-border rounded-xl px-4 py-3">
+        <div className="px-8 pt-2 pb-3">
+          <div className="flex items-center justify-end gap-2">
             <Button
+              className="h-9 rounded-full px-4"
               onClick={() => {
                 setCustomProviderMode('api')
                 setCustomProviderDialogOpen(true)
@@ -2479,6 +2481,7 @@ function ProvidersSettings() {
             </Button>
             <Button
               variant="outline"
+              className="h-9 rounded-full px-4 bg-white"
               onClick={() => {
                 setCustomProviderMode('acp')
                 setCustomProviderDialogOpen(true)
@@ -2490,13 +2493,13 @@ function ProvidersSettings() {
         </div>
 
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto px-8 pb-8 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto px-8 pb-8 pt-1 custom-scrollbar">
           {activeProvider ? (
-            <div className="max-w-3xl space-y-6 animate-in fade-in duration-300">
+            <div className="max-w-[820px] space-y-5 animate-in fade-in duration-300">
               
               {/* Header Card */}
-              <Card>
-                <CardContent className="pt-6">
+              <Card className="border-border/60 bg-background/40 shadow-none">
+                <CardContent className="pt-5 pb-5">
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex items-center gap-4">
                        <h2 className="text-2xl font-semibold text-foreground">{activeProvider.name}</h2>
@@ -2736,7 +2739,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
               )}
 
               {isAcp ? (
-                <Card>
+                <Card className="border-border/60 shadow-none">
                   <CardContent className="p-6 space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
@@ -3362,7 +3365,7 @@ function NetworkSettings() {
   }
 
   return (
-    <div className="p-6 space-y-6 h-full overflow-y-auto">
+    <div className="p-6 space-y-6">
       <Card className="p-5 space-y-3">
         <Label>{t.proxyUrl}</Label>
         <Input 
@@ -3740,7 +3743,7 @@ function ChatSettings() {
   const videoProviderSelectValue = media.videoProviderId ? media.videoProviderId : '__chat__'
 
   return (
-    <div className="p-6 space-y-6 h-full overflow-y-auto">
+    <div className="p-6 space-y-6">
       {/* Chat Parameters */}
       <Card className="p-5 space-y-6">
         <div className="flex items-center gap-2">
@@ -4269,7 +4272,7 @@ function ImSettings() {
   }
 
   return (
-    <div className="p-6 space-y-6 h-full overflow-y-auto">
+    <div className="p-6 space-y-6">
       <Card className="p-5 space-y-4">
         <div className="space-y-2">
           <Label>{t.provider}</Label>
@@ -4791,7 +4794,7 @@ function MemorySettings() {
   const thresholdPercent = Math.round(Math.min(1, Math.max(0, settings.memorySimilarityThreshold || 0)) * 100)
 
   return (
-    <div className="p-6 space-y-6 overflow-y-auto h-full">
+    <div className="p-6 space-y-6">
       <Card className="p-5">
         <div className="flex items-start justify-between gap-6">
           <div className="space-y-1">
@@ -5109,7 +5112,7 @@ function DataSettings() {
   })()
 
   return (
-    <div className="p-6 space-y-6 h-full overflow-y-auto">
+    <div className="p-6 space-y-6">
       <Card className="p-5 space-y-3">
         <h3 className="text-[13px] font-semibold">{t.dbPath}</h3>
         <p className="text-[13px] text-muted-foreground">{t.dbPathHint}</p>
