@@ -9,6 +9,7 @@ import { CodeBlock } from './components/markdown/CodeBlock'
 import { MermaidBlock } from './components/markdown/MermaidBlock'
 import 'katex/dist/katex.min.css'
 import { DiffView } from './components/DiffView'
+import { createTwoFilesPatch } from 'diff'
 import { resolveBackendBaseUrl, useStore, type Message, type ToolTrace, type ProviderModel, type Artifact } from './store/useStore'
 import { THEMES } from './lib/themes'
 import { SettingsDialog, SettingsWindow } from './components/SettingsDialog'
@@ -216,7 +217,6 @@ function App(): JSX.Element {
     } as const
     return dict[loadingLang as keyof typeof dict] || dict.en
   }, [loadingLang])
-
   useEffect(() => {
     void loadRemoteConfig().catch(() => {})
   }, [loadRemoteConfig])
@@ -296,6 +296,13 @@ function AppLoaded(): JSX.Element {
   const [skillsCache, setSkillsCache] = useState<SkillEntry[]>([])
   const [skillsStatus, setSkillsStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle')
   const reduceMotion = useReducedMotion()
+  const collapseAnimTransition = useMemo(
+    () =>
+      reduceMotion
+        ? { duration: 0 }
+        : { duration: 0.28, ease: [0.22, 1, 0.36, 1] as const },
+    [reduceMotion]
+  )
 
   // Use a single state for mutually exclusive popovers
   const [popoverPanel, setPopoverPanel] = useState<'' | 'attachments' | 'tools' | 'skills' | 'model' | 'thinking' | 'permission'>('')
@@ -540,6 +547,41 @@ function AppLoaded(): JSX.Element {
     return map
   }, [displayMessages, effectiveTurnIdByMessageId])
 
+  const completedToolTraceSignaturesByTurn = useMemo(() => {
+    const map: Record<string, Set<string>> = {}
+    const normalizeSigText = (v: unknown) => String(v || '').replace(/\s+/g, ' ').trim()
+    const signatureOf = (tr: any) => {
+      const name = String(tr?.name || '').trim()
+      const argsText = String(tr?.argsPreview?.text || '').trim()
+      if (name === 'bash') {
+        try {
+          const parsed = JSON.parse(argsText)
+          const cmd = normalizeSigText((parsed as any)?.command)
+          return `${name}:${cmd || normalizeSigText(argsText)}`
+        } catch {
+          return `${name}:${normalizeSigText(argsText)}`
+        }
+      }
+      return `${name}:${normalizeSigText(argsText)}`
+    }
+    for (const m of displayMessages as any[]) {
+      if (m?.role !== 'tool') continue
+      const mid = String(m?.id || '').trim()
+      const turnId = mid ? String(effectiveTurnIdByMessageId[mid] || '').trim() : ''
+      if (!turnId) continue
+      const traces = Array.isArray(m?.meta?.toolTraces) ? m.meta.toolTraces : []
+      for (const tr of traces) {
+        const st = String((tr as any)?.status || '').trim()
+        if (st === 'running') continue
+        const sig = signatureOf(tr)
+        if (!sig) continue
+        if (!map[turnId]) map[turnId] = new Set<string>()
+        map[turnId].add(sig)
+      }
+    }
+    return map
+  }, [displayMessages, effectiveTurnIdByMessageId])
+
   useEffect(() => {
     void resolveBackendBaseUrl()
       .then((url) => setBackendBaseUrl(String(url || '').trim()))
@@ -705,20 +747,34 @@ function AppLoaded(): JSX.Element {
             <div className={`text-[13px] leading-relaxed font-medium ${state === 'running' ? 'anima-flow-text' : 'text-foreground/80'}`}>{title}</div>
             {canToggle ? (
               <ChevronDown
-                className={`w-4 h-4 text-muted-foreground transition-all opacity-0 group-hover:opacity-100 ${collapsed ? '' : 'rotate-180'}`}
+                className={`w-4 h-4 text-muted-foreground transition-all duration-300 opacity-0 group-hover:opacity-100 ${collapsed ? '' : 'rotate-180'}`}
               />
             ) : (
               <div className="w-4 h-4" />
             )}
           </button>
 
-          {showBody ? (
-            <div ref={viewportRef} className="h-[150px] overflow-y-auto px-3 py-2 custom-scrollbar">
-              <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-foreground/90">
-                {content}
-              </div>
-            </div>
-          ) : null}
+          <AnimatePresence initial={false}>
+            {showBody ? (
+              <motion.div
+                key="compression-body"
+                initial={{ gridTemplateRows: '0fr' }}
+                animate={{ gridTemplateRows: '1fr' }}
+                exit={{ gridTemplateRows: '0fr' }}
+                transition={collapseAnimTransition}
+                className="overflow-hidden"
+                style={{ display: 'grid', willChange: 'grid-template-rows' }}
+              >
+                <div className="min-h-0 overflow-hidden">
+                  <div ref={viewportRef} className="h-[150px] overflow-y-auto px-3 py-2 custom-scrollbar">
+                    <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-foreground/90">
+                      {content}
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
         </div>
       </div>
     )
@@ -2995,12 +3051,12 @@ function AppLoaded(): JSX.Element {
   }
 
   return (
-    <div className="h-screen w-full overflow-hidden rounded-[20px] bg-white text-foreground transition-colors duration-300 relative">
+    <div className="h-screen w-full overflow-hidden bg-white text-foreground transition-colors duration-300 relative">
       <div className="draggable absolute inset-x-0 top-0 h-2" />
       {!ui.sidebarCollapsed && (
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute left-0 top-0 bottom-0 bg-[#EBE9EA]"
+          className="pointer-events-none absolute left-0 top-0 bottom-0 rounded-l-[20px] bg-[#EBE9EA]"
           style={{ width: `${leftWidth + 12}px` }}
         />
       )}
@@ -3217,7 +3273,8 @@ function AppLoaded(): JSX.Element {
                 onMouseDown={(e) => { e.preventDefault(); setIsResizingLeft(true); }}
               />
             </div>
-            <div className="mt-2 mr-2 mb-2 flex-1 flex flex-col h-auto overflow-hidden relative rounded-l-xl bg-white">
+            <div className="flex-1 flex flex-col h-full overflow-hidden relative rounded-l-xl bg-white">
+              <div className="flex h-full min-w-0 flex-col overflow-hidden pt-2 pr-2 pb-2">
               <header className="h-[52px] shrink-0 draggable relative z-30">
               <div className="absolute left-4 top-[4px] flex items-center">
                 <div className="w-[80px] h-7" />
@@ -3465,7 +3522,7 @@ function AppLoaded(): JSX.Element {
                       }
 
                       return (
-                      <div className="w-full">
+                      <motion.div layout="position" className="w-full">
                       {showTurnProcessSummary ? (
                         <div className="py-0.5">
                           <button
@@ -3488,7 +3545,7 @@ function AppLoaded(): JSX.Element {
                                 turnExpanded ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                               }`}
                             >
-                              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${turnExpanded ? 'rotate-0' : '-rotate-90'}`} />
+                              <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${turnExpanded ? 'rotate-0' : '-rotate-90'}`} />
                             </span>
                           </button>
                         </div>
@@ -3539,8 +3596,46 @@ function AppLoaded(): JSX.Element {
                         </div>
                       ) : msg.role === 'tool' ? (
                         <div className="py-0.5">
-                            {Array.isArray(msg.meta?.toolTraces) && msg.meta?.toolTraces.length > 0 && (() => {
-                              const traces = msg.meta?.toolTraces || []
+                            <AnimatePresence initial={false}>
+                              {!shouldHideProcess && Array.isArray(msg.meta?.toolTraces) && msg.meta?.toolTraces.length > 0 ? (
+                                <motion.div
+                                  key={`tool-traces:${String(msg.id || '')}`}
+                                  initial={{ gridTemplateRows: '0fr' }}
+                                  animate={{ gridTemplateRows: '1fr' }}
+                                  exit={{ gridTemplateRows: '0fr' }}
+                                  transition={collapseAnimTransition}
+                                  className="overflow-hidden"
+                                  style={{ display: 'grid', willChange: 'grid-template-rows' }}
+                                >
+                                  <div className="min-h-0 overflow-hidden">
+                                  {(() => {
+                              const rawTraces = msg.meta?.toolTraces || []
+                              const normalizeSigText = (v: unknown) => String(v || '').replace(/\s+/g, ' ').trim()
+                              const signatureOf = (tr: any) => {
+                                const name = String(tr?.name || '').trim()
+                                const argsText = String(tr?.argsPreview?.text || '').trim()
+                                if (name === 'bash') {
+                                  try {
+                                    const parsed = JSON.parse(argsText)
+                                    const cmd = normalizeSigText((parsed as any)?.command)
+                                    return `${name}:${cmd || normalizeSigText(argsText)}`
+                                  } catch {
+                                    return `${name}:${normalizeSigText(argsText)}`
+                                  }
+                                }
+                                return `${name}:${normalizeSigText(argsText)}`
+                              }
+                              const traces = rawTraces.filter((tr: any) => {
+                                if (String(tr?.status || '') !== 'running') return true
+                                const sig = signatureOf(tr)
+                                if (turnId && completedToolTraceSignaturesByTurn[turnId]?.has(sig)) return false
+                                return !rawTraces.some((x: any) => {
+                                  if (x === tr) return false
+                                  const st = String(x?.status || '')
+                                  if (st === 'running') return false
+                                  return signatureOf(x) === sig
+                                })
+                              })
 
                               return (
                                 <div className="space-y-0.5">
@@ -3766,12 +3861,52 @@ function AppLoaded(): JSX.Element {
                                           : matchedApproval?.status === 'rejected'
                                             ? t.dangerousApprovalStatusRejected
                                             : ''
-                                    const runningStatusText = (() => {
-                                      if (!isRunning) return traceStatusText
-                                      const subject = String(entity || '').trim()
-                                      if (!subject) return traceStatusText
-                                      return `${traceStatusText} ${subject}`
+                                    const runningStatusText = traceStatusText
+                                    const displayEntity = (() => {
+                                      const text = String(entity || '').trim()
+                                      if (tr.name !== 'bash') return text
+                                      const max = 80
+                                      if (text.length <= max) return text
+                                      return `${text.slice(0, max - 3)}...`
                                     })()
+                                    const isEditTrace = tr.name === 'write_file' || tr.name === 'replace_file' || tr.name === 'edit_file'
+                                    const countDiffLines = (oldContent: unknown, newContent: unknown) => {
+                                      try {
+                                        const patch = createTwoFilesPatch('a', 'b', String(oldContent ?? ''), String(newContent ?? ''))
+                                        let added = 0
+                                        let removed = 0
+                                        for (const line of patch.split('\n')) {
+                                          if (
+                                            line.startsWith('---') ||
+                                            line.startsWith('+++') ||
+                                            line.startsWith('@@') ||
+                                            line.startsWith('Index:') ||
+                                            line.startsWith('diff ')
+                                          ) {
+                                            continue
+                                          }
+                                          if (line.startsWith('+')) added += 1
+                                          else if (line.startsWith('-')) removed += 1
+                                        }
+                                        return { added, removed }
+                                      } catch {
+                                        return { added: 0, removed: 0 }
+                                      }
+                                    }
+                                    const editDiffSummaries = Array.isArray(tr.diffs)
+                                      ? tr.diffs.map((d: any) => {
+                                          const path = String(d?.path || '').trim()
+                                          const fileName = (path.split('/').pop() || path || 'unknown').trim()
+                                          const stats = countDiffLines(d?.oldContent, d?.newContent)
+                                          return { path, fileName, ...stats }
+                                        })
+                                      : []
+                                    const totalAdded = editDiffSummaries.reduce((n: number, x: any) => n + (x.added || 0), 0)
+                                    const totalRemoved = editDiffSummaries.reduce((n: number, x: any) => n + (x.removed || 0), 0)
+                                    const approvalBadgeClass =
+                                      matchedApproval?.status === 'rejected'
+                                        ? 'border-red-200 bg-red-50 text-red-700'
+                                        : 'border-emerald-200 bg-emerald-50 text-emerald-700'
 
                                     if (tr.name === 'WebSearch' && Array.isArray(resultItems)) {
                                       const circled = [
@@ -3848,7 +3983,7 @@ function AppLoaded(): JSX.Element {
                                       (tr.status === 'failed' && Boolean(tr.error?.message))
 
                                     return (
-                                      <div key={tr.id} className="group rounded-lg hover:bg-muted/40 transition-colors py-0.5">
+                                      <motion.div layout="position" key={tr.id} className="group rounded-lg hover:bg-muted/40 transition-colors py-0.5">
                                         <div
                                           className={`flex items-center gap-2 ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
                                           onClick={() => {
@@ -3863,7 +3998,30 @@ function AppLoaded(): JSX.Element {
                                           </span>
                                           
                                           <div className="min-w-0 flex-1 flex items-center gap-2">
-                                            {canOpenEntityInFiles ? (
+                                            {tr.name === 'bash' && toolApprovalText ? (
+                                              <span className={`shrink-0 inline-flex items-center whitespace-nowrap rounded-md border px-2 py-0.5 text-[11px] leading-none font-medium ${approvalBadgeClass}`}>
+                                                {toolApprovalText}
+                                              </span>
+                                            ) : null}
+                                            {isEditTrace && editDiffSummaries.length > 0 && !isRunning && !detailOpen ? (
+                                              <span className="inline-flex items-center gap-1.5 min-w-0">
+                                                <button
+                                                  type="button"
+                                                  className="max-w-[220px] truncate text-[12px] text-blue-600 hover:underline"
+                                                  title={editDiffSummaries[0]?.path || editDiffSummaries[0]?.fileName}
+                                                  onMouseDown={(e) => e.stopPropagation()}
+                                                  onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    const p = String(editDiffSummaries[0]?.path || '').trim()
+                                                    if (p) openFileInExplorer(p)
+                                                  }}
+                                                >
+                                                  {editDiffSummaries[0]?.fileName}
+                                                </button>
+                                                <span className="text-[12px] text-emerald-600 font-medium">+{totalAdded}</span>
+                                                <span className="text-[12px] text-red-500 font-medium">-{totalRemoved}</span>
+                                              </span>
+                                            ) : canOpenEntityInFiles ? (
                                               <button
                                                 type="button"
                                                 className="inline-block max-w-full text-[12px] font-mono text-muted-foreground bg-muted/30 px-1.5 py-0.5 rounded-md truncate align-middle border border-transparent hover:border-border/50 transition-colors hover:underline cursor-pointer"
@@ -3874,11 +4032,11 @@ function AppLoaded(): JSX.Element {
                                                 }}
                                                 title={entity}
                                               >
-                                                {entity}
+                                                {displayEntity}
                                               </button>
                                             ) : (
                                               <span className="inline-block max-w-full text-[12px] font-mono text-muted-foreground bg-muted/30 px-1.5 py-0.5 rounded-md truncate align-middle border border-transparent hover:border-border/50 transition-colors">
-                                                {entity}
+                                                {displayEntity}
                                               </span>
                                             )}
                                             {resultSummary && (
@@ -3896,116 +4054,129 @@ function AppLoaded(): JSX.Element {
                                                   detailOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                                                 }`}
                                               >
-                                                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${detailOpen ? 'rotate-0' : '-rotate-90'}`} />
-                                              </span>
-                                            ) : null}
-                                            {tr.name === 'bash' && toolApprovalText ? (
-                                              <span className="rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground bg-muted/30">
-                                                {toolApprovalText}
+                                                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-300 ${detailOpen ? 'rotate-0' : '-rotate-90'}`} />
                                               </span>
                                             ) : null}
                                           </div>
                                         </div>
 
-                                        {detailOpen && hasDetail && (
-                                          <div className="mt-2 space-y-2 pb-1">
-                                            {Array.isArray((tr as any).artifacts) && (tr as any).artifacts.length > 0 && (
-                                              <div className="space-y-1">
-                                                <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Artifacts</div>
-                                                {renderArtifacts((tr as any).artifacts as Artifact[], 'sm')}
-                                              </div>
-                                            )}
-                                            {detailMarkdown ? (
-                                              <ReactMarkdown
-                                                remarkPlugins={[remarkGfm, remarkMath]}
-                                                rehypePlugins={[rehypeKatex, rehypeRaw]}
-                                                className="prose prose-sm dark:prose-invert max-w-none text-[11px] text-foreground/80 prose-ul:pl-3 prose-ol:pl-3"
-                                                components={{
-                                                  pre: ({ children }) => <>{children}</>,
-                                                  code({ inline, className, children, ...props }: any) {
-                                                    const value = String(children).replace(/\n$/, '')
-                                                    const trimmed = value.trim()
-                                                    const isFileToken =
-                                                      Boolean(inline) &&
-                                                      !/^https?:\/\//i.test(trimmed) &&
-                                                      (trimmed.startsWith('file://') ||
-                                                        trimmed.startsWith('/') ||
-                                                        trimmed.startsWith('\\') ||
-                                                        trimmed.startsWith('./') ||
-                                                        trimmed.startsWith('../') ||
-                                                        trimmed.startsWith('~/') ||
-                                                        /\.(ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)$/i.test(trimmed))
-                                                    if (isFileToken) {
-                                                      return (
-                                                        <button
-                                                          type="button"
-                                                          className="rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground hover:underline cursor-pointer"
-                                                          onClick={(e) => {
-                                                            e.preventDefault()
-                                                            e.stopPropagation()
-                                                            openLinkTarget(trimmed)
-                                                          }}
-                                                          title={trimmed}
-                                                        >
-                                                          {trimmed}
-                                                        </button>
-                                                      )
-                                                    }
-                                                    return <code className={className} {...props}>{children}</code>
-                                                  },
-                                                  a({ href, children, ...props }: any) {
-                                                    const target = String(href || '').trim()
-                                                    return (
-                                                      <a
-                                                        {...props}
-                                                        href={target}
-                                                        onClick={(e) => {
-                                                          if (!target) return
-                                                          e.preventDefault()
-                                                          openLinkTarget(target)
-                                                        }}
-                                                      >
-                                                        {children}
-                                                      </a>
-                                                    )
-                                                  }
-                                                }}
-                                              >
-                                                {linkifyQuotedFileNames(detailMarkdown)}
-                                              </ReactMarkdown>
-                                            ) : null}
+                                        <AnimatePresence initial={false}>
+                                          {detailOpen && hasDetail ? (
+                                            <motion.div
+                                              key="trace-detail"
+                                              initial={{ gridTemplateRows: '0fr' }}
+                                              animate={{ gridTemplateRows: '1fr' }}
+                                              exit={{ gridTemplateRows: '0fr' }}
+                                              transition={collapseAnimTransition}
+                                              className="overflow-hidden"
+                                              style={{ display: 'grid', willChange: 'grid-template-rows' }}
+                                            >
+                                              <div className="min-h-0 overflow-hidden">
+                                              <div className="mt-2 space-y-2 pb-1">
+                                                {Array.isArray((tr as any).artifacts) && (tr as any).artifacts.length > 0 && (
+                                                  <div className="space-y-1">
+                                                    <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Artifacts</div>
+                                                    {renderArtifacts((tr as any).artifacts as Artifact[], 'sm')}
+                                                  </div>
+                                                )}
+                                                {detailMarkdown ? (
+                                                  <ReactMarkdown
+                                                    remarkPlugins={[remarkGfm, remarkMath]}
+                                                    rehypePlugins={[rehypeKatex, rehypeRaw]}
+                                                    className="prose prose-sm dark:prose-invert max-w-none text-[11px] text-foreground/80 prose-ul:pl-3 prose-ol:pl-3"
+                                                    components={{
+                                                      pre: ({ children }) => <>{children}</>,
+                                                      code({ inline, className, children, ...props }: any) {
+                                                        const value = String(children).replace(/\n$/, '')
+                                                        const trimmed = value.trim()
+                                                        const isFileToken =
+                                                          Boolean(inline) &&
+                                                          !/^https?:\/\//i.test(trimmed) &&
+                                                          (trimmed.startsWith('file://') ||
+                                                            trimmed.startsWith('/') ||
+                                                            trimmed.startsWith('\\') ||
+                                                            trimmed.startsWith('./') ||
+                                                            trimmed.startsWith('../') ||
+                                                            trimmed.startsWith('~/') ||
+                                                            /\.(ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)$/i.test(trimmed))
+                                                        if (isFileToken) {
+                                                          return (
+                                                            <button
+                                                              type="button"
+                                                              className="rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground hover:underline cursor-pointer"
+                                                              onClick={(e) => {
+                                                                e.preventDefault()
+                                                                e.stopPropagation()
+                                                                openLinkTarget(trimmed)
+                                                              }}
+                                                              title={trimmed}
+                                                            >
+                                                              {trimmed}
+                                                            </button>
+                                                          )
+                                                        }
+                                                        return <code className={className} {...props}>{children}</code>
+                                                      },
+                                                      a({ href, children, ...props }: any) {
+                                                        const target = String(href || '').trim()
+                                                        return (
+                                                          <a
+                                                            {...props}
+                                                            href={target}
+                                                            onClick={(e) => {
+                                                              if (!target) return
+                                                              e.preventDefault()
+                                                              openLinkTarget(target)
+                                                            }}
+                                                          >
+                                                            {children}
+                                                          </a>
+                                                        )
+                                                      }
+                                                    }}
+                                                  >
+                                                    {linkifyQuotedFileNames(detailMarkdown)}
+                                                  </ReactMarkdown>
+                                                ) : null}
 
-                                            {tr.diffs && tr.diffs.length > 0 && (
-                                              <div className="space-y-1">
-                                                <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Changes</div>
-                                                <div className="space-y-2">
-                                                  {tr.diffs.map((d: any, i: number) => (
-                                                    <DiffView key={i} oldContent={d.oldContent} newContent={d.newContent} fileName={d.path} />
-                                                  ))}
-                                                </div>
-                                              </div>
-                                            )}
+                                                {tr.diffs && tr.diffs.length > 0 && (
+                                                  <div className="space-y-1">
+                                                    <div className="space-y-2">
+                                                      {tr.diffs.map((d: any, i: number) => (
+                                                        <DiffView key={i} oldContent={d.oldContent} newContent={d.newContent} fileName={d.path} />
+                                                      ))}
+                                                    </div>
+                                                  </div>
+                                                )}
 
-                                            {tr.status === 'failed' && tr.error?.message && (
-                                              <div className="space-y-1">
-                                                <div className="text-[10px] font-medium text-red-500 uppercase tracking-wider">{t.trace.error}</div>
-                                                <div className="text-[10px] text-red-600 dark:text-red-400 whitespace-pre-wrap break-words bg-red-500/10 rounded p-2">
-                                                  {tr.error.message}
-                                                </div>
+                                                {tr.status === 'failed' && tr.error?.message && (
+                                                  <div className="space-y-1">
+                                                    <div className="text-[10px] font-medium text-red-500 uppercase tracking-wider">{t.trace.error}</div>
+                                                    <div className="text-[10px] text-red-600 dark:text-red-400 whitespace-pre-wrap break-words bg-red-500/10 rounded p-2">
+                                                      {tr.error.message}
+                                                    </div>
+                                                  </div>
+                                                )}
                                               </div>
-                                            )}
-                                          </div>
-                                        )}
-                                      </div>
+                                              </div>
+                                            </motion.div>
+                                          ) : null}
+                                        </AnimatePresence>
+                                      </motion.div>
                                     )
                                   })}
                                 </div>
                               )
-                            })()}
+                                  })()}
+                                  </div>
+                                </motion.div>
+                              ) : null}
+                            </AnimatePresence>
                         </div>
                       ) : (
                         <div className="py-0.5">
                           <div className="space-y-0.5">
+                            <AnimatePresence initial={false}>
                             {(() => {
                               if (shouldHideProcess) return null
                               const meta = msg.meta || {}
@@ -4036,7 +4207,16 @@ function AppLoaded(): JSX.Element {
                                 })
                               }
                               return (
-                                <div>
+                                <motion.div
+                                  key={`reasoning-block:${msgId}`}
+                                  initial={{ gridTemplateRows: '0fr' }}
+                                  animate={{ gridTemplateRows: '1fr' }}
+                                  exit={{ gridTemplateRows: '0fr' }}
+                                  transition={collapseAnimTransition}
+                                  className="overflow-hidden"
+                                  style={{ display: 'grid', willChange: 'grid-template-rows' }}
+                                >
+                                  <div className="min-h-0 overflow-hidden">
                                   <button
                                     type="button"
                                     className="group w-full flex items-center gap-2 min-w-0 py-0.5 rounded-md text-left hover:bg-muted/10 transition-colors motion-reduce:transition-none"
@@ -4061,21 +4241,37 @@ function AppLoaded(): JSX.Element {
                                       }`}
                                     >
                                       <ChevronDown
-                                        className={`w-3.5 h-3.5 transition-transform motion-reduce:transition-none ${
+                                        className={`w-3.5 h-3.5 transition-transform duration-300 motion-reduce:transition-none ${
                                           open ? 'rotate-0' : '-rotate-90'
                                         }`}
                                       />
                                     </span>
                                   </button>
 
-                                  {open ? (
-                                    <div className="mt-1 text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words">
-                                      {text}
-                                    </div>
-                                  ) : null}
-                                </div>
+                                  <AnimatePresence initial={false}>
+                                    {open ? (
+                                      <motion.div
+                                        key="reasoning-body"
+                                        initial={{ gridTemplateRows: '0fr' }}
+                                        animate={{ gridTemplateRows: '1fr' }}
+                                        exit={{ gridTemplateRows: '0fr' }}
+                                        transition={collapseAnimTransition}
+                                        className="overflow-hidden"
+                                        style={{ display: 'grid', willChange: 'grid-template-rows' }}
+                                      >
+                                        <div className="min-h-0 overflow-hidden">
+                                          <div className="mt-1 text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words">
+                                            {text}
+                                          </div>
+                                        </div>
+                                      </motion.div>
+                                    ) : null}
+                                  </AnimatePresence>
+                                  </div>
+                                </motion.div>
                               )
                             })()}
+                            </AnimatePresence>
 
                             {(() => {
                               const cs = (msg.meta as any)?.compressionState
@@ -4262,7 +4458,7 @@ function AppLoaded(): JSX.Element {
                           </div>
                         </div>
                       )}
-                    </div>
+                    </motion.div>
                     )
                     }}
                   />
@@ -4762,6 +4958,7 @@ function AppLoaded(): JSX.Element {
                   />
               </div>
               </footer>
+              </div>
             </div>
             </div>
             </div>

@@ -1,7 +1,6 @@
 import { PatchDiff } from '@pierre/diffs/react'
 import { createTwoFilesPatch } from 'diff'
 import { useMemo } from 'react'
-import { useStore } from '@/store/useStore'
 
 interface DiffViewProps {
   oldContent: string
@@ -10,7 +9,6 @@ interface DiffViewProps {
 }
 
 export function DiffView({ oldContent, newContent, fileName }: DiffViewProps) {
-  const openFileInExplorer = useStore((s) => s.openFileInExplorer)
   const patch = useMemo(() => {
     let nameForDiff = fileName
     if (!nameForDiff.includes('.')) {
@@ -24,27 +22,23 @@ export function DiffView({ oldContent, newContent, fileName }: DiffViewProps) {
   }, [oldContent, newContent, fileName])
 
   return (
-    <div className="my-2 space-y-1">
-      <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider flex items-center justify-between px-1">
-        <button
-          type="button"
-          className="truncate text-left hover:underline"
-          onClick={() => openFileInExplorer(fileName)}
-          title={fileName}
-        >
-          {fileName}
-        </button>
-      </div>
+    <div className="my-2">
       <div className="rounded-md border border-border bg-background overflow-hidden">
-        <div className="max-h-[400px] overflow-y-auto text-xs">
+        <div className="max-h-[420px] overflow-y-auto">
           <PatchDiff
             patch={patch}
+            style={{
+              ['--diffs-font-size' as any]: '12px',
+              ['--diffs-line-height' as any]: '20px',
+              ['--diffs-font-family' as any]: 'JetBrains Mono, SF Mono, Monaco, Consolas, Ubuntu Mono, Liberation Mono, Courier New, monospace',
+              ['--diffs-header-font-family' as any]: 'JetBrains Mono, SF Mono, Monaco, Consolas, Ubuntu Mono, Liberation Mono, Courier New, monospace',
+            }}
             options={{
               theme: 'pierre-light',
               themeType: 'light',
               diffStyle: 'split',
               diffIndicators: 'classic',
-              disableFileHeader: true,
+              disableFileHeader: false,
               disableBackground: false,
             }}
           />

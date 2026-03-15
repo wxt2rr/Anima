@@ -19,13 +19,17 @@ export const RightSidebar: React.FC<{ width?: number; onResizeStart?: () => void
   const setPreviewUrl = useStore((s) => s.setPreviewUrl)
 
   useEffect(() => {
-    const off = window.anima.preview.onServerDetected(({ url }) => {
+    const previewApi = window.anima?.preview
+    if (!previewApi?.onServerDetected) return
+    const off = previewApi.onServerDetected(({ url }) => {
       const next = String(url || '').trim()
       if (!next) return
       setPreviewUrl(next)
       setActiveRightPanel('preview')
     })
-    return () => off()
+    return () => {
+      if (typeof off === 'function') off()
+    }
   }, [setActiveRightPanel, setPreviewUrl])
 
   // Default to 'files' if open but no panel selected

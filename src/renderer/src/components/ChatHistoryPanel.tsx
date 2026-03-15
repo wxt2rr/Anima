@@ -332,7 +332,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
                 <div key={pid} className="mx-0.5">
                   <div
                     className={`group flex items-center gap-2 px-2.5 py-1.5 rounded-md transition-all ${
-                      activeProject ? 'text-foreground bg-white/50 border border-black/5' : 'text-muted-foreground hover:bg-black/5 hover:text-foreground'
+                      activeProject ? 'text-foreground' : 'text-muted-foreground hover:bg-black/5 hover:text-foreground'
                     }`}
                   >
                     <button
@@ -466,13 +466,14 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
                                 <div
                                   key={chat.id}
                                   onClick={() => void setActiveChat(chat.id)}
-                                  className={`group relative flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer transition-all duration-200 ${
+                                  className={`group relative flex items-center gap-2 px-2.5 py-1 rounded-md cursor-pointer transition-all duration-200 ${
                                     active
-                                      ? 'bg-white/70 border border-black/5 text-foreground'
+                                      ? 'bg-black/5 text-foreground'
                                       : 'text-muted-foreground hover:bg-black/5 hover:text-foreground'
                                   }`}
                                 >
-                                  <span className="w-2.5 h-2.5 shrink-0 rounded-full bg-black/15" />
+                                  {/* 占位与项目图标同宽，保证对话标题与项目标题左对齐 */}
+                                  <span className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                                   <span className="truncate text-[13px] flex-1 leading-5 text-foreground">{title}</span>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
