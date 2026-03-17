@@ -45,6 +45,24 @@ const acpCore_1 = require("../src/main/services/acpCore");
     strict_1.default.equal(evt.trace.status, 'running');
     strict_1.default.equal(evt.trace.argsPreview.text.includes('a.txt'), true);
 });
+(0, node_test_1.test)('mapAcpUpdateToUiEvent: done/completed tool statuses should not stay running', () => {
+    const doneEvt = (0, acpCore_1.mapAcpUpdateToUiEvent)({
+        type: 'tool_call_update',
+        trace: { id: 't_done', name: 'load_skill', status: 'done' }
+    });
+    strict_1.default.ok(doneEvt && doneEvt.type === 'trace');
+    if (!doneEvt || doneEvt.type !== 'trace')
+        return;
+    strict_1.default.equal(doneEvt.trace.status, 'succeeded');
+    const completedEvt = (0, acpCore_1.mapAcpUpdateToUiEvent)({
+        type: 'tool_call_update',
+        trace: { id: 't_completed', name: 'load_skill', status: 'completed' }
+    });
+    strict_1.default.ok(completedEvt && completedEvt.type === 'trace');
+    if (!completedEvt || completedEvt.type !== 'trace')
+        return;
+    strict_1.default.equal(completedEvt.trace.status, 'succeeded');
+});
 (0, node_test_1.test)('buildKey: stable key format', () => {
     const key = (0, acpCore_1.buildKey)('/w', 'thread', 'agent');
     strict_1.default.equal(typeof key, 'string');

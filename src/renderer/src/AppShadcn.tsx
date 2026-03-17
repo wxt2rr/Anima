@@ -161,6 +161,22 @@ function linkifyQuotedFileNames(input: string): string {
     .join('')
 }
 
+function toolTraceSignature(trace: any): string {
+  const normalizeSigText = (v: unknown) => String(v || '').replace(/\s+/g, ' ').trim()
+  const name = String(trace?.name || '').trim()
+  const argsText = String(trace?.argsPreview?.text || '').trim()
+  if (name === 'bash') {
+    try {
+      const parsed = JSON.parse(argsText)
+      const cmd = normalizeSigText((parsed as any)?.command)
+      return `${name}:${cmd || normalizeSigText(argsText)}`
+    } catch {
+      return `${name}:${normalizeSigText(argsText)}`
+    }
+  }
+  return `${name}:${normalizeSigText(argsText)}`
+}
+
 async function fetchBackendJson<T>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController()
   const timer = window.setTimeout(() => controller.abort(), 15000)
@@ -303,6 +319,23 @@ function AppLoaded(): JSX.Element {
         : { duration: 0.28, ease: [0.22, 1, 0.36, 1] as const },
     [reduceMotion]
   )
+  const collapseContentAnim = useMemo(
+    () =>
+      reduceMotion
+        ? {
+            initial: { opacity: 1, y: 0 },
+            animate: { opacity: 1, y: 0 },
+            exit: { opacity: 1, y: 0 },
+            transition: { duration: 0 }
+          }
+        : {
+            initial: { opacity: 0, y: 4 },
+            animate: { opacity: 1, y: 0 },
+            exit: { opacity: 0, y: 2 },
+            transition: { duration: 0.2, ease: [0.22, 1, 0.36, 1] as const }
+          },
+    [reduceMotion]
+  )
 
   // Use a single state for mutually exclusive popovers
   const [popoverPanel, setPopoverPanel] = useState<'' | 'attachments' | 'tools' | 'skills' | 'model' | 'thinking' | 'permission'>('')
@@ -342,15 +375,19 @@ function AppLoaded(): JSX.Element {
   const scrollVelRef = useRef(0)
   const isAutoScrollActiveRef = useRef(false)
   const chatIsAtBottomRef = useRef(true)
+  const showScrollToBottomRef = useRef(false)
   const isLoadingRef = useRef(false)
   const userScrollLockedRef = useRef(false)
   const programmaticScrollRef = useRef(false)
   const programmaticScrollTimerRef = useRef<number | null>(null)
+  const suppressAutoScrollUntilRef = useRef(0)
   const userScrollIntentUntilRef = useRef(0)
   const lastScrollTopRef = useRef(0)
   const lastMessageKeyRef = useRef('')
   const lastSeenMessageKeyRef = useRef('')
   const userMsgElMapRef = useRef<Map<string, HTMLElement>>(new Map())
+  const turnSummaryBtnMapRef = useRef<Map<string, HTMLButtonElement>>(new Map())
+  const turnStabilizeRafByIdRef = useRef<Map<string, number>>(new Map())
   const highlightUserMsgTimerRef = useRef<number | null>(null)
   const dangerousApprovalThreadsRef = useRef<Set<string>>(new Set())
   const [highlightUserMsgId, setHighlightUserMsgId] = useState('')
@@ -404,6 +441,17 @@ function AppLoaded(): JSX.Element {
   const [chatIsAtBottom, setChatIsAtBottom] = useState(true)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const [virtualApi, setVirtualApi] = useState<VirtualListApi | null>(null)
+  const setChatBottomIfChanged = useCallback((next: boolean) => {
+    if (chatIsAtBottomRef.current === next) return
+    chatIsAtBottomRef.current = next
+    setChatIsAtBottom(next)
+  }, [])
+
+  const setScrollToBottomIfChanged = useCallback((next: boolean) => {
+    if (showScrollToBottomRef.current === next) return
+    showScrollToBottomRef.current = next
+    setShowScrollToBottom(next)
+  }, [])
 
   const activeChat = useMemo(() => chats.find((c) => c.id === activeChatId), [chats, activeChatId])
   const persistedCompression = useMemo(() => ((activeChat as any)?.meta?.compression as any) || null, [activeChat])
@@ -549,21 +597,6 @@ function AppLoaded(): JSX.Element {
 
   const completedToolTraceSignaturesByTurn = useMemo(() => {
     const map: Record<string, Set<string>> = {}
-    const normalizeSigText = (v: unknown) => String(v || '').replace(/\s+/g, ' ').trim()
-    const signatureOf = (tr: any) => {
-      const name = String(tr?.name || '').trim()
-      const argsText = String(tr?.argsPreview?.text || '').trim()
-      if (name === 'bash') {
-        try {
-          const parsed = JSON.parse(argsText)
-          const cmd = normalizeSigText((parsed as any)?.command)
-          return `${name}:${cmd || normalizeSigText(argsText)}`
-        } catch {
-          return `${name}:${normalizeSigText(argsText)}`
-        }
-      }
-      return `${name}:${normalizeSigText(argsText)}`
-    }
     for (const m of displayMessages as any[]) {
       if (m?.role !== 'tool') continue
       const mid = String(m?.id || '').trim()
@@ -573,7 +606,7 @@ function AppLoaded(): JSX.Element {
       for (const tr of traces) {
         const st = String((tr as any)?.status || '').trim()
         if (st === 'running') continue
-        const sig = signatureOf(tr)
+        const sig = toolTraceSignature(tr)
         if (!sig) continue
         if (!map[turnId]) map[turnId] = new Set<string>()
         map[turnId].add(sig)
@@ -781,6 +814,14 @@ function AppLoaded(): JSX.Element {
   }
 
   const setUpdateState = useUpdateStore((s) => s.setState)
+
+  useEffect(() => {
+    return () => {
+      turnStabilizeRafByIdRef.current.forEach((raf) => window.cancelAnimationFrame(raf))
+      turnStabilizeRafByIdRef.current.clear()
+      turnSummaryBtnMapRef.current.clear()
+    }
+  }, [])
 
   useEffect(() => {
     const api = window.anima?.update
@@ -2014,9 +2055,59 @@ function AppLoaded(): JSX.Element {
     userScrollIntentUntilRef.current = now + Math.max(80, holdMs)
   }, [])
 
+  const suppressAutoScrollFor = useCallback((holdMs = 420) => {
+    const now = performance.now()
+    suppressAutoScrollUntilRef.current = Math.max(suppressAutoScrollUntilRef.current, now + Math.max(120, holdMs))
+  }, [])
+
+  const stabilizeTurnSummaryViewport = useCallback(
+    (turnId: string, anchorTop: number, holdMs = 520) => {
+      const id = String(turnId || '').trim()
+      if (!id) return
+      const scrollEl = chatScrollRef.current
+      const anchorEl = turnSummaryBtnMapRef.current.get(id)
+      if (!scrollEl || !anchorEl) return
+
+      const prevRaf = turnStabilizeRafByIdRef.current.get(id)
+      if (prevRaf != null) {
+        window.cancelAnimationFrame(prevRaf)
+        turnStabilizeRafByIdRef.current.delete(id)
+      }
+
+      const endAt = performance.now() + Math.max(180, holdMs)
+      const tick = () => {
+        const el = chatScrollRef.current
+        const btn = turnSummaryBtnMapRef.current.get(id)
+        if (!el || !btn) {
+          turnStabilizeRafByIdRef.current.delete(id)
+          return
+        }
+
+        const delta = btn.getBoundingClientRect().top - anchorTop
+        if (Math.abs(delta) > 0.5) {
+          markProgrammaticScroll()
+          el.scrollTop += delta
+        }
+
+        if (performance.now() >= endAt) {
+          turnStabilizeRafByIdRef.current.delete(id)
+          return
+        }
+
+        const nextRaf = window.requestAnimationFrame(tick)
+        turnStabilizeRafByIdRef.current.set(id, nextRaf)
+      }
+
+      const raf = window.requestAnimationFrame(tick)
+      turnStabilizeRafByIdRef.current.set(id, raf)
+    },
+    [markProgrammaticScroll]
+  )
+
   const startAutoScroll = useCallback((opts?: { force?: boolean }) => {
     const el = chatScrollRef.current
     if (!el) return
+    if (!opts?.force && performance.now() < suppressAutoScrollUntilRef.current) return
     if (!opts?.force && userScrollLockedRef.current) return
     if (isAutoScrollActiveRef.current) return
     isAutoScrollActiveRef.current = true
@@ -2074,16 +2165,14 @@ function AppLoaded(): JSX.Element {
       const hasUserIntent = performance.now() < userScrollIntentUntilRef.current
       if (hasUserIntent && currTop < prevTop - 2) {
         userScrollLockedRef.current = true
-        chatIsAtBottomRef.current = false
-        setChatIsAtBottom(false)
+        setChatBottomIfChanged(false)
         stopAutoScroll()
         return
       }
       if (gap <= 24) {
         userScrollLockedRef.current = false
-        chatIsAtBottomRef.current = true
-        setChatIsAtBottom(true)
-        setShowScrollToBottom(false)
+        setChatBottomIfChanged(true)
+        setScrollToBottomIfChanged(false)
         lastSeenMessageKeyRef.current = lastMessageKeyRef.current
       }
       return
@@ -2091,18 +2180,16 @@ function AppLoaded(): JSX.Element {
 
     if (gap <= 24) {
       userScrollLockedRef.current = false
-      chatIsAtBottomRef.current = true
-      setChatIsAtBottom(true)
-      setShowScrollToBottom(false)
+      setChatBottomIfChanged(true)
+      setScrollToBottomIfChanged(false)
       lastSeenMessageKeyRef.current = lastMessageKeyRef.current
       return
     }
 
     userScrollLockedRef.current = true
-    chatIsAtBottomRef.current = false
-    setChatIsAtBottom(false)
+    setChatBottomIfChanged(false)
     stopAutoScroll()
-  }, [stopAutoScroll])
+  }, [setChatBottomIfChanged, setScrollToBottomIfChanged, stopAutoScroll])
 
   const scrollToTop = useCallback(() => {
     const el = chatScrollRef.current
@@ -2116,13 +2203,12 @@ function AppLoaded(): JSX.Element {
     const el = chatScrollRef.current
     if (!el) return
     userScrollLockedRef.current = false
-    setShowScrollToBottom(false)
-    setChatIsAtBottom(true)
-    chatIsAtBottomRef.current = true
+    setScrollToBottomIfChanged(false)
+    setChatBottomIfChanged(true)
     markProgrammaticScroll()
     el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
     startAutoScroll({ force: true })
-  }, [markProgrammaticScroll, startAutoScroll])
+  }, [markProgrammaticScroll, setChatBottomIfChanged, setScrollToBottomIfChanged, startAutoScroll])
 
   const scrollToUserMessage = useCallback(
     (id: string) => {
@@ -2181,6 +2267,10 @@ function AppLoaded(): JSX.Element {
   }, [chatIsAtBottom])
 
   useEffect(() => {
+    showScrollToBottomRef.current = Boolean(showScrollToBottom)
+  }, [showScrollToBottom])
+
+  useEffect(() => {
     setChatIsAtBottom(true)
     chatIsAtBottomRef.current = true
     userScrollLockedRef.current = false
@@ -2197,6 +2287,7 @@ function AppLoaded(): JSX.Element {
 
   useEffect(() => {
     if (!userScrollLockedRef.current) {
+      if (performance.now() < suppressAutoScrollUntilRef.current) return
       lastSeenMessageKeyRef.current = lastMessageKey
       setShowScrollToBottom(false)
       startAutoScroll(isLoading ? { force: true } : undefined)
@@ -2476,6 +2567,24 @@ function AppLoaded(): JSX.Element {
           const { updateMessageById, activeChatId, addMessage, persistMessageById, messages } = useStore.getState()
           
           let msgId = traceMessageIds[trace.id]
+          if (!msgId) {
+            const incomingSig = toolTraceSignature(trace)
+            if (incomingSig) {
+              const existingRunningMsg = [...messages]
+                .reverse()
+                .find((m: any) => {
+                  if (m?.role !== 'tool') return false
+                  if (String(m?.turnId || '') !== String(turnId || '')) return false
+                  const list = Array.isArray(m?.meta?.toolTraces) ? m.meta.toolTraces : []
+                  return list.some((x: any) => String(x?.status || '') === 'running' && toolTraceSignature(x) === incomingSig)
+                })
+              const existingId = String(existingRunningMsg?.id || '').trim()
+              if (existingId) {
+                msgId = existingId
+                traceMessageIds[trace.id] = existingId
+              }
+            }
+          }
           if (msgId) {
              const existing = messages.find((m) => m.id === msgId)
              const nextMeta = { ...(existing?.meta || {}), toolTraces: [trace] }
@@ -2641,6 +2750,10 @@ function AppLoaded(): JSX.Element {
                   }
                   if (Array.isArray(e.traces)) {
                     traces = e.traces
+                    for (const trace of e.traces) {
+                      if (!trace || trace.status === 'running') continue
+                      upsertTrace(trace)
+                    }
                     assistantMeta = {
                       ...assistantMeta,
                       reasoningSummary: deriveReasoningSummaryFromTraces(traces) ?? assistantMeta.reasoningSummary
@@ -2844,6 +2957,10 @@ function AppLoaded(): JSX.Element {
                   }
                   if (Array.isArray(evt.traces)) {
                     traces = evt.traces
+                    for (const trace of evt.traces) {
+                      if (!trace || trace.status === 'running') continue
+                      upsertTrace(trace)
+                    }
                     assistantMeta = {
                       ...assistantMeta,
                       reasoningSummary: deriveReasoningSummaryFromTraces(traces) ?? assistantMeta.reasoningSummary
@@ -3357,7 +3474,6 @@ function AppLoaded(): JSX.Element {
                     scrollRef={chatScrollRef as any}
                     onApi={setVirtualApi}
                     renderItem={(msg: any, ctx) => {
-                      const active = Boolean(ctx.active)
                       const msgIdForTurn = String(msg?.id || '').trim()
                       const turnId = msgIdForTurn ? String(effectiveTurnIdByMessageId[msgIdForTurn] || '').trim() : ''
                       const collapseHistoricalProcess = (settings as any).collapseHistoricalProcess !== false
@@ -3391,27 +3507,11 @@ function AppLoaded(): JSX.Element {
                         if (!hasContent && !hasReasoning && !hasTokens && !hasCompression && !hasDangerousApproval && !showTurnProcessSummary) return null
                       }
 
-                      if (msg.role === 'assistant' && shouldHideProcess && !isFinalAssistantOfTurn && !isFirstAssistantOfTurn) {
-                        return null
-                      }
-
-                      if (msg.role === 'tool' && shouldHideProcess) {
-                        return null
-                      }
+                      const isCollapsibleProcessRow =
+                        (msg.role === 'assistant' && !isFinalAssistantOfTurn && !isFirstAssistantOfTurn) || msg.role === 'tool'
+                      const processRowVisible = !(isCollapsibleProcessRow && shouldHideProcess)
 
                       const turnDangerousApprovals = turnId ? dangerousApprovalsByTurn[turnId] || [] : []
-
-                      if (msg.role === 'tool' && !active) {
-                        const traces = Array.isArray(msg.meta?.toolTraces) ? msg.meta.toolTraces : []
-                        const label = `${traces.length} 个工具调用`
-                        return (
-                          <div className="w-full py-0.5">
-                            <div className="text-[12px] text-muted-foreground flex items-center gap-2">
-                              <span>{label}</span>
-                            </div>
-                          </div>
-                        )
-                      }
 
                       if (msg.role === 'assistant') {
                         const meta: any = msg.meta || {}
@@ -3522,17 +3622,33 @@ function AppLoaded(): JSX.Element {
                       }
 
                       return (
-                      <motion.div layout="position" className="w-full">
+                      <div className="w-full">
                       {showTurnProcessSummary ? (
                         <div className="py-0.5">
                           <button
                             type="button"
                             className="group w-full flex items-center gap-2 min-w-0 py-0.5 rounded-md text-left hover:bg-muted/10 transition-colors motion-reduce:transition-none"
+                            ref={(el) => {
+                              if (!turnId) return
+                              const map = turnSummaryBtnMapRef.current
+                              if (el) map.set(turnId, el)
+                              else map.delete(turnId)
+                            }}
                             onClick={(e) => {
                               e.preventDefault()
                               e.stopPropagation()
                               if (!turnId) return
-                              setCollapsedTurnOpenById((prev) => ({ ...prev, [turnId]: !turnExpanded }))
+                              const anchorTop = (e.currentTarget as HTMLButtonElement).getBoundingClientRect().top
+                              const nextExpanded = !turnExpanded
+                              userScrollLockedRef.current = true
+                              setChatBottomIfChanged(false)
+                              stopAutoScroll()
+                              markUserScrollIntent(720)
+                              suppressAutoScrollFor(620)
+                              setCollapsedTurnOpenById((prev) => ({ ...prev, [turnId]: nextExpanded }))
+                              if (nextExpanded) {
+                                stabilizeTurnSummaryViewport(turnId, anchorTop, 620)
+                              }
                             }}
                             aria-expanded={turnExpanded}
                           >
@@ -3550,7 +3666,8 @@ function AppLoaded(): JSX.Element {
                           </button>
                         </div>
                       ) : null}
-                      {msg.role === 'user' ? (
+                      {(() => {
+                        const body = msg.role === 'user' ? (
                         <div className={`py-3 flex justify-end ${msg.id === lastUserMessageId ? 'sticky top-2 z-20' : ''}`}>
                            <div className="flex flex-col items-end gap-2">
                               <div
@@ -3600,7 +3717,7 @@ function AppLoaded(): JSX.Element {
                               {!shouldHideProcess && Array.isArray(msg.meta?.toolTraces) && msg.meta?.toolTraces.length > 0 ? (
                                 <motion.div
                                   key={`tool-traces:${String(msg.id || '')}`}
-                                  initial={{ gridTemplateRows: '0fr' }}
+                                  initial={false}
                                   animate={{ gridTemplateRows: '1fr' }}
                                   exit={{ gridTemplateRows: '0fr' }}
                                   transition={collapseAnimTransition}
@@ -3610,30 +3727,15 @@ function AppLoaded(): JSX.Element {
                                   <div className="min-h-0 overflow-hidden">
                                   {(() => {
                               const rawTraces = msg.meta?.toolTraces || []
-                              const normalizeSigText = (v: unknown) => String(v || '').replace(/\s+/g, ' ').trim()
-                              const signatureOf = (tr: any) => {
-                                const name = String(tr?.name || '').trim()
-                                const argsText = String(tr?.argsPreview?.text || '').trim()
-                                if (name === 'bash') {
-                                  try {
-                                    const parsed = JSON.parse(argsText)
-                                    const cmd = normalizeSigText((parsed as any)?.command)
-                                    return `${name}:${cmd || normalizeSigText(argsText)}`
-                                  } catch {
-                                    return `${name}:${normalizeSigText(argsText)}`
-                                  }
-                                }
-                                return `${name}:${normalizeSigText(argsText)}`
-                              }
                               const traces = rawTraces.filter((tr: any) => {
                                 if (String(tr?.status || '') !== 'running') return true
-                                const sig = signatureOf(tr)
+                                const sig = toolTraceSignature(tr)
                                 if (turnId && completedToolTraceSignaturesByTurn[turnId]?.has(sig)) return false
                                 return !rawTraces.some((x: any) => {
                                   if (x === tr) return false
                                   const st = String(x?.status || '')
                                   if (st === 'running') return false
-                                  return signatureOf(x) === sig
+                                  return toolTraceSignature(x) === sig
                                 })
                               })
 
@@ -3837,6 +3939,8 @@ function AppLoaded(): JSX.Element {
                                       resultSummary = typeof count === 'number' ? traceI18n.searchResultSummary(count) : ''
                                     } else if (tr.name === 'WebFetch') {
                                       entity = normalizeValue(argsObj.url)
+                                    } else if (tr.name === 'load_skill') {
+                                      entity = normalizeValue(argsObj.id) || 'load_skill'
                                     } else {
                                       entity = normalizeValue(entity)
                                     }
@@ -3861,7 +3965,21 @@ function AppLoaded(): JSX.Element {
                                           : matchedApproval?.status === 'rejected'
                                             ? t.dangerousApprovalStatusRejected
                                             : ''
-                                    const runningStatusText = traceStatusText
+                                    const isEditTrace = tr.name === 'write_file' || tr.name === 'replace_file' || tr.name === 'edit_file'
+                                    const runningStatusText =
+                                      tr.name === 'load_skill' && !isRunning && !isFailed
+                                        ? traceLang === 'zh'
+                                          ? '已加载技能'
+                                          : traceLang === 'ja'
+                                            ? 'スキル読み込み完了'
+                                            : 'Loaded skill'
+                                        : isEditTrace && !isRunning && !isFailed
+                                          ? traceLang === 'zh'
+                                            ? '已编辑的文件'
+                                            : traceLang === 'ja'
+                                              ? '編集済みファイル'
+                                              : 'Edited file'
+                                          : traceStatusText
                                     const displayEntity = (() => {
                                       const text = String(entity || '').trim()
                                       if (tr.name !== 'bash') return text
@@ -3869,7 +3987,6 @@ function AppLoaded(): JSX.Element {
                                       if (text.length <= max) return text
                                       return `${text.slice(0, max - 3)}...`
                                     })()
-                                    const isEditTrace = tr.name === 'write_file' || tr.name === 'replace_file' || tr.name === 'edit_file'
                                     const countDiffLines = (oldContent: unknown, newContent: unknown) => {
                                       try {
                                         const patch = createTwoFilesPatch('a', 'b', String(oldContent ?? ''), String(newContent ?? ''))
@@ -3963,7 +4080,12 @@ function AppLoaded(): JSX.Element {
                                         })
                                         .filter(Boolean)
                                         .join('\n')
-                                    } else if (Array.isArray(resultObj?.diffs)) {
+                                    } else if (
+                                      Array.isArray(resultObj?.diffs) &&
+                                      tr.name !== 'write_file' &&
+                                      tr.name !== 'replace_file' &&
+                                      tr.name !== 'edit_file'
+                                    ) {
                                       detailMarkdown = resultObj.diffs
                                         .map((d: any) => String(d?.path || ''))
                                         .filter(Boolean)
@@ -3983,7 +4105,7 @@ function AppLoaded(): JSX.Element {
                                       (tr.status === 'failed' && Boolean(tr.error?.message))
 
                                     return (
-                                      <motion.div layout="position" key={tr.id} className="group rounded-lg hover:bg-muted/40 transition-colors py-0.5">
+                                      <div key={tr.id} className="group rounded-lg hover:bg-muted/40 transition-colors py-0.5">
                                         <div
                                           className={`flex items-center gap-2 ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
                                           onClick={() => {
@@ -4021,7 +4143,7 @@ function AppLoaded(): JSX.Element {
                                                 <span className="text-[12px] text-emerald-600 font-medium">+{totalAdded}</span>
                                                 <span className="text-[12px] text-red-500 font-medium">-{totalRemoved}</span>
                                               </span>
-                                            ) : canOpenEntityInFiles ? (
+                                            ) : isEditTrace && detailOpen ? null : canOpenEntityInFiles ? (
                                               <button
                                                 type="button"
                                                 className="inline-block max-w-full text-[12px] font-mono text-muted-foreground bg-muted/30 px-1.5 py-0.5 rounded-md truncate align-middle border border-transparent hover:border-border/50 transition-colors hover:underline cursor-pointer"
@@ -4072,7 +4194,13 @@ function AppLoaded(): JSX.Element {
                                               style={{ display: 'grid', willChange: 'grid-template-rows' }}
                                             >
                                               <div className="min-h-0 overflow-hidden">
-                                              <div className="mt-2 space-y-2 pb-1">
+                                              <motion.div
+                                                className="mt-2 space-y-2 pb-1"
+                                                initial={collapseContentAnim.initial}
+                                                animate={collapseContentAnim.animate}
+                                                exit={collapseContentAnim.exit}
+                                                transition={collapseContentAnim.transition}
+                                              >
                                                 {Array.isArray((tr as any).artifacts) && (tr as any).artifacts.length > 0 && (
                                                   <div className="space-y-1">
                                                     <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Artifacts</div>
@@ -4157,12 +4285,12 @@ function AppLoaded(): JSX.Element {
                                                     </div>
                                                   </div>
                                                 )}
-                                              </div>
+                                              </motion.div>
                                               </div>
                                             </motion.div>
                                           ) : null}
                                         </AnimatePresence>
-                                      </motion.div>
+                                      </div>
                                     )
                                   })}
                                 </div>
@@ -4176,7 +4304,6 @@ function AppLoaded(): JSX.Element {
                       ) : (
                         <div className="py-0.5">
                           <div className="space-y-0.5">
-                            <AnimatePresence initial={false}>
                             {(() => {
                               if (shouldHideProcess) return null
                               const meta = msg.meta || {}
@@ -4207,16 +4334,7 @@ function AppLoaded(): JSX.Element {
                                 })
                               }
                               return (
-                                <motion.div
-                                  key={`reasoning-block:${msgId}`}
-                                  initial={{ gridTemplateRows: '0fr' }}
-                                  animate={{ gridTemplateRows: '1fr' }}
-                                  exit={{ gridTemplateRows: '0fr' }}
-                                  transition={collapseAnimTransition}
-                                  className="overflow-hidden"
-                                  style={{ display: 'grid', willChange: 'grid-template-rows' }}
-                                >
-                                  <div className="min-h-0 overflow-hidden">
+                                <div key={`reasoning-block:${msgId}`} className="overflow-hidden">
                                   <button
                                     type="button"
                                     className="group w-full flex items-center gap-2 min-w-0 py-0.5 rounded-md text-left hover:bg-muted/10 transition-colors motion-reduce:transition-none"
@@ -4251,7 +4369,7 @@ function AppLoaded(): JSX.Element {
                                   <AnimatePresence initial={false}>
                                     {open ? (
                                       <motion.div
-                                        key="reasoning-body"
+                                        key={`reasoning-content:${msgId}`}
                                         initial={{ gridTemplateRows: '0fr' }}
                                         animate={{ gridTemplateRows: '1fr' }}
                                         exit={{ gridTemplateRows: '0fr' }}
@@ -4260,18 +4378,22 @@ function AppLoaded(): JSX.Element {
                                         style={{ display: 'grid', willChange: 'grid-template-rows' }}
                                       >
                                         <div className="min-h-0 overflow-hidden">
-                                          <div className="mt-1 text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words">
+                                          <motion.div
+                                            className="mt-1 text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words"
+                                            initial={collapseContentAnim.initial}
+                                            animate={collapseContentAnim.animate}
+                                            exit={collapseContentAnim.exit}
+                                            transition={collapseContentAnim.transition}
+                                          >
                                             {text}
-                                          </div>
+                                          </motion.div>
                                         </div>
                                       </motion.div>
                                     ) : null}
                                   </AnimatePresence>
-                                  </div>
-                                </motion.div>
+                                </div>
                               )
                             })()}
-                            </AnimatePresence>
 
                             {(() => {
                               const cs = (msg.meta as any)?.compressionState
@@ -4457,8 +4579,38 @@ function AppLoaded(): JSX.Element {
 
                           </div>
                         </div>
-                      )}
-                    </motion.div>
+                      )
+
+                        if (!isCollapsibleProcessRow) return body
+
+                        return (
+                          <AnimatePresence initial={false}>
+                            {processRowVisible ? (
+                              <motion.div
+                                key={`turn-process-row:${String(msg.id || '')}`}
+                                initial={{ gridTemplateRows: '0fr', opacity: 0 }}
+                                animate={{ gridTemplateRows: '1fr', opacity: 1 }}
+                                exit={{ gridTemplateRows: '0fr', opacity: 0 }}
+                                transition={collapseAnimTransition}
+                                className="overflow-hidden"
+                                style={{ display: 'grid', willChange: 'grid-template-rows,opacity' }}
+                              >
+                                <div className="min-h-0 overflow-hidden">
+                                  <motion.div
+                                    initial={collapseContentAnim.initial}
+                                    animate={collapseContentAnim.animate}
+                                    exit={collapseContentAnim.exit}
+                                    transition={collapseContentAnim.transition}
+                                  >
+                                    {body}
+                                  </motion.div>
+                                </div>
+                              </motion.div>
+                            ) : null}
+                          </AnimatePresence>
+                        )
+                      })()}
+                    </div>
                     )
                     }}
                   />

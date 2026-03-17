@@ -97,9 +97,18 @@ export function mapAcpUpdateToUiEvent(update: any): AcpUiEvent | null {
     const name = String(raw.name || raw.toolName || raw.tool || raw.method || t).trim() || 'tool'
     const statusRaw = String(raw.status || raw.state || '').trim().toLowerCase()
     const status =
-      statusRaw === 'succeeded' || statusRaw === 'success'
+      statusRaw === 'succeeded' ||
+      statusRaw === 'success' ||
+      statusRaw === 'done' ||
+      statusRaw === 'completed' ||
+      statusRaw === 'complete' ||
+      statusRaw === 'finished'
         ? 'succeeded'
-        : statusRaw === 'failed' || statusRaw === 'error'
+        : statusRaw === 'failed' ||
+            statusRaw === 'error' ||
+            statusRaw === 'cancelled' ||
+            statusRaw === 'canceled' ||
+            statusRaw === 'aborted'
           ? 'failed'
           : 'running'
     const startedAt = typeof raw.startedAt === 'number' ? raw.startedAt : typeof raw.startTime === 'number' ? raw.startTime : undefined

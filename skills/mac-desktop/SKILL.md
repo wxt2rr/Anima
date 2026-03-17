@@ -1,6 +1,6 @@
 ---
 name: mac-desktop
-description: 统一处理 macOS 本机能力（reminders 内置 + 其它能力脚本化封装，优先 shortcuts bridge），适用于日历、邮件、联系人、备忘录、文件、Spotlight、截图、剪贴板、窗口、系统控制、通知等。
+description: 统一处理 macOS 本机能力，适用于日历、邮件、联系人、备忘录、文件、Spotlight、截图、剪贴板、窗口、系统控制、通知、蓝牙、Wifi等。
 ---
 
 # mac-desktop
@@ -39,16 +39,27 @@ REMINDERS_DIR="$SCRIPT_DIR/reminders"
 SHORTCUTS_DIR="$SCRIPT_DIR/shortcuts"
 ```
 
-## 执行优先级
+## 执行策略
 
-1. 先用目录内可直接执行脚本（稳定、可测）
-2. 复杂自动化优先走 shortcuts bridge
-3. 禁止临时生成未审核高风险脚本
+1. 能稳定 AppleScript 的能力优先直连 AppleScript
+2. 系统控制和跨版本差异大的能力优先走 shell 命令
+3. 复杂自动化能力走 Shortcuts
+4. 每个操作脚本内部自行回退并输出反馈，不要求调用方判断后端
 
 ## 输出约定
 
 - 成功：`{"ok":true,...}`
-- 失败：`{"ok":false,"error":"...","code":"..."}`（部分脚本无 code）
+- 失败：`{"ok":false,"error":"...","code":"..."}`
+- 统一反馈字段：`operation`、`backend`、`strategy`（以及可选 `attempts`、`output`）
+
+## Shortcuts 缺失自动处理
+
+- 运行脚本时若发现快捷指令不存在，会自动尝试从 `skills/mac-desktop/shortcuts/templates/` 导入同名 `.shortcut` 模板
+- 可通过环境变量控制：
+  - `MAC_SHORTCUT_AUTO_CREATE=1|0`（默认 `1`）
+  - `MAC_SHORTCUT_AUTO_CREATE_TIMEOUT_SEC`（默认 `8` 秒）
+  - `MAC_SHORTCUT_TEMPLATE_DIR`（自定义模板目录）
+- 注意：系统 `shortcuts` CLI 不支持直接新建快捷指令，自动创建基于模板导入
 
 ## 能力入口
 

@@ -45,9 +45,26 @@ test('mapAcpUpdateToUiEvent: trace normalization and previews', () => {
   assert.equal(evt.trace.argsPreview.text.includes('a.txt'), true)
 })
 
+test('mapAcpUpdateToUiEvent: done/completed tool statuses should not stay running', () => {
+  const doneEvt = mapAcpUpdateToUiEvent({
+    type: 'tool_call_update',
+    trace: { id: 't_done', name: 'load_skill', status: 'done' }
+  })
+  assert.ok(doneEvt && doneEvt.type === 'trace')
+  if (!doneEvt || doneEvt.type !== 'trace') return
+  assert.equal(doneEvt.trace.status, 'succeeded')
+
+  const completedEvt = mapAcpUpdateToUiEvent({
+    type: 'tool_call_update',
+    trace: { id: 't_completed', name: 'load_skill', status: 'completed' }
+  })
+  assert.ok(completedEvt && completedEvt.type === 'trace')
+  if (!completedEvt || completedEvt.type !== 'trace') return
+  assert.equal(completedEvt.trace.status, 'succeeded')
+})
+
 test('buildKey: stable key format', () => {
   const key = buildKey('/w', 'thread', 'agent')
   assert.equal(typeof key, 'string')
   assert.equal(key.includes(':thread:agent'), true)
 })
-

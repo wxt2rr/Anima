@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 export type VirtualListApi = {
   getOffsetTopById: (id: string) => number | null
@@ -14,6 +14,7 @@ export function VirtualizedList<T>({
   renderItem,
   estimateHeight = 120,
   overscan = 6,
+  preserveScrollAnchor = true,
   onApi
 }: {
   items: T[]
@@ -22,6 +23,7 @@ export function VirtualizedList<T>({
   renderItem: (item: T, ctx: { index: number; active: boolean }) => React.ReactNode
   estimateHeight?: number
   overscan?: number
+  preserveScrollAnchor?: boolean
   onApi?: (api: VirtualListApi) => void
 }): JSX.Element {
   const heightsRef = useRef<Map<string, number>>(new Map())
@@ -30,6 +32,9 @@ export function VirtualizedList<T>({
   const visibleRangeRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 })
   const scrollTopRef = useRef(0)
   const viewportHeightRef = useRef(0)
+  const measureRafRef = useRef<number | null>(null)
+  const suppressAnchorAdjustUntilRef = useRef(0)
+  const liveAnchorRef = useRef<{ id: string; delta: number } | null>(null)
 
   const apiRef = useRef<VirtualListApi | null>(null)
   if (!apiRef.current) {
@@ -42,6 +47,7 @@ export function VirtualizedList<T>({
         if (!el) return
         const top = offsetByIdRef.current.get(id)
         if (top == null) return
+        suppressAnchorAdjustUntilRef.current = performance.now() + 260
         el.scrollTo({ top, behavior: opts?.behavior ?? 'smooth' })
       }
     }
@@ -136,6 +142,12 @@ export function VirtualizedList<T>({
         Math.abs(prev.topPad - next.topPad) < 1 &&
         Math.abs(prev.bottomPad - next.bottomPad) < 1
       visibleRangeRef.current = { start: next.startVisible, end: next.endVisible }
+      const anchorIndex = Math.max(0, Math.min(next.startVisible, layoutRef.current.keys.length - 1))
+      const anchorId = layoutRef.current.keys[anchorIndex]
+      if (anchorId) {
+        const anchorTop = layoutRef.current.offsets[anchorIndex] || 0
+        liveAnchorRef.current = { id: anchorId, delta: scrollTop - anchorTop }
+      }
       if (same) return
       windowRef.current = next
       setWindowState(next)
@@ -178,12 +190,46 @@ export function VirtualizedList<T>({
     updateWindow(scrollTopRef.current, viewportHeightRef.current)
   }, [layout, updateWindow])
 
+  useLayoutEffect(() => {
+    if (!preserveScrollAnchor) return
+    if (performance.now() < suppressAnchorAdjustUntilRef.current) return
+    const el = scrollRef.current
+    if (!el) return
+    const anchor = liveAnchorRef.current
+    if (!anchor) return
+    const nextTop = offsetByIdRef.current.get(anchor.id)
+    if (nextTop == null) return
+    const target = Math.max(0, nextTop + anchor.delta)
+    if (Math.abs(target - el.scrollTop) < 0.5) return
+    el.scrollTop = target
+    scrollTopRef.current = target
+    viewportHeightRef.current = el.clientHeight
+    updateWindow(target, viewportHeightRef.current)
+  }, [layout, preserveScrollAnchor, scrollRef, updateWindow])
+
+  const scheduleMeasure = useCallback(() => {
+    if (measureRafRef.current != null) return
+    measureRafRef.current = window.requestAnimationFrame(() => {
+      measureRafRef.current = null
+      setMeasureVersion((v) => v + 1)
+    })
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (measureRafRef.current != null) {
+        window.cancelAnimationFrame(measureRafRef.current)
+        measureRafRef.current = null
+      }
+    }
+  }, [])
+
   const onHeight = useCallback((key: string, height: number) => {
     const prev = heightsRef.current.get(key)
-    if (prev != null && Math.abs(prev - height) < 1) return
+    if (prev != null && Math.abs(prev - height) < 2) return
     heightsRef.current.set(key, height)
-    setMeasureVersion((v) => v + 1)
-  }, [])
+    scheduleMeasure()
+  }, [scheduleMeasure])
 
   return (
     <div className="w-full">
