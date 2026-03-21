@@ -223,6 +223,21 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         self.assertIn("你是Anima，由小涛创建的AI管家", prompt2)
         self.assertNotIn("工具使用规则", prompt2)
 
+    def test_system_prompt_injects_workspace_user_memory_file(self) -> None:
+        from anima_backend_lg.runtime.graph import build_system_prompt_text
+
+        with tempfile.TemporaryDirectory() as td:
+            anima_dir = os.path.join(td, ".anima")
+            os.makedirs(anima_dir, exist_ok=True)
+            mem_file = os.path.join(anima_dir, "user_memory.md")
+            with open(mem_file, "w", encoding="utf-8") as f:
+                f.write("喜欢咖啡\n讨厌早起")
+            settings_obj = {"settings": {"defaultToolMode": "all"}}
+            prompt = build_system_prompt_text(settings_obj, {"workspaceDir": td}, "今天聊啥")
+            self.assertIn("用户记忆（来自", prompt)
+            self.assertIn("喜欢咖啡", prompt)
+            self.assertIn("讨厌早起", prompt)
+
     def test_telegram_legacy_tool_markup_is_executed(self) -> None:
         from anima_backend_lg.runtime.graph import build_run_graph
 

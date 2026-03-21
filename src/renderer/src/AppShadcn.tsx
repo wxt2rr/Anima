@@ -3426,15 +3426,7 @@ function AppLoaded(): JSX.Element {
                       },
                       a({ href, children, className, ...props }: any) {
                         const target = String(href || '').trim()
-                        const isFileLike =
-                          target.startsWith('file://') ||
-                          target.startsWith('/') ||
-                          target.startsWith('\\') ||
-                          target.startsWith('./') ||
-                          target.startsWith('../') ||
-                          target.startsWith('~/') ||
-                          /\.(ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)$/i.test(target)
-                        const linkClass = isFileLike ? 'text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300' : ''
+                        const linkClass = 'text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300'
                         return (
                           <a
                             {...props}
@@ -4461,6 +4453,7 @@ function AppLoaded(): JSX.Element {
                                                           <a
                                                             {...props}
                                                             href={target}
+                                                            className="text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
                                                             onClick={(e) => {
                                                               if (!target) return
                                                               e.preventDefault()
@@ -4724,17 +4717,8 @@ function AppLoaded(): JSX.Element {
                                     },
                                     a({ href, children, className, ...props }: any) {
                                       const target = String(href || '').trim()
-                                      const isFileLike =
-                                        target.startsWith('file://') ||
-                                        target.startsWith('/') ||
-                                        target.startsWith('\\') ||
-                                        target.startsWith('./') ||
-                                        target.startsWith('../') ||
-                                        target.startsWith('~/') ||
-                                        /\.(ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)$/i.test(target)
-                                      const linkClass = isFileLike
-                                        ? 'text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300'
-                                        : ''
+                                      const linkClass =
+                                        'text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300'
                                       return (
                                         <a
                                           {...props}

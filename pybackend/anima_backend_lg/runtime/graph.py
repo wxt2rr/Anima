@@ -198,6 +198,28 @@ def _get_workspace_dir(settings_obj: Dict[str, Any], composer: Dict[str, Any]) -
         return ""
 
 
+def _workspace_user_memory_block(settings_obj: Dict[str, Any], composer: Dict[str, Any]) -> str:
+    ws = _get_workspace_dir(settings_obj, composer)
+    if not ws:
+        return ""
+    try:
+        root = Path(ws)
+        anima_dir = root if root.name == ".anima" else (root / ".anima")
+        fp = anima_dir / "user_memory.md"
+        if not fp.is_file():
+            return ""
+        raw = fp.read_text(encoding="utf-8").strip()
+        if not raw:
+            return ""
+        max_chars = 6000
+        body = raw[:max_chars]
+        if len(raw) > max_chars:
+            body += "\n\n[注] user_memory.md 内容较长，已按前 6000 字符注入。"
+        return f"用户记忆（来自 {str(fp)}）:\n{body}"
+    except Exception:
+        return ""
+
+
 def _openclaw_workspace_dir(workspace_dir: str) -> str:
     ws = str(workspace_dir or "").strip()
     if not ws:
@@ -897,6 +919,7 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
             picked = [x for x, score in sorted(scored, key=lambda t: t[1], reverse=True) if score >= threshold][:mem_max_k]
             if picked:
                 memory_block = "User memory:\n" + "\n".join([f"- {x}" for x in picked])
+    workspace_user_memory_block = _workspace_user_memory_block(settings_obj, composer)
 
     history_summary = str(composer.get("historySummary") or "").strip()
     history_block = f"对话摘要（自动压缩）:\n{history_summary}" if history_summary else ""
@@ -971,7 +994,17 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
     if str(composer.get("channel") or "").strip() == "telegram":
         tool_guidance = _load_prompt_text("tool_telegram.md", _DEFAULT_TELEGRAM_TOOL_GUIDANCE)
 
-    parts = [active_system_prompt, history_block, memory_block, skills_block, plugins_block, tool_guidance, env_block, date_block]
+    parts = [
+        active_system_prompt,
+        history_block,
+        memory_block,
+        workspace_user_memory_block,
+        skills_block,
+        plugins_block,
+        tool_guidance,
+        env_block,
+        date_block,
+    ]
     return "\n\n".join([p for p in parts if str(p).strip()])
 
 
