@@ -11,7 +11,9 @@ const animaAPI = {
   window: {
     openSettings: () => ipcRenderer.invoke('anima:window:openSettings'),
     pickFiles: () => ipcRenderer.invoke('anima:dialog:pickFiles'),
-    pickDirectory: () => ipcRenderer.invoke('anima:dialog:pickDirectory')
+    pickDirectory: () => ipcRenderer.invoke('anima:dialog:pickDirectory'),
+    saveImageAttachment: (params: { bytes: Uint8Array | number[]; fileName?: string; workspaceDir?: string; mime?: string }) =>
+      ipcRenderer.invoke('anima:attachment:saveImage', params)
   },
   fs: {
     readDir: (path: string) => ipcRenderer.invoke('fs:readDir', path),

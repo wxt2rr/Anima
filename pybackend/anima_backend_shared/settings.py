@@ -3,14 +3,15 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 import threading
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .constants import APP_NAME, SCHEMA_VERSION
+from .constants import SCHEMA_VERSION
+from .defaults import default_app_settings
 from .database import get_app_settings, set_app_settings
+from .paths import config_root_by_platform
 
 
 _CONFIG_ROOT: Optional[Path] = None
@@ -26,55 +27,25 @@ def config_root() -> Path:
         cached = _CONFIG_ROOT
         if cached is not None:
             return cached
-    env = os.environ.get("ANIMA_CONFIG_ROOT")
-    if env:
-        root = Path(env).expanduser()
-        print(f"[config_root] using ANIMA_CONFIG_ROOT={root}")
-    else:
-        root = Path.home() / ".config" / APP_NAME
-        print(f"[config_root] using default={root}")
+    root = config_root_by_platform()
+    print(f"[config_root] using rule={root}")
+    root.mkdir(parents=True, exist_ok=True)
+    probe = root / f".probe.{uuid.uuid4().hex}"
+    probe.write_text("ok", encoding="utf-8")
     try:
-        root.mkdir(parents=True, exist_ok=True)
-        probe = root / f".probe.{uuid.uuid4().hex}"
-        probe.write_text("ok", encoding="utf-8")
-        try:
-            probe.unlink()
-        except FileNotFoundError:
-            pass
-        print(f"[config_root] writable ok={root}")
-        _CONFIG_ROOT = root
-        return root
-    except Exception as e:
-        print(f"[config_root] failed to use {root}: {e}")
-        candidates = [
-            Path.home() / ".anima" / APP_NAME,
-            Path(tempfile.gettempdir()) / f"{APP_NAME}-data",
-        ]
-        for p in candidates:
-            try:
-                p.mkdir(parents=True, exist_ok=True)
-                probe = p / f".probe.{uuid.uuid4().hex}"
-                probe.write_text("ok", encoding="utf-8")
-                try:
-                    probe.unlink()
-                except FileNotFoundError:
-                    pass
-                print(f"[config_root] fallback ok={p}")
-                _CONFIG_ROOT = p
-                return p
-            except Exception as e:
-                print(f"[config_root] fallback failed={p}: {e}")
-                continue
-        print(f"[config_root] fallback default={candidates[0]}")
-        _CONFIG_ROOT = candidates[0]
-        return candidates[0]
+        probe.unlink()
+    except FileNotFoundError:
+        pass
+    print(f"[config_root] writable ok={root}")
+    _CONFIG_ROOT = root
+    return root
 
 
 def skills_dir() -> Path:
     raw = str(os.environ.get("ANIMA_SKILLS_DIR") or "").strip()
     if raw:
         return Path(raw).expanduser()
-    return Path.home() / ".config" / APP_NAME / "skills"
+    return config_root() / "skills"
 
 
 def project_skills_dir() -> Path:
@@ -95,7 +66,10 @@ def bundled_skills_dir() -> Optional[Path]:
 
 def load_settings() -> Dict[str, Any]:
     existing = get_app_settings()
-    if not isinstance(existing, dict):
+    if existing is None:
+        existing = default_app_settings()
+        set_app_settings(existing)
+    elif not isinstance(existing, dict):
         raise RuntimeError("Failed to load settings from database")
 
     changed = False

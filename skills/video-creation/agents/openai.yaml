@@ -1,0 +1,4 @@
+interface:
+  display_name: "Video Creation"
+  short_description: "Video ideation, workflow, and prompt rewrites"
+  default_prompt: "Turn my video idea into a concrete creation plan and production-ready prompts."

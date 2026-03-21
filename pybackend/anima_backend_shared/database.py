@@ -1,7 +1,6 @@
 import json
 import os
 import sqlite3
-import tempfile
 import time
 import threading
 import uuid
@@ -9,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
-from .constants import APP_NAME
+from .paths import config_root_by_platform
 
 _DB_INITIALIZED = False
 _CONFIG_ROOT: Optional[Path] = None
@@ -30,48 +29,18 @@ def config_root() -> Path:
         cached = _CONFIG_ROOT
         if cached is not None:
             return cached
-    env = os.environ.get("ANIMA_CONFIG_ROOT")
-    if env:
-        root = Path(env).expanduser()
-        print(f"[config_root] using ANIMA_CONFIG_ROOT={root}")
-    else:
-        root = Path.home() / ".config" / APP_NAME
-        print(f"[config_root] using default={root}")
+    root = config_root_by_platform()
+    print(f"[config_root] using rule={root}")
+    root.mkdir(parents=True, exist_ok=True)
+    probe = root / f".probe.{uuid.uuid4().hex}"
+    probe.write_text("ok", encoding="utf-8")
     try:
-        root.mkdir(parents=True, exist_ok=True)
-        probe = root / f".probe.{uuid.uuid4().hex}"
-        probe.write_text("ok", encoding="utf-8")
-        try:
-            probe.unlink()
-        except FileNotFoundError:
-            pass
-        print(f"[config_root] writable ok={root}")
-        _CONFIG_ROOT = root
-        return root
-    except Exception as e:
-        print(f"[config_root] failed to use {root}: {e}")
-        candidates = [
-            Path.home() / ".anima" / APP_NAME,
-            Path(tempfile.gettempdir()) / f"{APP_NAME}-data",
-        ]
-        for p in candidates:
-            try:
-                p.mkdir(parents=True, exist_ok=True)
-                probe = p / f".probe.{uuid.uuid4().hex}"
-                probe.write_text("ok", encoding="utf-8")
-                try:
-                    probe.unlink()
-                except FileNotFoundError:
-                    pass
-                print(f"[config_root] fallback ok={p}")
-                _CONFIG_ROOT = p
-                return p
-            except Exception as e:
-                print(f"[config_root] fallback failed={p}: {e}")
-                continue
-        print(f"[config_root] fallback default={candidates[0]}")
-        _CONFIG_ROOT = candidates[0]
-        return candidates[0]
+        probe.unlink()
+    except FileNotFoundError:
+        pass
+    print(f"[config_root] writable ok={root}")
+    _CONFIG_ROOT = root
+    return root
 
 
 def db_path() -> Path:
@@ -136,6 +105,22 @@ def init_db() -> None:
             id INTEGER PRIMARY KEY CHECK (id = 1),
             data TEXT NOT NULL,
             updated_at INTEGER NOT NULL
+        )
+    """
+    )
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS settings_revisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            actor TEXT NOT NULL,
+            action TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            target TEXT,
+            reason TEXT,
+            before_data TEXT NOT NULL,
+            after_data TEXT NOT NULL,
+            meta TEXT,
+            created_at INTEGER NOT NULL
         )
     """
     )
@@ -214,6 +199,25 @@ def _ensure_app_settings_table(conn: sqlite3.Connection) -> None:
     )
 
 
+def _ensure_settings_revisions_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS settings_revisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            actor TEXT NOT NULL,
+            action TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            target TEXT,
+            reason TEXT,
+            before_data TEXT NOT NULL,
+            after_data TEXT NOT NULL,
+            meta TEXT,
+            created_at INTEGER NOT NULL
+        )
+        """
+    )
+
+
 def get_app_settings() -> Optional[Dict[str, Any]]:
     conn = get_db_connection()
     try:
@@ -265,6 +269,106 @@ def set_app_settings(data: Dict[str, Any]) -> None:
             conn.execute("INSERT INTO app_settings (id, data, updated_at) VALUES (1, ?, ?)", (payload, now))
     conn.commit()
     return
+
+
+def add_settings_revision(
+    actor: str,
+    action: str,
+    scope: str,
+    before_data: Dict[str, Any],
+    after_data: Dict[str, Any],
+    target: str = "",
+    reason: str = "",
+    meta: Optional[Dict[str, Any]] = None,
+) -> int:
+    conn = get_db_connection()
+    _ensure_settings_revisions_table(conn)
+    now = int(time.time() * 1000)
+    before_payload = json.dumps(before_data, ensure_ascii=False)
+    after_payload = json.dumps(after_data, ensure_ascii=False)
+    meta_payload = json.dumps(meta, ensure_ascii=False) if isinstance(meta, dict) else None
+    cur = conn.execute(
+        """
+        INSERT INTO settings_revisions
+        (actor, action, scope, target, reason, before_data, after_data, meta, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            str(actor or "unknown"),
+            str(action or "update"),
+            str(scope or "global"),
+            str(target or ""),
+            str(reason or ""),
+            before_payload,
+            after_payload,
+            meta_payload,
+            now,
+        ),
+    )
+    conn.commit()
+    return int(cur.lastrowid or 0)
+
+
+def get_settings_revision(revision_id: int) -> Optional[Dict[str, Any]]:
+    conn = get_db_connection()
+    _ensure_settings_revisions_table(conn)
+    row = conn.execute(
+        "SELECT id, actor, action, scope, target, reason, before_data, after_data, meta, created_at FROM settings_revisions WHERE id = ?",
+        (int(revision_id),),
+    ).fetchone()
+    if not row:
+        return None
+    out: Dict[str, Any] = {
+        "id": int(row["id"]),
+        "actor": str(row["actor"] or ""),
+        "action": str(row["action"] or ""),
+        "scope": str(row["scope"] or ""),
+        "target": str(row["target"] or ""),
+        "reason": str(row["reason"] or ""),
+        "createdAt": int(row["created_at"] or 0),
+    }
+    try:
+        out["before"] = json.loads(row["before_data"])
+    except Exception:
+        out["before"] = None
+    try:
+        out["after"] = json.loads(row["after_data"])
+    except Exception:
+        out["after"] = None
+    try:
+        out["meta"] = json.loads(row["meta"]) if row["meta"] else None
+    except Exception:
+        out["meta"] = None
+    return out
+
+
+def list_settings_revisions(limit: int = 50) -> List[Dict[str, Any]]:
+    conn = get_db_connection()
+    _ensure_settings_revisions_table(conn)
+    n = max(1, min(500, int(limit or 50)))
+    rows = conn.execute(
+        """
+        SELECT id, actor, action, scope, target, reason, created_at
+        FROM settings_revisions
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (n,),
+    ).fetchall()
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        out.append(
+            {
+                "id": int(row["id"]),
+                "actor": str(row["actor"] or ""),
+                "action": str(row["action"] or ""),
+                "scope": str(row["scope"] or ""),
+                "target": str(row["target"] or ""),
+                "reason": str(row["reason"] or ""),
+                "createdAt": int(row["created_at"] or 0),
+            }
+        )
+    return out
 
 
 def _configure_connection(conn: sqlite3.Connection) -> None:

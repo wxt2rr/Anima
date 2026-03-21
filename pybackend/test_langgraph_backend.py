@@ -1196,6 +1196,32 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
                         self.assertTrue(bool(out6.get("ok")))
                         self.assertTrue(isinstance(out6.get("tools"), list))
 
+    def test_dispatch_settings_bootstraps_defaults_when_missing(self) -> None:
+        from anima_backend_lg.api import dispatch
+        from anima_backend_shared.database import get_app_settings, get_db_connection, init_db
+
+        td, env, db, _settings = self._with_temp_config_root()
+        with td:
+            with patch.dict(os.environ, env):
+                with patch.object(db, "_CONFIG_ROOT", None):
+                    with patch.object(db, "_DB_INITIALIZED", False):
+                        init_db()
+                        conn = get_db_connection()
+                        conn.execute("DELETE FROM app_settings WHERE id = 1")
+                        conn.commit()
+                        self.assertIsNone(get_app_settings())
+
+                        h_get = self._make_handler()
+                        self.assertTrue(dispatch(h_get, "GET", "/settings"))
+                        out = self._json_out(h_get)
+
+                        self.assertTrue(isinstance(out.get("settings"), dict))
+                        self.assertTrue(isinstance(out.get("providers"), list))
+
+                        persisted = get_app_settings()
+                        self.assertTrue(isinstance(persisted, dict))
+                        self.assertTrue(isinstance((persisted or {}).get("settings"), dict))
+
     def test_dispatch_db_export_import_clear(self) -> None:
         from anima_backend_lg.api import dispatch
         from anima_backend_shared.database import init_db, set_app_settings

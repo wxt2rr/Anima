@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron';
+import { app, ipcMain } from 'electron';
 import * as os from 'os';
 import * as pty from 'node-pty';
 import fs from 'fs';
@@ -72,6 +72,12 @@ function ensureNodePtyPermissions() {
   didEnsureNodePtyPermissions = true;
 }
 
+function prependPathEntries(currentPath: string, entries: string[]): string {
+  const parts = currentPath.split(':').filter((v) => Boolean(v && String(v).trim()));
+  const merged = [...entries, ...parts].filter((v) => Boolean(v && String(v).trim()));
+  return Array.from(new Set(merged)).join(':');
+}
+
 function buildEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) {
@@ -85,6 +91,17 @@ function buildEnv(): NodeJS.ProcessEnv {
   if (!env.LANG || !String(env.LANG).trim()) env.LANG = 'en_US.UTF-8';
   if (!env.LC_CTYPE || !String(env.LC_CTYPE).trim()) env.LC_CTYPE = env.LANG;
   if (!env.LC_ALL || !String(env.LC_ALL).trim()) env.LC_ALL = env.LANG;
+
+  if (!app.isPackaged) {
+    const devPathEntries: string[] = [];
+    const appPath = String(app.getAppPath() || '').trim();
+    const home = String(env.HOME || '').trim();
+    const animaUserBin = home ? path.join(home, '.anima', 'bin') : '';
+    if (appPath && fs.existsSync(path.join(appPath, 'anima'))) devPathEntries.push(appPath);
+    if (animaUserBin && fs.existsSync(animaUserBin)) devPathEntries.push(animaUserBin);
+    if (devPathEntries.length > 0) env.PATH = prependPathEntries(String(env.PATH || ''), devPathEntries);
+  }
+
   return env;
 }
 

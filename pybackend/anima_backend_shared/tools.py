@@ -508,52 +508,6 @@ def builtin_tools() -> List[Dict[str, Any]]:
                 "parameters": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
             },
         },
-        {
-            "type": "function",
-            "function": {
-                "name": "update_app_state",
-                "description": "Update application configuration and UI state based on user needs, emotion, or workflow context. Handles both persistent settings (Config) and transient UI state (UI).",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "config": {
-                            "type": "object",
-                            "description": "Persistent configuration changes (e.g. theme, language). Only whitelisted fields allowed.",
-                            "properties": {
-                                "theme": {"type": "string", "enum": ["light", "dark", "system"]},
-                                "themeColor": {
-                                    "type": "string",
-                                    "enum": ["zinc", "red", "rose", "orange", "green", "blue", "yellow", "violet"],
-                                    "description": "Color theme. Use orange/rose for sadness, green for anxiety, blue/zinc for focus.",
-                                },
-                                "language": {"type": "string"},
-                                "density": {
-                                    "type": "string",
-                                    "enum": ["comfortable", "compact"],
-                                    "description": "Layout density. Use comfortable for relaxation, compact for focus.",
-                                },
-                                "sidebarCollapsed": {"type": "boolean"},
-                            },
-                        },
-                        "ui": {
-                            "type": "object",
-                            "description": "Transient UI state changes (e.g. open sidebar).",
-                            "properties": {
-                                "rightSidebarOpen": {
-                                    "type": "boolean",
-                                    "description": "Open/close right sidebar. Open for previewing generated content.",
-                                },
-                                "activeRightPanel": {
-                                    "type": "string",
-                                    "enum": ["files", "git", "terminal", "preview"],
-                                    "description": "Active panel in right sidebar. Use 'preview' for content, 'files' for exploring.",
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-        },
     ]
 
 
@@ -1215,11 +1169,6 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
             raise RuntimeError("id is required")
         ran = bool(cron_mod.cron_run_job(jid))
         return json.dumps({"ok": True, "ran": ran}, ensure_ascii=False)
-
-    if name == "update_app_state":
-        config = args.get("config")
-        ui = args.get("ui")
-        return json.dumps({"ok": True, "config": config, "ui": ui}, ensure_ascii=False)
 
     raise RuntimeError("Unknown tool")
 

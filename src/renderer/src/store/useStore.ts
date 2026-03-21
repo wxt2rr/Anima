@@ -546,7 +546,7 @@ const createDefaultComposer = (): AppState['ui']['composer'] => ({
   providerOverrideId: '',
   modelOverride: '',
   contextWindowOverride: 0,
-  thinkingLevel: 'default'
+  thinkingLevel: 'medium'
 })
 
 const normalizeComposerPermissionMode = (value: unknown): ComposerPermissionMode =>
@@ -694,6 +694,69 @@ const mergeLegacyAcpProviders = (rawProviders: Provider[], rawSettings: any): Pr
     }
   }
   return dedupeProviders(providers.map((p) => (p.type === 'acp' ? normalizeAcpProvider(p) : p)))
+}
+
+const normalizeSettingsPayload = (rawSettings: any): any => {
+  if (!rawSettings || typeof rawSettings !== 'object') return rawSettings
+
+  if (!Array.isArray(rawSettings.projects)) rawSettings.projects = []
+  if (!Array.isArray(rawSettings.toolsEnabledIds)) rawSettings.toolsEnabledIds = []
+  if (!Array.isArray(rawSettings.mcpEnabledServerIds)) rawSettings.mcpEnabledServerIds = []
+  if (!Array.isArray(rawSettings.skillsEnabledIds)) rawSettings.skillsEnabledIds = []
+  if (!Array.isArray(rawSettings.systemPrompts)) rawSettings.systemPrompts = []
+  if (!Array.isArray(rawSettings.memories)) rawSettings.memories = []
+  if (!Array.isArray(rawSettings.plugins)) rawSettings.plugins = []
+  if (!Array.isArray(rawSettings.mcpServers)) rawSettings.mcpServers = []
+
+  if (!rawSettings.defaultToolMode) rawSettings.defaultToolMode = 'auto'
+  if (!rawSettings.defaultSkillMode) rawSettings.defaultSkillMode = 'auto'
+  if (!rawSettings.selectedSystemPromptId) rawSettings.selectedSystemPromptId = ''
+
+  if (!rawSettings.voice) {
+    rawSettings.voice = {
+      enabled: true,
+      model: 'openai/whisper-large-v3-turbo',
+      language: 'auto',
+      autoDetect: true,
+      localModels: []
+    }
+  } else if (rawSettings.voice && typeof rawSettings.voice === 'object') {
+    if (!('localModels' in rawSettings.voice)) rawSettings.voice.localModels = []
+    const v = String(rawSettings.voice.model || '').trim()
+    if (v && !v.includes('/') && !v.startsWith('local:')) {
+      const legacyMap: Record<string, string> = {
+        'large-v3-turbo': 'openai/whisper-large-v3-turbo',
+        base: 'openai/whisper-base',
+        small: 'openai/whisper-small',
+        medium: 'openai/whisper-medium',
+        tiny: 'openai/whisper-tiny'
+      }
+      rawSettings.voice.model = legacyMap[v] || v
+    }
+  }
+
+  if (!rawSettings.media) {
+    rawSettings.media = {
+      imageEnabled: false,
+      videoEnabled: false,
+      imageProviderId: '',
+      videoProviderId: '',
+      defaultImageModel: '',
+      defaultImageSize: '1024x1024',
+      defaultVideoModel: ''
+    }
+  } else if (rawSettings.media && typeof rawSettings.media === 'object') {
+    if (!('imageProviderId' in rawSettings.media)) rawSettings.media.imageProviderId = ''
+    if (!('videoProviderId' in rawSettings.media)) rawSettings.media.videoProviderId = ''
+  }
+
+  if (!Array.isArray(rawSettings.commandBlacklist)) {
+    rawSettings.commandBlacklist = Array.isArray(rawSettings.commandBlacklistPatterns) ? rawSettings.commandBlacklistPatterns : []
+  }
+  if (!Array.isArray(rawSettings.commandWhitelist)) {
+    rawSettings.commandWhitelist = Array.isArray(rawSettings.commandWhitelistPatterns) ? rawSettings.commandWhitelistPatterns : []
+  }
+  return rawSettings
 }
 
 export const useStore = create<AppState>()(
@@ -1292,54 +1355,7 @@ export const useStore = create<AppState>()(
           const rawProviders = (data as any)?.providers
           const rawVoiceModelsInstalled = (data as any)?.voiceModelsInstalled
           
-          // Merge with defaults for voice
-          if (rawSettings && !rawSettings.voice) {
-            rawSettings.voice = {
-              enabled: true,
-              model: 'openai/whisper-large-v3-turbo',
-              language: 'auto',
-              autoDetect: true,
-              localModels: []
-            }
-          } else if (rawSettings?.voice && typeof rawSettings.voice === 'object') {
-            if (!('localModels' in rawSettings.voice)) rawSettings.voice.localModels = []
-            const v = String(rawSettings.voice.model || '').trim()
-            if (v && !v.includes('/') && !v.startsWith('local:')) {
-              const legacyMap: Record<string, string> = {
-                'large-v3-turbo': 'openai/whisper-large-v3-turbo',
-                base: 'openai/whisper-base',
-                small: 'openai/whisper-small',
-                medium: 'openai/whisper-medium',
-                tiny: 'openai/whisper-tiny'
-              }
-              rawSettings.voice.model = legacyMap[v] || v
-            }
-          }
-          if (rawSettings && !rawSettings.media) {
-            rawSettings.media = {
-              imageEnabled: false,
-              videoEnabled: false,
-              imageProviderId: '',
-              videoProviderId: '',
-              defaultImageModel: '',
-              defaultImageSize: '1024x1024',
-              defaultVideoModel: ''
-            }
-          } else if (rawSettings?.media && typeof rawSettings.media === 'object') {
-            if (!('imageProviderId' in rawSettings.media)) rawSettings.media.imageProviderId = ''
-            if (!('videoProviderId' in rawSettings.media)) rawSettings.media.videoProviderId = ''
-          }
-          if (rawSettings && typeof rawSettings === 'object' && !Array.isArray(rawSettings.projects)) {
-            rawSettings.projects = []
-          }
-          if (rawSettings && typeof rawSettings === 'object') {
-            if (!Array.isArray(rawSettings.commandBlacklist)) {
-              rawSettings.commandBlacklist = Array.isArray(rawSettings.commandBlacklistPatterns) ? rawSettings.commandBlacklistPatterns : []
-            }
-            if (!Array.isArray(rawSettings.commandWhitelist)) {
-              rawSettings.commandWhitelist = Array.isArray(rawSettings.commandWhitelistPatterns) ? rawSettings.commandWhitelistPatterns : []
-            }
-          }
+          normalizeSettingsPayload(rawSettings)
           if (!rawSettings || typeof rawSettings !== 'object') throw new Error('Invalid settings payload')
           if (!Array.isArray(rawProviders)) throw new Error('Invalid providers payload')
           const mergedProviders = mergeLegacyAcpProviders(rawProviders as Provider[], rawSettings)
@@ -1571,6 +1587,7 @@ export const useStore = create<AppState>()(
             const rawSettings = merged?.settings
             const rawProviders = merged?.providers
             if (rawSettings && typeof rawSettings === 'object' && Array.isArray(rawProviders)) {
+              normalizeSettingsPayload(rawSettings)
               loadRemoteConfigSeq++
               set((s) => ({
                 ...s,

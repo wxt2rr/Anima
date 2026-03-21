@@ -1,6 +1,6 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, globalShortcut, nativeImage, Menu, screen, type MenuItemConstructorOptions, type OpenDialogOptions } from 'electron'
-import { join } from 'path'
-import { existsSync, readdirSync, statSync, mkdirSync, copyFileSync } from 'fs'
+import { join, extname } from 'path'
+import { existsSync, readdirSync, statSync, mkdirSync, copyFileSync, rmSync, writeFileSync } from 'fs'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import * as net from 'net'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -133,7 +133,6 @@ function startBackend(port: number): ChildProcessWithoutNullStreams {
     ? join(process.resourcesPath, 'pybackend', 'server.py')
     : join(app.getAppPath(), 'pybackend', 'server.py')
   const python = resolvePythonExecutable()
-  const configRoot = process.env.ANIMA_CONFIG_ROOT || join(app.getPath('userData'), 'pybackend')
   const bundledSkillsDir = process.env.ANIMA_BUNDLED_SKILLS_DIR || (app.isPackaged ? join(process.resourcesPath, 'skills') : join(app.getAppPath(), 'skills'))
   const homeDir = app.getPath('home')
   const userSkillsDir = process.env.ANIMA_SKILLS_DIR || join(homeDir, '.config', 'anima', 'skills')
@@ -146,16 +145,16 @@ function startBackend(port: number): ChildProcessWithoutNullStreams {
     }
   }
 
-  const copyDirRecursive = (src: string, dst: string) => {
+  const copyDirRecursive = (src: string, dst: string, overwriteExisting: boolean) => {
     ensureDir(dst)
     const entries = readdirSync(src, { withFileTypes: true })
     for (const ent of entries) {
       const s = join(src, ent.name)
       const d = join(dst, ent.name)
       if (ent.isDirectory()) {
-        copyDirRecursive(s, d)
+        copyDirRecursive(s, d, overwriteExisting)
       } else if (ent.isFile()) {
-        if (existsSync(d)) continue
+        if (!overwriteExisting && existsSync(d)) continue
         try {
           copyFileSync(s, d)
         } catch (e) {
@@ -165,7 +164,7 @@ function startBackend(port: number): ChildProcessWithoutNullStreams {
     }
   }
 
-  const installBundledSkills = (srcRoot: string, dstRoot: string) => {
+  const installBundledSkills = (srcRoot: string, dstRoot: string, overwriteExisting: boolean) => {
     if (!srcRoot || !existsSync(srcRoot)) return
     ensureDir(dstRoot)
     let entries: string[] = []
@@ -183,18 +182,28 @@ function startBackend(port: number): ChildProcessWithoutNullStreams {
         continue
       }
       if (!existsSync(join(src, 'SKILL.md'))) continue
-      if (existsSync(dst)) continue
-      copyDirRecursive(src, dst)
+      if (overwriteExisting && existsSync(dst)) {
+        try {
+          rmSync(dst, { recursive: true, force: true })
+        } catch {
+          continue
+        }
+      } else if (existsSync(dst)) {
+        continue
+      }
+      copyDirRecursive(src, dst, overwriteExisting)
     }
   }
 
-  installBundledSkills(bundledSkillsDir, userSkillsDir)
+  installBundledSkills(bundledSkillsDir, userSkillsDir, is.dev)
 
-  const extraEnv: Record<string, string> = { PYTHONUNBUFFERED: '1', ANIMA_CONFIG_ROOT: configRoot }
+  const extraEnv: Record<string, string> = { PYTHONUNBUFFERED: '1' }
   extraEnv.ANIMA_SKILLS_DIR = userSkillsDir
   if (is.dev) {
     if (!process.env.ANIMA_VOICE_DEBUG) extraEnv.ANIMA_VOICE_DEBUG = '1'
     if (!process.env.ANIMA_TG_DEBUG) extraEnv.ANIMA_TG_DEBUG = '1'
+    extraEnv.ANIMA_DEV_MODE = '1'
+    extraEnv.ANIMA_DEV_REPO_ROOT = app.getAppPath()
   }
   const extraPaths = [
     '/opt/anaconda3/bin',
@@ -431,6 +440,43 @@ function registerIpcHandlers(): void {
     const options: OpenDialogOptions = { properties: ['openFile', 'multiSelections'] }
     const res = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
     return { ok: true, canceled: res.canceled, paths: res.filePaths || [] }
+  })
+
+  ipcMain.handle('anima:attachment:saveImage', async (_evt, params: any) => {
+    try {
+      const ws = String(params?.workspaceDir || '').trim()
+      const rawName = String(params?.fileName || '').trim()
+      const mime = String(params?.mime || '').trim().toLowerCase()
+      const bytesInput = params?.bytes
+      const bytes =
+        bytesInput instanceof Uint8Array
+          ? bytesInput
+          : Array.isArray(bytesInput)
+            ? Uint8Array.from(bytesInput)
+            : null
+      if (!bytes || bytes.length === 0) {
+        return { ok: false, error: 'Invalid image bytes' }
+      }
+
+      const extByMime: Record<string, string> = {
+        'image/png': '.png',
+        'image/jpeg': '.jpg',
+        'image/webp': '.webp',
+        'image/gif': '.gif',
+        'image/bmp': '.bmp',
+        'image/svg+xml': '.svg'
+      }
+      const ext = extname(rawName).trim().toLowerCase() || extByMime[mime] || '.png'
+      const useWorkspaceDir = ws && existsSync(ws) && statSync(ws).isDirectory()
+      const baseDir = useWorkspaceDir ? join(ws, '.anima', 'attachments') : join(app.getPath('temp'), 'anima', 'attachments')
+      mkdirSync(baseDir, { recursive: true })
+      const outName = `pasted-${Date.now()}-${Math.random().toString(16).slice(2, 8)}${ext}`
+      const outPath = join(baseDir, outName)
+      writeFileSync(outPath, Buffer.from(bytes))
+      return { ok: true, path: outPath }
+    } catch (error: any) {
+      return { ok: false, error: error?.message || String(error) }
+    }
   })
 
   ipcMain.handle('anima:shell:openPath', async (_, path: string) => {

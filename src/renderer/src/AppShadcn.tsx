@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, useCallback, type ReactNode } from 'react'
+import { Fragment, useState, useRef, useEffect, useMemo, useCallback, type ReactNode, type DragEvent, type ClipboardEvent } from 'react'
 import { Send, StopCircle, Paperclip, PanelLeftOpen, MessageSquarePlus, Wrench, Sparkles, X, ChevronDown, Mic, Folder, Brain, Eye, Check, GitBranch } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -16,7 +16,6 @@ import { SettingsDialog, SettingsWindow } from './components/SettingsDialog'
 import { ChatHistoryPanel } from './components/ChatHistoryPanel'
 import { InputAnimation } from './components/InputAnimation'
 import { UpdateDialog } from './components/UpdateDialog'
-import { VirtualizedList, type VirtualListApi } from './components/VirtualizedList'
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -371,6 +370,7 @@ function AppLoaded(): JSX.Element {
   const voiceSendTimerRef = useRef<number | null>(null)
   const voiceChunkInFlightRef = useRef(false)
   const chatScrollRef = useRef<HTMLElement | null>(null)
+  const chatBottomSentinelRef = useRef<HTMLDivElement | null>(null)
   const scrollAnimRef = useRef<number | null>(null)
   const scrollVelRef = useRef(0)
   const isAutoScrollActiveRef = useRef(false)
@@ -440,7 +440,9 @@ function AppLoaded(): JSX.Element {
   const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false)
   const [chatIsAtBottom, setChatIsAtBottom] = useState(true)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
-  const [virtualApi, setVirtualApi] = useState<VirtualListApi | null>(null)
+  const [imageDragActive, setImageDragActive] = useState(false)
+  const imageDragDepthRef = useRef(0)
+  const showComposerToolSkillEntrances = false
   const setChatBottomIfChanged = useCallback((next: boolean) => {
     if (chatIsAtBottomRef.current === next) return
     chatIsAtBottomRef.current = next
@@ -1482,9 +1484,9 @@ function AppLoaded(): JSX.Element {
     return { used, total, percentage }
   }, [tokenStatus, effectiveProvider, effectiveModel])
 
-  const thinkingLevel = composer.thinkingLevel || 'default'
+  const thinkingLevel = composer.thinkingLevel && composer.thinkingLevel !== 'default' ? composer.thinkingLevel : 'medium'
   const shouldShowAnalysis = effectiveProvider?.type === 'deepseek' && (
-    thinkingLevel === 'default' ? Boolean(effectiveProvider?.config?.thinkingEnabled) : thinkingLevel !== 'off'
+    thinkingLevel !== 'off'
   )
 
   const toggleAutoModel = () => {
@@ -1695,6 +1697,99 @@ function AppLoaded(): JSX.Element {
     addAttachments(paths)
   }
 
+  const isImageFileLike = (nameOrType: string) => {
+    const s = String(nameOrType || '').trim().toLowerCase()
+    if (!s) return false
+    if (s.startsWith('image/')) return true
+    return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(s)
+  }
+
+  const hasImageDataTransfer = (dt?: DataTransfer | null) => {
+    if (!dt) return false
+    if (dt.items && dt.items.length) {
+      for (const item of Array.from(dt.items)) {
+        if (item.kind === 'file' && isImageFileLike(item.type)) return true
+      }
+    }
+    if (dt.files && dt.files.length) {
+      for (const file of Array.from(dt.files)) {
+        if (isImageFileLike(file.type) || isImageFileLike(file.name)) return true
+      }
+    }
+    return false
+  }
+
+  const resolveImageAttachmentPaths = async (files: File[]) => {
+    const out: string[] = []
+    const workspaceDir = resolveWorkspaceDir()
+    for (const file of files) {
+      if (!isImageFileLike(file.type) && !isImageFileLike(file.name)) continue
+      const localPath = String((file as any)?.path || '').trim()
+      if (localPath) {
+        out.push(localPath)
+        continue
+      }
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      if (!bytes.length) continue
+      const res = await window.anima?.window?.saveImageAttachment?.({
+        bytes,
+        fileName: String(file.name || '').trim() || undefined,
+        workspaceDir,
+        mime: String(file.type || '').trim() || undefined
+      })
+      if (res?.ok && String(res.path || '').trim()) {
+        out.push(String(res.path).trim())
+      }
+    }
+    return out
+  }
+
+  const addImageFilesAsAttachments = async (filesInput: FileList | File[]) => {
+    const files = Array.from(filesInput || [])
+    if (!files.length) return
+    const paths = await resolveImageAttachmentPaths(files)
+    if (!paths.length) return
+    addAttachments(paths)
+  }
+
+  const handleRootDragEnter = (e: DragEvent<HTMLDivElement>) => {
+    if (!hasImageDataTransfer(e.dataTransfer)) return
+    imageDragDepthRef.current += 1
+    setImageDragActive(true)
+  }
+
+  const handleRootDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (!hasImageDataTransfer(e.dataTransfer)) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+    if (!imageDragActive) setImageDragActive(true)
+  }
+
+  const handleRootDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    if (!imageDragActive) return
+    imageDragDepthRef.current = Math.max(0, imageDragDepthRef.current - 1)
+    if (imageDragDepthRef.current === 0) setImageDragActive(false)
+  }
+
+  const handleRootDrop = (e: DragEvent<HTMLDivElement>) => {
+    const hasImage = hasImageDataTransfer(e.dataTransfer)
+    if (!hasImage && !imageDragActive) return
+    e.preventDefault()
+    imageDragDepthRef.current = 0
+    setImageDragActive(false)
+    if (!hasImage) return
+    void addImageFilesAsAttachments(e.dataTransfer.files)
+  }
+
+  const handleComposerPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(e.clipboardData?.files || [])
+    const imageFiles = files.filter((f) => isImageFileLike(f.type) || isImageFileLike(f.name))
+    if (!imageFiles.length) return
+    e.preventDefault()
+    void addImageFilesAsAttachments(imageFiles)
+  }
+
   const toggleId = (arr: string[], id: string, enabled: boolean) => {
     const set = new Set(arr)
     if (enabled) set.add(id)
@@ -1847,8 +1942,8 @@ function AppLoaded(): JSX.Element {
           openSettings: '打开设置',
           toolMode: '工具模式',
           permission: '权限',
-          permissionDefault: '默认权限',
-          permissionFull: '完全访问权限',
+          permissionDefault: '当前项目',
+          permissionFull: '当前电脑',
           permissionConfirmTitle: '启用完全访问权限？',
           permissionConfirmDesc: '开启后将不再限制工作区和白名单范围，请仅在可信任务中使用。',
           permissionConfirmCancel: '取消',
@@ -2162,6 +2257,12 @@ function AppLoaded(): JSX.Element {
     lastScrollTopRef.current = currTop
     const gap = el.scrollHeight - (el.scrollTop + el.clientHeight)
     if (programmaticScrollRef.current) {
+      if (currTop < prevTop - 1.5) {
+        userScrollLockedRef.current = true
+        setChatBottomIfChanged(false)
+        stopAutoScroll()
+        return
+      }
       const hasUserIntent = performance.now() < userScrollIntentUntilRef.current
       if (hasUserIntent && currTop < prevTop - 2) {
         userScrollLockedRef.current = true
@@ -2216,9 +2317,8 @@ function AppLoaded(): JSX.Element {
       if (!el) return
       userScrollLockedRef.current = true
       stopAutoScroll()
-      const virtualTop = virtualApi?.getOffsetTopById(id)
       const target = userMsgElMapRef.current.get(id)
-      const top = Math.max(0, (virtualTop ?? target?.offsetTop ?? 0) - 24)
+      const top = Math.max(0, (target?.offsetTop ?? 0) - 24)
       el.scrollTo({ top, behavior: 'smooth' })
       if (highlightUserMsgTimerRef.current != null) window.clearTimeout(highlightUserMsgTimerRef.current)
       setHighlightUserMsgId(id)
@@ -2227,7 +2327,7 @@ function AppLoaded(): JSX.Element {
         highlightUserMsgTimerRef.current = null
       }, 900)
     },
-    [stopAutoScroll, virtualApi]
+    [stopAutoScroll]
   )
 
   useEffect(() => {
@@ -2241,11 +2341,11 @@ function AppLoaded(): JSX.Element {
     const maxLen = Math.max(1, ...userMsgs.map((m) => (typeof m.content === 'string' ? m.content.length : 0)))
     const denom = Math.log(1 + maxLen)
     const next: Array<{ id: string; topRatio: number; widthPx: number; content: string }> = []
-    const sh = Math.max(1, virtualApi?.getTotalHeight() ?? el.scrollHeight)
+    const sh = Math.max(1, el.scrollHeight)
     for (const m of userMsgs) {
       const id = String(m.id || '').trim()
       if (!id) continue
-      const top = virtualApi?.getOffsetTopById(id) ?? userMsgElMapRef.current.get(id)?.offsetTop
+      const top = userMsgElMapRef.current.get(id)?.offsetTop
       if (top == null) continue
       const content = typeof m.content === 'string' ? m.content : ''
       const len = content.length
@@ -2256,7 +2356,7 @@ function AppLoaded(): JSX.Element {
     }
     next.sort((a, b) => a.topRatio - b.topRatio)
     setUserNavItems(next)
-  }, [lastMessageKey, messages, virtualApi])
+  }, [lastMessageKey, messages])
 
   useEffect(() => {
     isLoadingRef.current = Boolean(isLoading)
@@ -2284,6 +2384,34 @@ function AppLoaded(): JSX.Element {
       startAutoScroll({ force: true })
     }, 0)
   }, [activeChatId, markProgrammaticScroll, startAutoScroll])
+
+  useEffect(() => {
+    const root = chatScrollRef.current
+    const target = chatBottomSentinelRef.current
+    if (!root || !target || typeof IntersectionObserver === 'undefined') return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0]
+        if (!entry?.isIntersecting) return
+        userScrollLockedRef.current = false
+        setChatBottomIfChanged(true)
+        setScrollToBottomIfChanged(false)
+        lastSeenMessageKeyRef.current = lastMessageKeyRef.current
+        if (isLoadingRef.current) {
+          startAutoScroll({ force: true })
+        }
+      },
+      {
+        root,
+        rootMargin: '0px 0px 32px 0px',
+        threshold: 0
+      }
+    )
+
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [displayMessages.length, setChatBottomIfChanged, setScrollToBottomIfChanged, startAutoScroll])
 
   useEffect(() => {
     if (!userScrollLockedRef.current) {
@@ -3168,7 +3296,20 @@ function AppLoaded(): JSX.Element {
   }
 
   return (
-    <div className="h-screen w-full overflow-hidden bg-white text-foreground transition-colors duration-300 relative">
+    <div
+      className="h-screen w-full overflow-hidden bg-white text-foreground transition-colors duration-300 relative"
+      onDragEnter={handleRootDragEnter}
+      onDragOver={handleRootDragOver}
+      onDragLeave={handleRootDragLeave}
+      onDrop={handleRootDrop}
+    >
+      {imageDragActive ? (
+        <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-primary/5">
+          <div className="rounded-xl border border-primary/30 bg-background/95 px-4 py-2 text-sm text-primary shadow-sm">
+            松开即可添加图片附件
+          </div>
+        </div>
+      ) : null}
       <div className="draggable absolute inset-x-0 top-0 h-2" />
       {!ui.sidebarCollapsed && (
         <div
@@ -3468,12 +3609,11 @@ function AppLoaded(): JSX.Element {
                 </div>
               ) : (
                 <div className="flex flex-col gap-1.5 pb-2 max-w-3xl mx-auto w-full">
-                  <VirtualizedList
-                    items={displayMessages as any}
-                    getKey={(m: any) => String(m?.id || '')}
-                    scrollRef={chatScrollRef as any}
-                    onApi={setVirtualApi}
-                    renderItem={(msg: any, ctx) => {
+                  {displayMessages.map((msg: any, index) => {
+                    const ctx = { index, active: true }
+                    return (
+                    <Fragment key={String(msg?.id || index)}>
+                    {(() => {
                       const msgIdForTurn = String(msg?.id || '').trim()
                       const turnId = msgIdForTurn ? String(effectiveTurnIdByMessageId[msgIdForTurn] || '').trim() : ''
                       const collapseHistoricalProcess = (settings as any).collapseHistoricalProcess !== false
@@ -3490,26 +3630,48 @@ function AppLoaded(): JSX.Element {
                         Boolean(turnStats?.finalAssistantMessageId) &&
                         String(msg?.id || '').trim() === String(turnStats?.finalAssistantMessageId || '').trim()
                       const isLatestTurn = Boolean(turnId && turnId === latestTurnId)
-                      const showTurnProcessSummary = Boolean(turnStats?.hasProcess && isFirstAssistantOfTurn && !isLatestTurn)
+                      const showTurnProcessSummary = Boolean(
+                        collapseHistoricalProcess && turnStats?.hasProcess && isFirstAssistantOfTurn && !isLatestTurn
+                      )
                       const isLatestMessage = ctx.index === displayMessages.length - 1
                       const isTypingAssistantMessage = Boolean(msg.role === 'assistant' && isLoading && isLatestMessage)
-                      if (msg.role !== 'user' && msg.role !== 'tool') {
-                        const meta: any = msg.meta || {}
-                        const hasReasoning = typeof meta.reasoningText === 'string' && meta.reasoningText.trim().length > 0
-                        const hasTokens = Boolean(settings.showTokenUsage && meta.totalTokens != null)
-                        const hasContent = typeof msg.content === 'string' && msg.content.trim().length > 0
-                        const hasCompression = meta.compressionState === 'running' || meta.compressionState === 'done'
-                        const hasDangerousApproval =
-                          Boolean(meta?.dangerousCommandApproval) &&
-                          typeof meta?.dangerousCommandApproval?.command === 'string' &&
-                          meta?.dangerousCommandApproval?.command.trim().length > 0
+                      const assistantMeta: any = msg.role === 'assistant' ? (msg.meta || {}) : null
+                      const assistantHasReasoning =
+                        Boolean(assistantMeta) &&
+                        typeof assistantMeta.reasoningText === 'string' &&
+                        assistantMeta.reasoningText.trim().length > 0
+                      const assistantHasTokens = Boolean(
+                        assistantMeta &&
+                        settings.showTokenUsage &&
+                        assistantMeta.totalTokens != null
+                      )
+                      const assistantHasContent = typeof msg.content === 'string' && msg.content.trim().length > 0
+                      const assistantHasCompression =
+                        Boolean(assistantMeta) &&
+                        (assistantMeta.compressionState === 'running' || assistantMeta.compressionState === 'done')
+                      const assistantHasDangerousApproval =
+                        Boolean(assistantMeta?.dangerousCommandApproval) &&
+                        typeof assistantMeta?.dangerousCommandApproval?.command === 'string' &&
+                        assistantMeta?.dangerousCommandApproval?.command.trim().length > 0
+                      const assistantHasVisibleBody = Boolean(
+                        assistantHasContent ||
+                        assistantHasReasoning ||
+                        assistantHasTokens ||
+                        assistantHasCompression ||
+                        assistantHasDangerousApproval
+                      )
 
-                        if (!hasContent && !hasReasoning && !hasTokens && !hasCompression && !hasDangerousApproval && !showTurnProcessSummary) return null
+                      if (msg.role !== 'user' && msg.role !== 'tool') {
+                        if (!assistantHasVisibleBody && !showTurnProcessSummary) return null
                       }
 
                       const isCollapsibleProcessRow =
-                        (msg.role === 'assistant' && !isFinalAssistantOfTurn && !isFirstAssistantOfTurn) || msg.role === 'tool'
+                        (msg.role === 'assistant' && !isFinalAssistantOfTurn) || msg.role === 'tool'
                       const processRowVisible = !(isCollapsibleProcessRow && shouldHideProcess)
+                      const showOnlyFinalAssistantArtifacts = Boolean(shouldHideProcess && msg.role === 'assistant' && isFinalAssistantOfTurn)
+
+                      // 历史轮次折叠时，非标题行的过程消息应完全移除，避免空行继续占用 flex gap 间距。
+                      if (isCollapsibleProcessRow && !processRowVisible && !showTurnProcessSummary) return null
 
                       const turnDangerousApprovals = turnId ? dangerousApprovalsByTurn[turnId] || [] : []
 
@@ -3619,6 +3781,54 @@ function AppLoaded(): JSX.Element {
                             </div>
                           )
                         }
+                      }
+
+                      if (msg.role === 'assistant' && showTurnProcessSummary && !assistantHasVisibleBody) {
+                        return (
+                          <div className="w-full">
+                            <div className="py-0.5">
+                              <button
+                                type="button"
+                                className="group w-full flex items-center gap-2 min-w-0 py-0.5 rounded-md text-left hover:bg-muted/10 transition-colors motion-reduce:transition-none"
+                                ref={(el) => {
+                                  if (!turnId) return
+                                  const map = turnSummaryBtnMapRef.current
+                                  if (el) map.set(turnId, el)
+                                  else map.delete(turnId)
+                                }}
+                                onClick={(e) => {
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  if (!turnId) return
+                                  const anchorTop = (e.currentTarget as HTMLButtonElement).getBoundingClientRect().top
+                                  const nextExpanded = !turnExpanded
+                                  userScrollLockedRef.current = true
+                                  setChatBottomIfChanged(false)
+                                  stopAutoScroll()
+                                  markUserScrollIntent(720)
+                                  suppressAutoScrollFor(620)
+                                  setCollapsedTurnOpenById((prev) => ({ ...prev, [turnId]: nextExpanded }))
+                                  if (nextExpanded) {
+                                    stabilizeTurnSummaryViewport(turnId, anchorTop, 620)
+                                  }
+                                }}
+                                aria-expanded={turnExpanded}
+                              >
+                                <span className="text-[12px] font-medium text-muted-foreground group-hover:text-foreground truncate">
+                                  {t.foldProcessSummary(turnStats!.reasoningCount, turnStats!.toolCount, turnStats!.skillCount)}
+                                </span>
+                                <span
+                                  aria-hidden="true"
+                                  className={`h-4 w-4 shrink-0 text-muted-foreground/70 transition-opacity motion-reduce:transition-none flex items-center justify-center ${
+                                    turnExpanded ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                                  }`}
+                                >
+                                  <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${turnExpanded ? 'rotate-0' : '-rotate-90'}`} />
+                                </span>
+                              </button>
+                            </div>
+                          </div>
+                        )
                       }
 
                       return (
@@ -4556,6 +4766,7 @@ function AppLoaded(): JSX.Element {
                             )}
                             {(() => {
                               const st = String((msg.meta as any)?.stage || '').trim()
+                              if (showOnlyFinalAssistantArtifacts) return null
                               if (!st) return null
                               if (st === 'model_call' || st === 'tool_call') return null
                               if (st.startsWith('tool_start:') || st.startsWith('tool_done:') || st.startsWith('tool_end:')) return null
@@ -4570,7 +4781,7 @@ function AppLoaded(): JSX.Element {
                                 {renderArtifacts(msg.meta.artifacts, 'md')}
                               </div>
                             )}
-                            {settings.showTokenUsage && msg.meta?.totalTokens != null && (
+                            {settings.showTokenUsage && !showOnlyFinalAssistantArtifacts && msg.meta?.totalTokens != null && (
                               <div className="text-[11px] text-muted-foreground">
                                 Tokens: {msg.meta.promptTokens ?? 0} + {msg.meta.completionTokens ?? 0} ={' '}
                                 {msg.meta.totalTokens}
@@ -4612,8 +4823,11 @@ function AppLoaded(): JSX.Element {
                       })()}
                     </div>
                     )
-                    }}
-                  />
+                    })()}
+                    </Fragment>
+                    )
+                  })}
+                  <div ref={chatBottomSentinelRef} aria-hidden="true" className="h-px w-full" />
                 </div>
               )}
             </main>
@@ -4751,6 +4965,7 @@ function AppLoaded(): JSX.Element {
                     isLoading={isLoading}
                     onSend={handleSend}
                     onStop={handleStop}
+                    onPasteImage={handleComposerPaste}
                     onApi={(api) => {
                       composerApiRef.current = api
                     }}
@@ -4768,159 +4983,163 @@ function AppLoaded(): JSX.Element {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-9 w-9 rounded-full shrink-0 text-muted-foreground hover:text-foreground hover:bg-black/5 focus-visible:ring-0 focus-visible:ring-offset-0"
+                          className="h-9 w-9 rounded-full shrink-0 text-primary/80 hover:text-primary hover:bg-primary/10 focus-visible:ring-0 focus-visible:ring-offset-0"
                           onClick={() => void handlePickFiles()}
                         >
                           <Paperclip className="w-4 h-4" />
                         </Button>
 
-                        <Popover open={popoverPanel === 'tools'} onOpenChange={(open) => handlePopoverOpenChange('tools', open)}>
-                          <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('tools')} onMouseLeave={handleInputPanelMouseLeave}>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-9 w-9 rounded-full shrink-0 text-muted-foreground hover:text-foreground hover:bg-black/5 focus-visible:ring-0 focus-visible:ring-offset-0"
-                            >
-                              <Wrench className="w-4 h-4" />
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-80" align="start" onMouseEnter={() => handleMouseEnter('tools')} onMouseLeave={handleMouseLeave}>
-                            <div className="space-y-3">
-                              <div className="flex items-center justify-between">
-                                <h4 className="font-medium text-xs leading-none">{t.composer.tools}</h4>
-                                <select
-                                  className="text-xs border rounded px-2 py-1"
-                                  value={composer.toolMode}
-                                  onChange={(e) => updateComposer({ toolMode: e.target.value as any })}
+                        {showComposerToolSkillEntrances ? (
+                          <>
+                            <Popover open={popoverPanel === 'tools'} onOpenChange={(open) => handlePopoverOpenChange('tools', open)}>
+                              <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('tools')} onMouseLeave={handleInputPanelMouseLeave}>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-9 w-9 rounded-full shrink-0 text-primary/80 hover:text-primary hover:bg-primary/10 focus-visible:ring-0 focus-visible:ring-offset-0"
                                 >
-                                  <option value="auto">{t.composer.auto}</option>
-                                  <option value="all">{t.composer.all}</option>
-                                  <option value="disabled">{t.composer.disabled}</option>
-                                </select>
-                              </div>
-
-                              <div className="space-y-2">
-                                <h5 className="text-[11px] font-medium text-muted-foreground uppercase">Built-in</h5>
-                                <ScrollArea className="h-[240px]">
-                                  <div className="flex flex-col gap-1 pr-3">
-                                    {builtinTools.map((tool) => (
-                                      <div key={tool.id} className="flex items-center space-x-2">
-                                        <Checkbox
-                                          className="rounded-none"
-                                          id={tool.id}
-                                          checked={composer.enabledToolIds.includes(tool.id)}
-                                          onCheckedChange={(checked) =>
-                                            updateComposer({ enabledToolIds: toggleId(composer.enabledToolIds, tool.id, !!checked) })
-                                          }
-                                        />
-                                        <label htmlFor={tool.id} className="text-xs leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                          {tool.name}
-                                        </label>
-                                      </div>
-                                    ))}
+                                  <Wrench className="w-4 h-4" />
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-80" align="start" onMouseEnter={() => handleMouseEnter('tools')} onMouseLeave={handleMouseLeave}>
+                                <div className="space-y-3">
+                                  <div className="flex items-center justify-between">
+                                    <h4 className="font-medium text-xs leading-none">{t.composer.tools}</h4>
+                                    <select
+                                      className="text-xs border rounded px-2 py-1"
+                                      value={composer.toolMode}
+                                      onChange={(e) => updateComposer({ toolMode: e.target.value as any })}
+                                    >
+                                      <option value="auto">{t.composer.auto}</option>
+                                      <option value="all">{t.composer.all}</option>
+                                      <option value="disabled">{t.composer.disabled}</option>
+                                    </select>
                                   </div>
-                                </ScrollArea>
-                              </div>
 
-                              <div className="space-y-2">
-                                <h5 className="text-[11px] font-medium text-muted-foreground uppercase">{t.composer.mcpServers}</h5>
-                                {settings.mcpServers.length === 0 ? (
-                                  <div className="text-xs text-muted-foreground">—</div>
-                                ) : (
-                                  <ScrollArea className="h-[200px]">
-                                    <div className="space-y-1">
-                                      {settings.mcpServers.map((s) => (
-                                        <div key={s.id} className="flex items-center space-x-2">
-                                          <Checkbox
-                                            className="rounded-none"
-                                            id={s.id}
-                                            checked={composer.enabledMcpServerIds.includes(s.id)}
-                                            onCheckedChange={(checked) =>
-                                              updateComposer({ enabledMcpServerIds: toggleId(composer.enabledMcpServerIds, s.id, !!checked) })
-                                            }
-                                          />
-                                          <label htmlFor={s.id} className="text-xs leading-none">
-                                            <span className="block font-medium">{s.name || s.id}</span>
-                                            <span className="block text-[10px] text-muted-foreground truncate w-[200px]">{s.url}</span>
-                                          </label>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </ScrollArea>
-                                )}
-                              </div>
-                            </div>
-                          </PopoverContent>
-                        </Popover>
-
-                        <Popover open={popoverPanel === 'skills'} onOpenChange={(open) => handlePopoverOpenChange('skills', open)}>
-                          <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('skills')} onMouseLeave={handleInputPanelMouseLeave}>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-9 w-9 rounded-full shrink-0 text-muted-foreground hover:text-foreground hover:bg-black/5 focus-visible:ring-0 focus-visible:ring-offset-0"
-                            >
-                              <Sparkles className="w-4 h-4" />
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-80" align="start" onMouseEnter={() => handleMouseEnter('skills')} onMouseLeave={handleMouseLeave}>
-                            <div className="space-y-3">
-                              <div className="flex items-center justify-between">
-                                <h4 className="font-medium text-xs leading-none">{t.composer.skills}</h4>
-                                <select
-                                  className="text-xs border rounded px-2 py-1"
-                                  value={composer.skillMode}
-                                  onChange={(e) => updateComposer({ skillMode: e.target.value as any })}
-                                >
-                                  <option value="auto">{t.composer.auto}</option>
-                                  <option value="all">{t.composer.all}</option>
-                                  <option value="disabled">{t.composer.disabled}</option>
-                                </select>
-                              </div>
-
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-xs text-muted-foreground">{skillsCache.length} loaded</span>
-                                <div className="flex gap-2">
-                                  <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => void ensureSkills()}>
-                                    {t.composer.refresh}
-                                  </Button>
-                                  <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => void openSkillsFolder()}>
-                                    {t.composer.openFolder}
-                                  </Button>
-                                </div>
-                              </div>
-
-                              {skillsCache.length === 0 ? (
-                                <div className="text-xs text-muted-foreground">—</div>
-                              ) : (
-                                <ScrollArea className="h-[300px]">
                                   <div className="space-y-2">
-                                    {skillsCache.map((s) => (
-                                      <div key={s.id} className="flex items-start space-x-2">
-                                        <Checkbox
-                                          className="rounded-none"
-                                          id={`skill-${s.id}`}
-                                          disabled={s.isValid === false}
-                                          checked={composer.enabledSkillIds.includes(s.id)}
-                                          onCheckedChange={(checked) => updateComposer({ enabledSkillIds: toggleId(composer.enabledSkillIds, s.id, !!checked) })}
-                                        />
-                                        <label htmlFor={`skill-${s.id}`} className="text-xs leading-none space-y-1">
-                                          <span className="block font-medium">{s.name || s.id}</span>
-                                          <span className="block text-[10px] text-muted-foreground line-clamp-2">{s.description || s.id}</span>
-                                          {s.isValid === false ? (
-                                            <span className="block text-[10px] text-destructive line-clamp-2">
-                                              {Array.isArray(s.errors) && s.errors.length ? s.errors.join(', ') : 'invalid'}
-                                            </span>
-                                          ) : null}
-                                        </label>
+                                    <h5 className="text-[11px] font-medium text-muted-foreground uppercase">Built-in</h5>
+                                    <ScrollArea className="h-[240px]">
+                                      <div className="flex flex-col gap-1 pr-3">
+                                        {builtinTools.map((tool) => (
+                                          <div key={tool.id} className="flex items-center space-x-2">
+                                            <Checkbox
+                                              className="rounded-none"
+                                              id={tool.id}
+                                              checked={composer.enabledToolIds.includes(tool.id)}
+                                              onCheckedChange={(checked) =>
+                                                updateComposer({ enabledToolIds: toggleId(composer.enabledToolIds, tool.id, !!checked) })
+                                              }
+                                            />
+                                            <label htmlFor={tool.id} className="text-xs leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                                              {tool.name}
+                                            </label>
+                                          </div>
+                                        ))}
                                       </div>
-                                    ))}
+                                    </ScrollArea>
                                   </div>
-                                </ScrollArea>
-                              )}
-                            </div>
-                          </PopoverContent>
-                        </Popover>
+
+                                  <div className="space-y-2">
+                                    <h5 className="text-[11px] font-medium text-muted-foreground uppercase">{t.composer.mcpServers}</h5>
+                                    {settings.mcpServers.length === 0 ? (
+                                      <div className="text-xs text-muted-foreground">—</div>
+                                    ) : (
+                                      <ScrollArea className="h-[200px]">
+                                        <div className="space-y-1">
+                                          {settings.mcpServers.map((s) => (
+                                            <div key={s.id} className="flex items-center space-x-2">
+                                              <Checkbox
+                                                className="rounded-none"
+                                                id={s.id}
+                                                checked={composer.enabledMcpServerIds.includes(s.id)}
+                                                onCheckedChange={(checked) =>
+                                                  updateComposer({ enabledMcpServerIds: toggleId(composer.enabledMcpServerIds, s.id, !!checked) })
+                                                }
+                                              />
+                                              <label htmlFor={s.id} className="text-xs leading-none">
+                                                <span className="block font-medium">{s.name || s.id}</span>
+                                                <span className="block text-[10px] text-muted-foreground truncate w-[200px]">{s.url}</span>
+                                              </label>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </ScrollArea>
+                                    )}
+                                  </div>
+                                </div>
+                              </PopoverContent>
+                            </Popover>
+
+                            <Popover open={popoverPanel === 'skills'} onOpenChange={(open) => handlePopoverOpenChange('skills', open)}>
+                              <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('skills')} onMouseLeave={handleInputPanelMouseLeave}>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-9 w-9 rounded-full shrink-0 text-primary/80 hover:text-primary hover:bg-primary/10 focus-visible:ring-0 focus-visible:ring-offset-0"
+                                >
+                                  <Sparkles className="w-4 h-4" />
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-80" align="start" onMouseEnter={() => handleMouseEnter('skills')} onMouseLeave={handleMouseLeave}>
+                                <div className="space-y-3">
+                                  <div className="flex items-center justify-between">
+                                    <h4 className="font-medium text-xs leading-none">{t.composer.skills}</h4>
+                                    <select
+                                      className="text-xs border rounded px-2 py-1"
+                                      value={composer.skillMode}
+                                      onChange={(e) => updateComposer({ skillMode: e.target.value as any })}
+                                    >
+                                      <option value="auto">{t.composer.auto}</option>
+                                      <option value="all">{t.composer.all}</option>
+                                      <option value="disabled">{t.composer.disabled}</option>
+                                    </select>
+                                  </div>
+
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs text-muted-foreground">{skillsCache.length} loaded</span>
+                                    <div className="flex gap-2">
+                                      <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => void ensureSkills()}>
+                                        {t.composer.refresh}
+                                      </Button>
+                                      <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => void openSkillsFolder()}>
+                                        {t.composer.openFolder}
+                                      </Button>
+                                    </div>
+                                  </div>
+
+                                  {skillsCache.length === 0 ? (
+                                    <div className="text-xs text-muted-foreground">—</div>
+                                  ) : (
+                                    <ScrollArea className="h-[300px]">
+                                      <div className="space-y-2">
+                                        {skillsCache.map((s) => (
+                                          <div key={s.id} className="flex items-start space-x-2">
+                                            <Checkbox
+                                              className="rounded-none"
+                                              id={`skill-${s.id}`}
+                                              disabled={s.isValid === false}
+                                              checked={composer.enabledSkillIds.includes(s.id)}
+                                              onCheckedChange={(checked) => updateComposer({ enabledSkillIds: toggleId(composer.enabledSkillIds, s.id, !!checked) })}
+                                            />
+                                            <label htmlFor={`skill-${s.id}`} className="text-xs leading-none space-y-1">
+                                              <span className="block font-medium">{s.name || s.id}</span>
+                                              <span className="block text-[10px] text-muted-foreground line-clamp-2">{s.description || s.id}</span>
+                                              {s.isValid === false ? (
+                                                <span className="block text-[10px] text-destructive line-clamp-2">
+                                                  {Array.isArray(s.errors) && s.errors.length ? s.errors.join(', ') : 'invalid'}
+                                                </span>
+                                              ) : null}
+                                            </label>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </ScrollArea>
+                                  )}
+                                </div>
+                              </PopoverContent>
+                            </Popover>
+                          </>
+                        ) : null}
 
                         <Popover open={popoverPanel === 'model'} onOpenChange={(open) => handlePopoverOpenChange('model', open)}>
                           <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('model')} onMouseLeave={handleInputPanelMouseLeave}>
@@ -4988,18 +5207,18 @@ function AppLoaded(): JSX.Element {
                         {effectiveProvider?.type === 'deepseek' ? (
                           <Popover open={popoverPanel === 'thinking'} onOpenChange={(open) => handlePopoverOpenChange('thinking', open)}>
                             <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('thinking')} onMouseLeave={handleInputPanelMouseLeave}>
-                              <Button
-                                variant="ghost"
-                                className="h-9 rounded-full gap-1.5 px-3 text-xs font-normal text-foreground/82 hover:text-foreground hover:bg-black/5 shrink-0 focus-visible:ring-0 focus-visible:ring-offset-0"
-                              >
-                                <span className="truncate">
-                                  {{
-                                    default: t.composer.thinkingDefault,
-                                    off: t.composer.thinkingOff,
-                                    low: t.composer.thinkingLow,
-                                    medium: t.composer.thinkingMedium,
-                                    high: t.composer.thinkingHigh
-                                  }[thinkingLevel] || t.composer.thinkingDefault}
+                            <Button
+                              variant="ghost"
+                              className="h-9 rounded-full gap-1.5 px-3 text-xs font-normal text-foreground/82 hover:text-foreground hover:bg-black/5 shrink-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                            >
+                              <Brain className="w-3.5 h-3.5 text-primary/80 shrink-0" />
+                              <span className="truncate">
+                                {{
+                                  off: t.composer.thinkingOff,
+                                  low: t.composer.thinkingLow,
+                                  medium: t.composer.thinkingMedium,
+                                  high: t.composer.thinkingHigh
+                                }[thinkingLevel] || t.composer.thinkingMedium}
                                 </span>
                                 <ChevronDown className="w-3.5 h-3.5 opacity-50 shrink-0" />
                               </Button>
@@ -5012,8 +5231,10 @@ function AppLoaded(): JSX.Element {
                               onMouseEnter={() => handleMouseEnter('thinking')}
                               onMouseLeave={handleMouseLeave}
                             >
+                              <div className="px-2 py-1">
+                                <h4 className="font-medium text-xs leading-none">{t.composer.thinking}</h4>
+                              </div>
                               {[
-                                { value: 'default', label: t.composer.thinkingDefault },
                                 { value: 'off', label: t.composer.thinkingOff },
                                 { value: 'low', label: t.composer.thinkingLow },
                                 { value: 'medium', label: t.composer.thinkingMedium },
@@ -5028,10 +5249,7 @@ function AppLoaded(): JSX.Element {
                                     setPopoverPanel('')
                                   }}
                                 >
-                                  <span className="flex items-center gap-1.5">
-                                    <Brain className="w-3.5 h-3.5 opacity-80" />
-                                    <span>{opt.label}</span>
-                                  </span>
+                                  <span>{opt.label}</span>
                                   {thinkingLevel === opt.value ? <Check className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5" />}
                                 </button>
                               ))}
@@ -5046,6 +5264,7 @@ function AppLoaded(): JSX.Element {
                               className="h-9 rounded-full gap-1.5 px-3 text-xs font-normal text-foreground/82 hover:text-foreground hover:bg-black/5 shrink-0 focus-visible:ring-0 focus-visible:ring-offset-0"
                               title={t.composer.permission}
                             >
+                              <Eye className="w-3.5 h-3.5 text-primary/80 shrink-0" />
                               <span className="truncate">
                                 {permissionMode === 'full_access' ? t.composer.permissionFull : t.composer.permissionDefault}
                               </span>
@@ -5060,6 +5279,9 @@ function AppLoaded(): JSX.Element {
                             onMouseEnter={() => handleMouseEnter('permission')}
                             onMouseLeave={handleMouseLeave}
                           >
+                            <div className="px-2 py-1">
+                              <h4 className="font-medium text-xs leading-none">{t.composer.permission}</h4>
+                            </div>
                             {[
                               { value: 'workspace_whitelist', label: t.composer.permissionDefault },
                               { value: 'full_access', label: t.composer.permissionFull }
@@ -5073,10 +5295,7 @@ function AppLoaded(): JSX.Element {
                                   handlePermissionModeChange(opt.value as 'workspace_whitelist' | 'full_access')
                                 }}
                               >
-                                <span className="flex items-center gap-1.5">
-                                  <Eye className="w-3.5 h-3.5 opacity-80" />
-                                  <span>{opt.label}</span>
-                                </span>
+                                <span>{opt.label}</span>
                                 {permissionMode === opt.value ? <Check className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5" />}
                               </button>
                             ))}
@@ -5129,6 +5348,7 @@ function ChatComposer({
   isLoading,
   onSend,
   onStop,
+  onPasteImage,
   onApi,
   isRecording,
   isVoiceModelAvailable,
@@ -5139,6 +5359,7 @@ function ChatComposer({
   isLoading: boolean
   onSend: (text: string) => Promise<boolean>
   onStop: () => void
+  onPasteImage?: (e: ClipboardEvent<HTMLTextAreaElement>) => void
   onApi?: (api: {
     appendText: (text: string) => void
     setVoiceDraft: (finalText: string, interimText: string) => void
@@ -5232,6 +5453,7 @@ function ChatComposer({
         rows={1}
         value={value}
         onChange={(e) => setValue(e.target.value)}
+        onPaste={onPasteImage}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault()

@@ -266,4 +266,16 @@ def safe_env() -> Dict[str, str]:
             val = _wechat_env_cache.get(key)
         if val is not None and str(val).strip():
             env[key] = val
+    if str(os.environ.get("ANIMA_DEV_MODE") or "").strip() == "1":
+        entries = []
+        repo_root = str(os.environ.get("ANIMA_DEV_REPO_ROOT") or "").strip()
+        if repo_root and os.path.isfile(os.path.join(repo_root, "anima")):
+            entries.append(repo_root)
+        home = str(env.get("HOME") or "").strip()
+        anima_user_bin = os.path.join(home, ".anima", "bin") if home else ""
+        if anima_user_bin and os.path.isdir(anima_user_bin):
+            entries.append(anima_user_bin)
+        if entries:
+            parts = [p for p in str(env.get("PATH") or "").split(":") if str(p).strip()]
+            env["PATH"] = ":".join(list(dict.fromkeys(entries + parts)))
     return env

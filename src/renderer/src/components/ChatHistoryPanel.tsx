@@ -245,7 +245,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
           className="w-full h-8 px-2.5 rounded-md flex items-center gap-2 text-[13px] text-foreground/85 hover:bg-black/5 transition-colors text-left"
           onClick={() => void createChat()}
         >
-          <MessageSquarePlus className="w-4 h-4 text-muted-foreground" />
+          <MessageSquarePlus className="w-4 h-4 text-primary/80" />
           <span>{t.newChat}</span>
         </button>
         <button
@@ -253,7 +253,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
           className="w-full h-8 px-2.5 rounded-md flex items-center gap-2 text-[13px] text-foreground/85 hover:bg-black/5 transition-colors text-left"
           onClick={toggleSidebarSearch}
         >
-          <Clock3 className="w-4 h-4 text-muted-foreground" />
+          <Clock3 className="w-4 h-4 text-primary/80" />
           <span>{t.search}</span>
         </button>
         <button
@@ -264,7 +264,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
             onOpenSettings?.()
           }}
         >
-          <Sparkles className="w-4 h-4 text-muted-foreground" />
+          <Sparkles className="w-4 h-4 text-primary/80" />
           <span>技能</span>
         </button>
       </div>
@@ -296,7 +296,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
             onClick={() => void pickAndAddProject()}
             title={t.addProjectTip}
           >
-            <FolderPlus className="w-3.5 h-3.5" />
+            <FolderPlus className="w-3.5 h-3.5 text-primary/80" />
           </button>
           <button
             type="button"
@@ -304,7 +304,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
             onClick={toggleSidebarSearch}
             title={t.searchChats}
           >
-            <Search className="w-3.5 h-3.5" />
+            <Search className="w-3.5 h-3.5 text-primary/80" />
           </button>
         </div>
       </div>
@@ -575,7 +575,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
             className="w-full h-8 px-2.5 rounded-md flex items-center gap-2 text-[13px] text-foreground/85 hover:bg-black/5 transition-colors text-left"
             onClick={() => onOpenSettings?.()}
           >
-            <Settings className="w-4 h-4 text-muted-foreground" />
+            <Settings className="w-4 h-4 text-primary/80" />
             <span>{t.settings}</span>
           </button>
         </div>
