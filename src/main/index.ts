@@ -1,6 +1,6 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, globalShortcut, nativeImage, Menu, screen, type MenuItemConstructorOptions, type OpenDialogOptions } from 'electron'
 import { join, extname } from 'path'
-import { existsSync, readdirSync, statSync, mkdirSync, copyFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, readdirSync, statSync, mkdirSync, copyFileSync, rmSync, writeFileSync, readFileSync } from 'fs'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import * as net from 'net'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -101,6 +101,9 @@ const DEFAULT_BACKEND_PORT = 17333
 let backendPort = DEFAULT_BACKEND_PORT
 let backendBaseUrl = `http://${BACKEND_HOST}:${backendPort}`
 
+const CLI_BIN_SUBDIR = '.anima/bin'
+const CLI_SHIM_NAME = 'anima'
+
 if (is.dev) {
   app.commandLine.appendSwitch('no-sandbox')
   app.commandLine.appendSwitch('disable-gpu-sandbox')
@@ -127,6 +130,82 @@ function resolvePythonExecutable(): string {
   }
 
   return 'python3'
+}
+
+function buildCliShimContent(): string {
+  if (app.isPackaged) {
+    const resourcesPathEscaped = String(process.resourcesPath || '').replace(/"/g, '\\"')
+    return [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      `RES_DIR="${resourcesPathEscaped}"`,
+      'export PYTHONPATH="$RES_DIR/pybackend${PYTHONPATH:+:$PYTHONPATH}"',
+      'if command -v python3 >/dev/null 2>&1; then',
+      '  exec python3 -m anima_cli.main "$@"',
+      'fi',
+      'exec python -m anima_cli.main "$@"'
+    ].join('\n') + '\n'
+  }
+
+  const repoCliPath = join(app.getAppPath(), CLI_SHIM_NAME).replace(/"/g, '\\"')
+  return [
+    '#!/usr/bin/env bash',
+    'set -euo pipefail',
+    `exec "${repoCliPath}" "$@"`
+  ].join('\n') + '\n'
+}
+
+function ensurePathLineInRcFile(rcPath: string): void {
+  const exportLine = 'export PATH="$HOME/.anima/bin:$PATH"'
+  const marker = '# Anima CLI 自动写入'
+  let content = ''
+  if (existsSync(rcPath)) {
+    try {
+      content = readFileSync(rcPath, 'utf-8')
+    } catch {
+      content = ''
+    }
+  }
+  if (content.includes('.anima/bin')) return
+
+  const needsNewline = content.length > 0 && !content.endsWith('\n')
+  const next =
+    content +
+    (needsNewline ? '\n' : '') +
+    `${marker}\n${exportLine}\n`
+  writeFileSync(rcPath, next, 'utf-8')
+}
+
+function ensureCliShimInstalled(): void {
+  try {
+    const homeDir = app.getPath('home')
+    const binDir = join(homeDir, CLI_BIN_SUBDIR)
+    mkdirSync(binDir, { recursive: true })
+    const shimPath = join(binDir, CLI_SHIM_NAME)
+    writeFileSync(shimPath, buildCliShimContent(), { encoding: 'utf-8', mode: 0o755 })
+
+    const shellPath = String(process.env.SHELL || '').trim()
+    const rcCandidates: string[] = []
+    if (shellPath.endsWith('/zsh')) {
+      rcCandidates.push(join(homeDir, '.zshrc'))
+    } else if (shellPath.endsWith('/bash')) {
+      rcCandidates.push(join(homeDir, '.bash_profile'), join(homeDir, '.bashrc'))
+    }
+    rcCandidates.push(join(homeDir, '.zshrc'))
+
+    const seen = new Set<string>()
+    for (const rc of rcCandidates) {
+      if (seen.has(rc)) continue
+      seen.add(rc)
+      try {
+        ensurePathLineInRcFile(rc)
+      } catch {
+        continue
+      }
+    }
+  } catch (e) {
+    if (is.dev) console.warn('[cli] ensure shim failed', e)
+  }
 }
 
 function startBackend(port: number): ChildProcessWithoutNullStreams {
@@ -711,6 +790,7 @@ async function createWindow(): Promise<void> {
 
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.anima.app')
+  ensureCliShimInstalled()
   registerIpcHandlers()
   trySetDockIcon()
   setupAppMenu()

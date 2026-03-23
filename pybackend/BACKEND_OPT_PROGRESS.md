@@ -33,3 +33,5 @@
 - 2026-03-23：开发修改：`runs_compression.py` 增加可注入 seam（`get_chat_meta_fn`/`merge_chat_meta_fn`），保持模块化后测试可 patch。
 - 2026-03-23：开发修改：`runs.py` 的 resume 路径改为复用统一运行参数解析，减少重复代码。
 - 2026-03-23：开发修改回归：先跑压缩相关 2 条测试通过，再跑全量 `python3 -m unittest -q test_backend_core.py test_anima_cli.py`，64 项通过（OK）。
+- 2026-03-23：开发修改：主进程新增 CLI 首启安装逻辑，自动写入 `~/.anima/bin/anima` 并尝试补 PATH 到 shell rc（`src/main/index.ts`）。
+- 2026-03-23：开发修改回归：执行 `npm run -s typecheck` 通过。
