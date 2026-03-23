@@ -194,7 +194,8 @@ def read_text_file(path: str, max_bytes: int) -> Tuple[str, Dict[str, Any]]:
         raise RuntimeError("File not found")
     size = int(p.stat().st_size)
     read_bytes = min(max(1, int(max_bytes)), max(1, size))
-    raw = p.open("rb").read(read_bytes)
+    with p.open("rb") as fh:
+        raw = fh.read(read_bytes)
     if is_probably_binary(raw):
         raise RuntimeError("Binary file not supported")
     text = raw.decode("utf-8", errors="ignore")

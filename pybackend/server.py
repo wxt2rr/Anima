@@ -1,4 +1,5 @@
 import argparse
+import traceback
 import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -68,13 +69,14 @@ def run(host: str, port: int) -> None:
     try:
         from anima_backend_core.cron import reconcile_cron_from_settings
         from anima_backend_core.telegram_integration import reconcile_telegram_from_settings
-        from anima_backend_shared.settings import load_settings
+        from anima_backend_shared.settings import migrate_settings
 
-        settings_obj = load_settings()
+        settings_obj = migrate_settings()
         reconcile_telegram_from_settings(settings_obj)
         reconcile_cron_from_settings(settings_obj)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[startup] reconcile failed: {e}")
+        traceback.print_exc()
     print(f"Server running at http://{host}:{port}")
     server = ThreadingHTTPServer((host, port), Handler)
     server.serve_forever()

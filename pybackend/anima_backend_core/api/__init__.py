@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from typing import Any
+import re
+from http import HTTPStatus
+from typing import Any, Callable, Dict, Match, Pattern, Tuple
+
+from anima_backend_shared.http import json_response, read_body_json
 
 from .chats import (
     handle_delete_chat,
@@ -16,21 +20,17 @@ from .chats import (
 )
 from .db import handle_get_db_export, handle_get_db_path, handle_get_db_status, handle_post_db_clear, handle_post_db_import
 from .debug import handle_get_debug_config
-from .runs import (
-    handle_get_run,
-    handle_post_run_resume,
-    handle_post_runs_non_stream,
-)
-from .runs_stream import handle_post_runs_stream
 from .qwen_auth import (
     handle_get_provider_auth_profiles,
     handle_get_provider_auth_status,
     handle_post_provider_auth_logout,
     handle_post_provider_auth_start,
 )
+from .runs import handle_get_run, handle_post_run_resume, handle_post_runs_non_stream
+from .runs_stream import handle_post_runs_stream
 from .settings_tools import (
-    handle_get_attachment_file,
     handle_get_artifact_file,
+    handle_get_attachment_file,
     handle_get_settings,
     handle_get_skills_list,
     handle_get_tools_list,
@@ -58,203 +58,128 @@ from .voice_stream import (
 from ..cron import handle_get_cron_jobs, handle_post_cron_jobs
 
 
+ExactHandler = Callable[[Any], None]
+DynamicHandler = Callable[[Any, Match[str]], None]
+
+
+def _handle_post_runs(handler: Any) -> None:
+    q = getattr(handler, "query", None) or {}
+    stream = q.get("stream") == "1"
+    body = read_body_json(handler)
+    if not isinstance(body, dict):
+        json_response(handler, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Invalid JSON body"})
+        return
+    if stream:
+        handle_post_runs_stream(handler, body)
+        return
+    status, payload = handle_post_runs_non_stream(body)
+    json_response(handler, status, payload)
+
+
+def _handle_get_chat_dynamic(handler: Any, match: Match[str]) -> None:
+    handle_get_chat(handler, match.group("chat_id"))
+
+
+def _handle_get_chat_summary_dynamic(handler: Any, match: Match[str]) -> None:
+    handle_get_chat_summary(handler, match.group("chat_id"))
+
+
+def _handle_post_chat_message_dynamic(handler: Any, match: Match[str]) -> None:
+    handle_post_chat_message(handler, match.group("chat_id"))
+
+
+def _handle_post_chat_compact_dynamic(handler: Any, match: Match[str]) -> None:
+    handle_post_chat_compact(handler, match.group("chat_id"))
+
+
+def _handle_patch_chat_dynamic(handler: Any, match: Match[str]) -> None:
+    handle_patch_chat(handler, match.group("chat_id"))
+
+
+def _handle_patch_chat_message_dynamic(handler: Any, match: Match[str]) -> None:
+    handle_patch_chat_message(handler, match.group("chat_id"), match.group("message_id"))
+
+
+def _handle_delete_chat_dynamic(handler: Any, match: Match[str]) -> None:
+    handle_delete_chat(handler, match.group("chat_id"))
+
+
+def _handle_get_run_dynamic(handler: Any, match: Match[str]) -> None:
+    handle_get_run(handler, match.group("run_id"))
+
+
+def _handle_post_run_resume_dynamic(handler: Any, match: Match[str]) -> None:
+    handle_post_run_resume(handler, match.group("run_id"))
+
+
+EXACT_ROUTES: Dict[Tuple[str, str], ExactHandler] = {
+    ("GET", "/api/chats"): handle_get_chats,
+    ("POST", "/api/chats"): handle_post_chats,
+    ("POST", "/api/chats/sync"): handle_post_chats_sync,
+    ("GET", "/settings"): handle_get_settings,
+    ("PATCH", "/settings"): handle_patch_settings,
+    ("GET", "/skills/list"): handle_get_skills_list,
+    ("POST", "/skills/content"): handle_post_skills_content,
+    ("POST", "/skills/openDir"): handle_post_skills_open_dir,
+    ("GET", "/tools/list"): handle_get_tools_list,
+    ("GET", "/api/cron/jobs"): handle_get_cron_jobs,
+    ("POST", "/api/cron/jobs"): handle_post_cron_jobs,
+    ("GET", "/api/db/status"): handle_get_db_status,
+    ("GET", "/api/db/path"): handle_get_db_path,
+    ("GET", "/api/db/export"): handle_get_db_export,
+    ("POST", "/api/db/import"): handle_post_db_import,
+    ("POST", "/api/db/clear"): handle_post_db_clear,
+    ("GET", "/api/debug/config"): handle_get_debug_config,
+    ("GET", "/api/artifacts/file"): handle_get_artifact_file,
+    ("GET", "/api/attachments/file"): handle_get_attachment_file,
+    ("POST", "/api/artifacts/cleanup"): handle_post_artifacts_cleanup,
+    ("POST", "/api/runs"): _handle_post_runs,
+    ("POST", "/api/providers/fetch_models"): handle_post_providers_fetch_models,
+    ("POST", "/api/providers/auth/start"): handle_post_provider_auth_start,
+    ("GET", "/api/providers/auth/status"): handle_get_provider_auth_status,
+    ("POST", "/api/providers/auth/logout"): handle_post_provider_auth_logout,
+    ("GET", "/api/providers/auth/profiles"): handle_get_provider_auth_profiles,
+    ("GET", "/voice/models/base_dir"): handle_get_voice_models_base_dir,
+    ("GET", "/voice/models/catalog"): handle_get_voice_models_catalog,
+    ("GET", "/voice/models/installed"): handle_get_voice_models_installed,
+    ("GET", "/voice/models/download/status"): handle_get_voice_models_download_status,
+    ("POST", "/voice/models/download"): handle_post_voice_models_download,
+    ("POST", "/voice/models/download/cancel"): handle_post_voice_models_download_cancel,
+    ("POST", "/voice/transcribe"): handle_post_voice_transcribe,
+    ("POST", "/voice/stream/start"): handle_post_voice_stream_start,
+    ("POST", "/voice/stream/chunk"): handle_post_voice_stream_chunk,
+    ("POST", "/voice/stream/stop"): handle_post_voice_stream_stop,
+    ("GET", "/voice/stream/events"): handle_get_voice_stream_events,
+}
+
+
+DYNAMIC_ROUTES: Tuple[Tuple[str, Pattern[str], DynamicHandler], ...] = (
+    ("GET", re.compile(r"^/api/chats/(?P<chat_id>[^/]+)$"), _handle_get_chat_dynamic),
+    ("GET", re.compile(r"^/api/chats/(?P<chat_id>[^/]+)/summary$"), _handle_get_chat_summary_dynamic),
+    ("POST", re.compile(r"^/api/chats/(?P<chat_id>[^/]+)/messages$"), _handle_post_chat_message_dynamic),
+    ("POST", re.compile(r"^/api/chats/(?P<chat_id>[^/]+)/compact$"), _handle_post_chat_compact_dynamic),
+    ("PATCH", re.compile(r"^/api/chats/(?P<chat_id>[^/]+)$"), _handle_patch_chat_dynamic),
+    ("PATCH", re.compile(r"^/api/chats/(?P<chat_id>[^/]+)/messages/(?P<message_id>[^/]+)$"), _handle_patch_chat_message_dynamic),
+    ("DELETE", re.compile(r"^/api/chats/(?P<chat_id>[^/]+)$"), _handle_delete_chat_dynamic),
+    ("GET", re.compile(r"^/api/runs/(?P<run_id>[^/]+)$"), _handle_get_run_dynamic),
+    ("POST", re.compile(r"^/api/runs/(?P<run_id>[^/]+)/resume$"), _handle_post_run_resume_dynamic),
+)
+
+
 def dispatch(handler: Any, method: str, path: str) -> bool:
     m = (method or "").upper().strip()
-
-    if m == "GET" and path == "/api/chats":
-        handle_get_chats(handler)
-        return True
-    if m == "GET" and path.startswith("/api/chats/"):
-        parts = path.split("/")
-        if len(parts) == 4 and parts[1] == "api" and parts[2] == "chats":
-            handle_get_chat(handler, parts[3])
-            return True
-        if len(parts) == 5 and parts[1] == "api" and parts[2] == "chats" and parts[4] == "summary":
-            handle_get_chat_summary(handler, parts[3])
-            return True
-
-    if m == "POST" and path == "/api/chats":
-        handle_post_chats(handler)
-        return True
-    if m == "POST" and path.endswith("/messages") and path.startswith("/api/chats/"):
-        parts = path.split("/")
-        if len(parts) == 5 and parts[1] == "api" and parts[2] == "chats" and parts[4] == "messages":
-            handle_post_chat_message(handler, parts[3])
-            return True
-    if m == "POST" and path.endswith("/compact") and path.startswith("/api/chats/"):
-        parts = path.split("/")
-        if len(parts) == 5 and parts[1] == "api" and parts[2] == "chats" and parts[4] == "compact":
-            handle_post_chat_compact(handler, parts[3])
-            return True
-    if m == "POST" and path == "/api/chats/sync":
-        handle_post_chats_sync(handler)
+    exact = EXACT_ROUTES.get((m, path))
+    if exact is not None:
+        exact(handler)
         return True
 
-    if m == "PATCH" and path.startswith("/api/chats/"):
-        parts = path.split("/")
-        if len(parts) == 4 and parts[1] == "api" and parts[2] == "chats":
-            handle_patch_chat(handler, parts[3])
-            return True
-        if len(parts) == 6 and parts[1] == "api" and parts[2] == "chats" and parts[4] == "messages":
-            handle_patch_chat_message(handler, parts[3], parts[5])
-            return True
-
-    if m == "DELETE" and path.startswith("/api/chats/"):
-        parts = path.split("/")
-        if len(parts) == 4 and parts[1] == "api" and parts[2] == "chats":
-            handle_delete_chat(handler, parts[3])
-            return True
-
-    if m == "GET" and path == "/settings":
-        handle_get_settings(handler)
-        return True
-    if m == "PATCH" and path == "/settings":
-        handle_patch_settings(handler)
-        return True
-    if m == "GET" and path == "/skills/list":
-        handle_get_skills_list(handler)
-        return True
-    if m == "POST" and path == "/skills/content":
-        handle_post_skills_content(handler)
-        return True
-    if m == "POST" and path == "/skills/openDir":
-        handle_post_skills_open_dir(handler)
-        return True
-    if m == "GET" and path == "/tools/list":
-        handle_get_tools_list(handler)
-        return True
-
-    if m == "GET" and path == "/api/cron/jobs":
-        handle_get_cron_jobs(handler)
-        return True
-    if m == "POST" and path == "/api/cron/jobs":
-        handle_post_cron_jobs(handler)
-        return True
-
-    if m == "GET" and path == "/api/db/status":
-        handle_get_db_status(handler)
-        return True
-    if m == "GET" and path == "/api/db/path":
-        handle_get_db_path(handler)
-        return True
-    if m == "GET" and path == "/api/db/export":
-        handle_get_db_export(handler)
-        return True
-    if m == "POST" and path == "/api/db/import":
-        handle_post_db_import(handler)
-        return True
-    if m == "POST" and path == "/api/db/clear":
-        handle_post_db_clear(handler)
-        return True
-
-    if m == "GET" and path == "/api/debug/config":
-        handle_get_debug_config(handler)
-        return True
-
-    if m == "GET" and path == "/api/artifacts/file":
-        handle_get_artifact_file(handler)
-        return True
-    if m == "GET" and path == "/api/attachments/file":
-        handle_get_attachment_file(handler)
-        return True
-
-    if m == "POST" and path == "/api/artifacts/cleanup":
-        handle_post_artifacts_cleanup(handler)
-        return True
-
-    if m == "POST" and path == "/api/runs":
-        q = getattr(handler, "query", None) or {}
-        stream = q.get("stream") == "1"
-        if stream:
-            from anima_backend_shared.http import read_body_json
-
-            body = read_body_json(handler)
-            if not isinstance(body, dict):
-                from http import HTTPStatus
-
-                from anima_backend_shared.http import json_response
-
-                json_response(handler, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Invalid JSON body"})
-                return True
-            handle_post_runs_stream(handler, body)
-            return True
-        from anima_backend_shared.http import read_body_json
-
-        body = read_body_json(handler)
-        if not isinstance(body, dict):
-            from http import HTTPStatus
-
-            from anima_backend_shared.http import json_response
-
-            json_response(handler, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Invalid JSON body"})
-            return True
-        status, payload = handle_post_runs_non_stream(body)
-        from anima_backend_shared.http import json_response
-
-        json_response(handler, status, payload)
-        return True
-
-    if m == "GET" and path.startswith("/api/runs/"):
-        parts = path.split("/")
-        if len(parts) == 4 and parts[1] == "api" and parts[2] == "runs":
-            handle_get_run(handler, parts[3])
-            return True
-
-    if m == "POST" and path.startswith("/api/runs/") and path.endswith("/resume"):
-        parts = path.split("/")
-        if len(parts) == 5 and parts[1] == "api" and parts[2] == "runs" and parts[4] == "resume":
-            handle_post_run_resume(handler, parts[3])
-            return True
-
-    if m == "POST" and path == "/api/providers/fetch_models":
-        handle_post_providers_fetch_models(handler)
-        return True
-
-    if m == "POST" and path == "/api/providers/auth/start":
-        handle_post_provider_auth_start(handler)
-        return True
-    if m == "GET" and path == "/api/providers/auth/status":
-        handle_get_provider_auth_status(handler)
-        return True
-    if m == "POST" and path == "/api/providers/auth/logout":
-        handle_post_provider_auth_logout(handler)
-        return True
-    if m == "GET" and path == "/api/providers/auth/profiles":
-        handle_get_provider_auth_profiles(handler)
-        return True
-
-    if m == "GET" and path == "/voice/models/base_dir":
-        handle_get_voice_models_base_dir(handler)
-        return True
-    if m == "GET" and path == "/voice/models/catalog":
-        handle_get_voice_models_catalog(handler)
-        return True
-    if m == "GET" and path == "/voice/models/installed":
-        handle_get_voice_models_installed(handler)
-        return True
-    if m == "GET" and path == "/voice/models/download/status":
-        handle_get_voice_models_download_status(handler)
-        return True
-    if m == "POST" and path == "/voice/models/download":
-        handle_post_voice_models_download(handler)
-        return True
-    if m == "POST" and path == "/voice/models/download/cancel":
-        handle_post_voice_models_download_cancel(handler)
-        return True
-    if m == "POST" and path == "/voice/transcribe":
-        handle_post_voice_transcribe(handler)
-        return True
-    if m == "POST" and path == "/voice/stream/start":
-        handle_post_voice_stream_start(handler)
-        return True
-    if m == "POST" and path == "/voice/stream/chunk":
-        handle_post_voice_stream_chunk(handler)
-        return True
-    if m == "POST" and path == "/voice/stream/stop":
-        handle_post_voice_stream_stop(handler)
-        return True
-    if m == "GET" and path == "/voice/stream/events":
-        handle_get_voice_stream_events(handler)
+    for rm, pattern, fn in DYNAMIC_ROUTES:
+        if m != rm:
+            continue
+        match = pattern.match(path)
+        if match is None:
+            continue
+        fn(handler, match)
         return True
 
     return False
