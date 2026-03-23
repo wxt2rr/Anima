@@ -1,8 +1,6 @@
 import json
 from typing import Any, Dict
 
-from anima_backend_lg.runtime.graph import build_run_graph
-
 
 class MockProvider:
     include_reasoning_content_in_messages = False
@@ -51,49 +49,18 @@ def _run_legacy(body: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": False, "error": "legacy backend removed"}
 
 
-def _run_langgraph(body: Dict[str, Any]) -> Dict[str, Any]:
-    provider = MockProvider()
-    messages = body.get("messages") if isinstance(body.get("messages"), list) else []
-    composer = body.get("composer") if isinstance(body.get("composer"), dict) else {}
-    temperature = float(body.get("temperature") or 0.7)
-    max_tokens = int(body.get("maxTokens") or 128)
-    extra_body = body.get("extraBody") if isinstance(body.get("extraBody"), dict) else None
-
-    graph = build_run_graph(provider)
-    init_state = {
-        "run_id": "r1",
-        "thread_id": "t1",
-        "messages": messages,
-        "composer": composer,
-        "settings": {"settings": {"defaultToolMode": "all"}},
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "extra_body": extra_body,
-        "step": 0,
-        "traces": [],
-        "usage": None,
-        "rate_limit": None,
-        "reasoning": "",
-        "final_content": "",
-    }
-    out = graph.invoke(init_state)
-    return {
-        "ok": True,
-        "content": str((out or {}).get("final_content") or ""),
-        "usage": (out or {}).get("usage"),
-        "traces": (out or {}).get("traces") or [],
-        "reasoning": str((out or {}).get("reasoning") or ""),
-        "messages": (out or {}).get("messages") or [],
-    }
+def _run_core(body: Dict[str, Any]) -> Dict[str, Any]:
+    _ = body
+    return {"ok": False, "error": "offline compare removed after core migration"}
 
 
 def compare_once(body: Dict[str, Any]) -> Dict[str, Any]:
     legacy_payload = _run_legacy(body)
-    lg_payload = _run_langgraph(body)
+    lg_payload = _run_core(body)
 
     result: Dict[str, Any] = {
         "legacy": legacy_payload,
-        "langgraph": lg_payload,
+        "core": lg_payload,
     }
 
     if (

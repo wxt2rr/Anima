@@ -1,13 +1,12 @@
 import argparse
-import os
 import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Tuple
 
-from anima_backend_lg.api import dispatch as lg_dispatch
+from anima_backend_core.api import dispatch as lg_dispatch
 from anima_backend_shared.constants import DEFAULT_HOST, DEFAULT_PORT
-from anima_backend_shared.database import close_db_connection, close_langgraph_db_connection, init_db, init_langgraph_db
+from anima_backend_shared.database import close_db_connection, close_runs_db_connection, init_db, init_runs_db
 from anima_backend_shared.http import json_response
 
 
@@ -22,7 +21,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         finally:
             close_db_connection()
-            close_langgraph_db_connection()
+            close_runs_db_connection()
 
     def log_message(self, fmt: str, *args: Any) -> None:
         return
@@ -46,7 +45,7 @@ class Handler(BaseHTTPRequestHandler):
         if lg_dispatch(self, method, path):
             return
         if method == "GET" and path == "/health":
-            json_response(self, HTTPStatus.OK, {"ok": True, "version": "0.1.0", "backendImpl": "langgraph"})
+            json_response(self, HTTPStatus.OK, {"ok": True, "version": "0.1.0", "backendImpl": "core"})
             return
         json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
 
@@ -65,10 +64,10 @@ class Handler(BaseHTTPRequestHandler):
 
 def run(host: str, port: int) -> None:
     init_db()
-    init_langgraph_db()
+    init_runs_db()
     try:
-        from anima_backend_lg.cron import reconcile_cron_from_settings
-        from anima_backend_lg.telegram_integration import reconcile_telegram_from_settings
+        from anima_backend_core.cron import reconcile_cron_from_settings
+        from anima_backend_core.telegram_integration import reconcile_telegram_from_settings
         from anima_backend_shared.settings import load_settings
 
         settings_obj = load_settings()
@@ -85,9 +84,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--impl", choices=["legacy", "langgraph"], default=os.environ.get("ANIMA_BACKEND_IMPL") or "langgraph")
     args = parser.parse_args()
-    os.environ["ANIMA_BACKEND_IMPL"] = args.impl
     run(args.host, args.port)
 
 

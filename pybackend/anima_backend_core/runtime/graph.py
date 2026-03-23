@@ -4,15 +4,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from langgraph.graph import END, StateGraph
-
-from anima_backend_shared.constants import MAX_TOOL_STEPS
 from anima_backend_shared.util import extract_reasoning_text, is_within, norm_abs, read_text_file
-
-from ..llm.adapter import call_chat_completion, get_last_rate_limit
-from ..tools.executor import execute_tool, make_tool_message, select_tools
-from .sanitize import sanitize_history_messages
-from .types import RunState
 
 _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 _DEFAULT_SYSTEM_BASE_PROMPT = "你是Anima，由小涛创建的AI管家"
@@ -580,203 +572,6 @@ def _append_reasoning(prev: str, nxt: str) -> str:
     return p + "\n\n" + n
 
 
-def build_run_graph(provider: Any) -> Any:
-    def _prepare_node(state: RunState) -> Dict[str, Any]:
-        messages = state.get("messages")
-        if not isinstance(messages, list):
-            messages = []
-        messages, dropped_traces = sanitize_history_messages(messages)
-        traces = state.get("traces")
-        if not isinstance(traces, list):
-            traces = []
-        if dropped_traces:
-            traces = list(traces) + list(dropped_traces)
-        artifacts = state.get("artifacts")
-        if not isinstance(artifacts, list):
-            artifacts = []
-        reasoning = str(state.get("reasoning") or "")
-        step = int(state.get("step") or 0)
-        settings_obj = state.get("settings") if isinstance(state.get("settings"), dict) else {}
-        composer = state.get("composer") if isinstance(state.get("composer"), dict) else {}
-        return {
-            "messages": messages,
-            "traces": traces,
-            "artifacts": artifacts,
-            "reasoning": reasoning,
-            "step": step,
-            "final_content": str(state.get("final_content") or ""),
-            "usage": state.get("usage"),
-            "rate_limit": state.get("rate_limit"),
-        }
-
-    def _model_node(state: RunState) -> Dict[str, Any]:
-        step = int(state.get("step") or 0)
-        if step >= MAX_TOOL_STEPS:
-            return {"final_content": "Tool execution limit reached."}
-
-        cur = state.get("messages") or []
-        cur, dropped_traces = sanitize_history_messages(cur if isinstance(cur, list) else [])
-        settings_obj = state.get("settings") if isinstance(state.get("settings"), dict) else {}
-        composer = state.get("composer") if isinstance(state.get("composer"), dict) else {}
-        temperature = float(state.get("temperature") or 0)
-        max_tokens = int(state.get("max_tokens") or 0)
-        extra_body = state.get("extra_body") if isinstance(state.get("extra_body"), dict) else None
-
-        tools, _mcp_index, tool_choice = select_tools(settings_obj, composer)
-        try:
-            spec_obj = getattr(provider, "_spec", None)
-            if str(getattr(spec_obj, "provider_type", "") or "").strip().lower() == "openai_codex":
-                tools = []
-                tool_choice = None
-        except Exception:
-            pass
-        if not isinstance(tools, list):
-            tools = []
-        allowed_tool_names: List[str] = []
-        for t in tools:
-            if not isinstance(t, dict):
-                continue
-            fn = t.get("function")
-            if not isinstance(fn, dict):
-                continue
-            name = fn.get("name")
-            if isinstance(name, str) and name.strip():
-                allowed_tool_names.append(name.strip())
-
-        model_override = composer.get("modelOverride")
-        mo = str(model_override or "").strip() or None
-
-        res = call_chat_completion(
-            provider,
-            cur,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            tools=tools if tools else None,
-            tool_choice=tool_choice,
-            model_override=mo,
-            extra_body=extra_body,
-        )
-        usage = res.get("usage") if isinstance(res, dict) else None
-        choice = ((res.get("choices") or [{}])[0]) if isinstance(res, dict) else {}
-        msg = (choice.get("message") or {}) if isinstance(choice, dict) else {}
-
-        extracted_reasoning = extract_reasoning_text(msg)
-        reasoning = _append_reasoning(str(state.get("reasoning") or ""), extracted_reasoning)
-
-        tool_calls = msg.get("tool_calls")
-        tool_calls = _ensure_tool_call_ids(tool_calls, step)
-        content = msg.get("content")
-
-        if not tool_calls and str(composer.get("channel") or "").strip() == "telegram":
-            remaining, extracted = _extract_legacy_tool_calls_from_text(str(content or ""), allowed_tool_names)
-            extracted = _ensure_tool_call_ids(extracted, step)
-            if extracted:
-                tool_calls = extracted
-                content = remaining
-
-        next_messages = list(cur)
-        assistant_msg: Dict[str, Any] = {"role": "assistant", "content": str(content or "")}
-        if tool_calls:
-            assistant_msg["tool_calls"] = tool_calls
-        if getattr(provider, "include_reasoning_content_in_messages", False):
-            rc = msg.get("reasoning_content")
-            if isinstance(rc, str) and rc.strip():
-                assistant_msg["reasoning_content"] = rc
-        next_messages.append(assistant_msg)
-
-        out: Dict[str, Any] = {
-            "messages": next_messages,
-            "usage": usage if isinstance(usage, dict) else state.get("usage"),
-            "reasoning": reasoning,
-        }
-        if dropped_traces:
-            out["traces"] = list(state.get("traces") or []) + list(dropped_traces)
-        if isinstance(state.get("artifacts"), list):
-            out["artifacts"] = state.get("artifacts")
-        rl = get_last_rate_limit(provider)
-        if rl is not None:
-            out["rate_limit"] = rl
-        if not tool_calls:
-            out["final_content"] = str(content or "")
-        return out
-
-    def _tools_node(state: RunState) -> Dict[str, Any]:
-        messages = state.get("messages") or []
-        if not messages:
-            return {}
-        last = messages[-1] if isinstance(messages[-1], dict) else {}
-        tool_calls = last.get("tool_calls") if isinstance(last, dict) else None
-        tool_calls = _ensure_tool_call_ids(tool_calls, int(state.get("step") or 0))
-        if not tool_calls:
-            return {}
-
-        settings_obj = state.get("settings") if isinstance(state.get("settings"), dict) else {}
-        composer = state.get("composer") if isinstance(state.get("composer"), dict) else {}
-        workspace_dir = _get_workspace_dir(settings_obj, composer)
-
-        _tools_unused, mcp_index, _tool_choice_unused = select_tools(settings_obj, composer)
-
-        traces = list(state.get("traces") or [])
-        artifacts = list(state.get("artifacts") or []) if isinstance(state.get("artifacts"), list) else []
-        next_messages = list(messages)
-
-        for tc in tool_calls:
-            tc_id = str(tc.get("id") or "")
-            fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
-            fn_name = str(fn.get("name") or "").strip()
-            fn_args = _parse_tool_args(fn.get("arguments"))
-            trace_id = f"tr_{int(time.time() * 1000)}_{len(traces)}"
-            tool_content, trace = execute_tool(
-                fn_name,
-                fn_args,
-                tool_call_id=tc_id,
-                workspace_dir=workspace_dir,
-                composer=composer,
-                mcp_index=mcp_index,
-                trace_id=trace_id,
-            )
-            traces.append(trace)
-            tr_artifacts = trace.get("artifacts")
-            if isinstance(tr_artifacts, list) and tr_artifacts:
-                artifacts.extend([x for x in tr_artifacts if isinstance(x, dict)])
-            next_messages.append(make_tool_message(tool_call_id=tc_id, content=tool_content))
-
-        return {"messages": next_messages, "traces": traces, "artifacts": artifacts, "step": int(state.get("step") or 0) + 1}
-
-    def _finalize_node(state: RunState) -> Dict[str, Any]:
-        final_content = str(state.get("final_content") or "")
-        if final_content.strip():
-            return {"final_content": final_content}
-        messages = state.get("messages") or []
-        for m in reversed(messages):
-            if isinstance(m, dict) and m.get("role") == "assistant":
-                c = m.get("content")
-                if isinstance(c, str):
-                    return {"final_content": c}
-        return {"final_content": ""}
-
-    def _route_after_model(state: RunState) -> str:
-        messages = state.get("messages") or []
-        if not messages:
-            return "finalize"
-        last = messages[-1] if isinstance(messages[-1], dict) else {}
-        tool_calls = last.get("tool_calls") if isinstance(last, dict) else None
-        tool_calls = _ensure_tool_call_ids(tool_calls, int(state.get("step") or 0))
-        return "tools" if tool_calls else "finalize"
-
-    g: StateGraph = StateGraph(RunState)
-    g.add_node("prepare", _prepare_node)
-    g.add_node("model", _model_node)
-    g.add_node("tools", _tools_node)
-    g.add_node("finalize", _finalize_node)
-    g.set_entry_point("prepare")
-    g.add_edge("prepare", "model")
-    g.add_conditional_edges("model", _route_after_model, {"tools": "tools", "finalize": "finalize"})
-    g.add_edge("tools", "model")
-    g.add_edge("finalize", END)
-    return g.compile()
-
-
 def _tokenize_for_memory(text: str) -> List[str]:
     import re
 
@@ -938,6 +733,49 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
             plugin_addons.append(addon)
     plugins_block = "\n\n".join(plugin_addons) if plugin_addons else ""
 
+    coder_block = ""
+    coder = s.get("coder")
+    if isinstance(coder, dict) and bool(coder.get("enabled")):
+        coder_name = str(coder.get("name") or "Coder").strip() or "Coder"
+        backend_kind = str(coder.get("backendKind") or "").strip().lower()
+        backend_label = str(coder.get("backendLabel") or "").strip()
+        if backend_kind == "cursor":
+            backend_name = "Cursor"
+        elif backend_kind == "custom":
+            backend_name = backend_label or "Custom"
+        else:
+            backend_name = "Codex"
+        endpoint_type = str(coder.get("endpointType") or "").strip() or "terminal"
+        transport = str(coder.get("transport") or "").strip() or "acp"
+        templates = coder.get("commandTemplates")
+        cmd_lines: List[str] = []
+        if isinstance(templates, dict):
+            for k in ["status", "send", "ask", "read", "new", "screenshot"]:
+                v = str(templates.get(k) or "").strip()
+                if v:
+                    cmd_lines.append(f"  - {k}: {v}")
+        cmd_block = ""
+        if cmd_lines:
+            cmd_block = "Coder命令模板:\n" + "\n".join(cmd_lines)
+        coder_block_parts = [
+            "Coder委托规则:\n"
+            f"- 当前已启用 coder: {coder_name}",
+            f"- 底层: {backend_name}",
+            f"- 端类型: {endpoint_type}",
+            f"- 通信方式: {transport}",
+        ]
+        if cmd_block:
+            coder_block_parts.append(cmd_block)
+        coder_block_parts.extend(
+            [
+                "- 当用户明确要求“使用codex/cursor/coder进行代码开发、实现、改代码”时，优先使用coder执行。",
+                "- 当用户要求使用status/send/ask/read/new/screenshot这些coder命令时，优先参考上面的命令模板执行；不要猜测不存在的命令。",
+                "- 当用户是代码开发诉求但未明确要求使用coder时，先提醒“当前已启用coder（底层见上）”，并询问是否使用coder执行。",
+                "- Anima负责需求澄清、验收标准、完成度检查；实现执行优先交给coder。",
+            ]
+        )
+        coder_block = "\n".join([x for x in coder_block_parts if str(x).strip()])
+
     skills_mode = str(composer.get("skillMode") or s.get("defaultSkillMode") or "").strip() or "disabled"
     enabled_skill_ids = composer.get("enabledSkillIds")
     if not isinstance(enabled_skill_ids, list) or not enabled_skill_ids:
@@ -1001,6 +839,7 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
         workspace_user_memory_block,
         skills_block,
         plugins_block,
+        coder_block,
         tool_guidance,
         env_block,
         date_block,

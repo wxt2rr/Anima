@@ -1144,7 +1144,7 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         if not bool(cron.get("allowAgentManage")):
             raise RuntimeError("cron tools disabled")
 
-        from anima_backend_lg import cron as cron_mod
+        from anima_backend_core import cron as cron_mod
 
         if name == "cron_list":
             store = cron_mod.cron_list_store()

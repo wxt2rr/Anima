@@ -14,8 +14,8 @@ _DB_INITIALIZED = False
 _CONFIG_ROOT: Optional[Path] = None
 _CONFIG_ROOT_LOCK = threading.Lock()
 _DB_LOCAL = threading.local()
-_LG_DB_INITIALIZED = False
-_LG_DB_LOCAL = threading.local()
+_RUNS_DB_INITIALIZED = False
+_RUNS_DB_LOCAL = threading.local()
 
 SQLITE_BUSY_TIMEOUT_MS = 5000
 
@@ -47,11 +47,11 @@ def db_path() -> Path:
     return config_root() / "chats.db"
 
 
-def langgraph_db_path() -> Path:
+def runs_db_path() -> Path:
     root = config_root()
-    lg_dir = root / "langgraph"
-    lg_dir.mkdir(parents=True, exist_ok=True)
-    return lg_dir / "checkpoints.db"
+    runs_dir = root / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    return runs_dir / "runs.db"
 
 
 def init_db() -> None:
@@ -145,8 +145,8 @@ def init_db() -> None:
     conn.close()
 
 
-def init_langgraph_db() -> None:
-    path = langgraph_db_path()
+def init_runs_db() -> None:
+    path = runs_db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=max(1.0, SQLITE_BUSY_TIMEOUT_MS / 1000.0))
     conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
@@ -179,12 +179,12 @@ def _ensure_db_initialized() -> None:
     _DB_INITIALIZED = True
 
 
-def _ensure_langgraph_db_initialized() -> None:
-    global _LG_DB_INITIALIZED
-    if _LG_DB_INITIALIZED:
+def _ensure_runs_db_initialized() -> None:
+    global _RUNS_DB_INITIALIZED
+    if _RUNS_DB_INITIALIZED:
         return
-    init_langgraph_db()
-    _LG_DB_INITIALIZED = True
+    init_runs_db()
+    _RUNS_DB_INITIALIZED = True
 
 
 def _ensure_app_settings_table(conn: sqlite3.Connection) -> None:
@@ -389,14 +389,14 @@ def close_db_connection() -> None:
         _DB_LOCAL.conn = None
 
 
-def close_langgraph_db_connection() -> None:
-    conn = getattr(_LG_DB_LOCAL, "conn", None)
+def close_runs_db_connection() -> None:
+    conn = getattr(_RUNS_DB_LOCAL, "conn", None)
     if conn is None:
         return
     try:
         conn.close()
     finally:
-        _LG_DB_LOCAL.conn = None
+        _RUNS_DB_LOCAL.conn = None
 
 
 def get_db_connection() -> sqlite3.Connection:
@@ -412,21 +412,21 @@ def get_db_connection() -> sqlite3.Connection:
     return conn
 
 
-def get_langgraph_db_connection() -> sqlite3.Connection:
-    _ensure_langgraph_db_initialized()
-    cached = getattr(_LG_DB_LOCAL, "conn", None)
+def get_runs_db_connection() -> sqlite3.Connection:
+    _ensure_runs_db_initialized()
+    cached = getattr(_RUNS_DB_LOCAL, "conn", None)
     if cached is not None:
         return cached
 
-    dp = langgraph_db_path()
+    dp = runs_db_path()
     conn = sqlite3.connect(dp, timeout=max(1.0, SQLITE_BUSY_TIMEOUT_MS / 1000.0))
     _configure_connection(conn)
-    _LG_DB_LOCAL.conn = conn
+    _RUNS_DB_LOCAL.conn = conn
     return conn
 
 
 def create_run(run_id: str, thread_id: str, input_obj: Dict[str, Any]) -> None:
-    conn = get_langgraph_db_connection()
+    conn = get_runs_db_connection()
     now = int(time.time() * 1000)
     payload = json.dumps(input_obj, ensure_ascii=False)
     conn.execute(
@@ -437,7 +437,7 @@ def create_run(run_id: str, thread_id: str, input_obj: Dict[str, Any]) -> None:
 
 
 def update_run(run_id: str, status: str, output_obj: Optional[Dict[str, Any]] = None) -> None:
-    conn = get_langgraph_db_connection()
+    conn = get_runs_db_connection()
     now = int(time.time() * 1000)
     payload = json.dumps(output_obj, ensure_ascii=False) if isinstance(output_obj, dict) else None
     conn.execute(
@@ -448,7 +448,7 @@ def update_run(run_id: str, status: str, output_obj: Optional[Dict[str, Any]] = 
 
 
 def get_run(run_id: str) -> Optional[Dict[str, Any]]:
-    conn = get_langgraph_db_connection()
+    conn = get_runs_db_connection()
     row = conn.execute(
         "SELECT id, thread_id, status, input, output, created_at, updated_at FROM runs WHERE id = ?",
         (run_id,),
@@ -476,6 +476,8 @@ def get_run(run_id: str) -> Optional[Dict[str, Any]]:
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
     }
+
+
 
 
 def get_chats() -> List[Dict[str, Any]]:

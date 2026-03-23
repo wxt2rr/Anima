@@ -21,7 +21,6 @@ export default defineConfig({
         '/api': { target: 'http://127.0.0.1:17333', changeOrigin: true },
         '/settings': { target: 'http://127.0.0.1:17333', changeOrigin: true },
         '/health': { target: 'http://127.0.0.1:17333', changeOrigin: true },
-        '/chat': { target: 'http://127.0.0.1:17333', changeOrigin: true },
         '/skills': { target: 'http://127.0.0.1:17333', changeOrigin: true }
       }
     }

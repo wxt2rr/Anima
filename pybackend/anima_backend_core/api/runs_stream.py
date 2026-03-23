@@ -1098,7 +1098,7 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
                 "usage": obj.get("usage"),
                 "reasoning": obj.get("reasoning"),
                 "traces": obj.get("traces"),
-                "backendImpl": "langgraph",
+                "backendImpl": "stream-executor",
             }
             if isinstance(obj.get("artifacts"), list) and obj.get("artifacts"):
                 out["artifacts"] = obj.get("artifacts")

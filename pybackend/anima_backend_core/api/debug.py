@@ -4,7 +4,7 @@ import os
 from http import HTTPStatus
 from typing import Any, Dict, List
 
-from anima_backend_shared.database import config_root, db_path, langgraph_db_path
+from anima_backend_shared.database import config_root, db_path, runs_db_path
 from anima_backend_shared.http import json_response
 from anima_backend_shared.provider_credentials import get_oauth_credential, list_profiles
 
@@ -37,10 +37,9 @@ def handle_get_debug_config(handler: Any) -> None:
         payload = {
             "ok": True,
             "env": {"ANIMA_CONFIG_ROOT": str(os.environ.get("ANIMA_CONFIG_ROOT") or ""), "ANIMA_SKILLS_DIR": str(os.environ.get("ANIMA_SKILLS_DIR") or "")},
-            "paths": {"configRoot": str(root), "dbPath": str(db_path()), "langgraphDbPath": str(langgraph_db_path())},
+            "paths": {"configRoot": str(root), "dbPath": str(db_path()), "runsDbPath": str(runs_db_path())},
             "credentials": {"openai_codex": _cred_summary("openai_codex"), "qwen": _cred_summary("qwen")},
         }
         json_response(handler, HTTPStatus.OK, payload)
     except Exception as e:
         json_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(e)})
-

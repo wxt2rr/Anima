@@ -60,6 +60,13 @@ const animaAPI = {
       return () => ipcRenderer.removeListener(channel, subscription)
     }
   },
+  coder: {
+    configure: (params?: any) => ipcRenderer.invoke('coder:configure', params),
+    autoStart: () => ipcRenderer.invoke('coder:autoStart'),
+    start: (params?: any) => ipcRenderer.invoke('coder:start', params),
+    stop: () => ipcRenderer.invoke('coder:stop'),
+    status: () => ipcRenderer.invoke('coder:status')
+  },
   preview: {
     openExternal: (url: string) => ipcRenderer.invoke('preview:openExternal', url),
     onServerDetected: (callback: (payload: { url: string; terminalId?: string }) => void) => {

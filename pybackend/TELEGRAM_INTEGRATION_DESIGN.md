@@ -5,7 +5,7 @@
 参考：
 - OpenClaw 仓库与 README：https://github.com/openclaw/openclaw
 - 当前项目后端入口：`pybackend/server.py`
-- 当前项目 runs API：`pybackend/anima_backend_lg/api/runs.py`、`pybackend/anima_backend_lg/api/runs_stream.py`
+- 当前项目 runs API：`pybackend/anima_backend_core/api/runs.py`、`pybackend/anima_backend_core/api/runs_stream.py`
 
 ---
 

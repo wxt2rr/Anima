@@ -47,6 +47,20 @@ def _base_settings(workspace_dir: str) -> dict:
             "im": {"telegram": {"enabled": False, "allowGroups": False}},
             "shortcuts": {"bindings": {}},
             "proxyUrl": "",
+            "coder": {
+                "enabled": False,
+                "name": "Codex",
+                "backendKind": "codex",
+                "backendLabel": "",
+                "endpointType": "desktop",
+                "transport": "cdpbridge",
+                "autoStart": False,
+                "command": "/usr/bin/open",
+                "args": ["-a", "Codex", "--args", "--remote-debugging-port=9222"],
+                "cwd": "",
+                "env": {},
+                "remoteDebuggingPort": 9222,
+            },
         },
         "providers": [],
     }
@@ -110,6 +124,30 @@ class TestAnimaCli(unittest.TestCase):
         code, out = self._run(["im", "set", "telegram_enabled", "on", "--json"])
         self.assertEqual(code, 5)
         self.assertFalse(out.get("ok"))
+
+    def test_coder_set_get_name(self) -> None:
+        code1, out1 = self._run(["coder", "set", "name", "Codex Agent", "--json"])
+        self.assertEqual(code1, 0)
+        self.assertTrue(out1.get("ok"))
+        code2, out2 = self._run(["coder", "get", "name", "--json"])
+        self.assertEqual(code2, 0)
+        self.assertEqual(out2.get("value"), "Codex Agent")
+
+    def test_coder_set_get_command_template(self) -> None:
+        code1, out1 = self._run(["coder", "set", "cmd_ask", 'codex exec "{prompt}"', "--json"])
+        self.assertEqual(code1, 0)
+        self.assertTrue(out1.get("ok"))
+        code2, out2 = self._run(["coder", "get", "cmd_ask", "--json"])
+        self.assertEqual(code2, 0)
+        self.assertEqual(out2.get("value"), 'codex exec "{prompt}"')
+
+    def test_coder_high_risk_command_requires_yes(self) -> None:
+        code, out = self._run(["coder", "set", "command", "codex", "--json"])
+        self.assertEqual(code, 5)
+        self.assertFalse(out.get("ok"))
+        code2, out2 = self._run(["coder", "set", "command", "codex", "--yes", "--json"])
+        self.assertEqual(code2, 0)
+        self.assertTrue(out2.get("ok"))
 
 
 if __name__ == "__main__":

@@ -105,7 +105,7 @@ class MockProviderLegacyToolMarkup:
         return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
 
 
-class LangGraphBackendIntegrationTests(unittest.TestCase):
+class BackendCoreIntegrationTests(unittest.TestCase):
     def _make_handler(self, body_obj=None, *, query=None):
         body_bytes = b""
         if body_obj is not None:
@@ -156,75 +156,46 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         env = {"ANIMA_CONFIG_ROOT": p, "ANIMA_SKILLS_DIR": os.path.join(p, "skills")}
         return td, env, db, settings
 
-    def test_graph_runs_tools_and_sanitizes_history(self) -> None:
-        from anima_backend_lg.runtime.graph import build_run_graph
-
-        with tempfile.TemporaryDirectory() as td:
-            provider = MockProviderListDirToolCall()
-            graph = build_run_graph(provider)
-
-            polluted_tool_message = {"role": "tool", "content": '{"ok": true}', "meta": {"toolTraces": []}}
-            init_state = {
-                "run_id": "r1",
-                "thread_id": "t1",
-                "messages": [{"role": "user", "content": "hi"}, polluted_tool_message],
-                "composer": {"toolMode": "all", "workspaceDir": td},
-                "settings": {"settings": {"defaultToolMode": "all", "workspaceDir": td}},
-                "temperature": 0.7,
-                "max_tokens": 128,
-                "extra_body": None,
-                "step": 0,
-                "traces": [],
-                "usage": None,
-                "rate_limit": None,
-                "reasoning": "",
-                "final_content": "",
-            }
-
-            out = graph.invoke(init_state)
-        self.assertEqual(str((out or {}).get("final_content") or ""), "ok")
-
-        msgs = (out or {}).get("messages") or []
-        self.assertTrue(isinstance(msgs, list))
-
-        tool_call_ids = set()
-        for m in msgs:
-            if isinstance(m, dict) and m.get("role") == "assistant" and isinstance(m.get("tool_calls"), list):
-                for tc in m.get("tool_calls") or []:
-                    if isinstance(tc, dict) and isinstance(tc.get("id"), str) and tc.get("id").strip():
-                        tool_call_ids.add(tc.get("id").strip())
-
-        for m in msgs:
-            if isinstance(m, dict) and m.get("role") == "tool":
-                tc_id = m.get("tool_call_id")
-                self.assertTrue(isinstance(tc_id, str) and tc_id.strip())
-                self.assertIn(tc_id, tool_call_ids)
-
-        traces = (out or {}).get("traces") or []
-        self.assertTrue(isinstance(traces, list))
-        self.assertTrue(
-            any(
-                isinstance(t, dict)
-                and isinstance((t.get("error") or {}).get("message"), str)
-                and "Dropped tool message missing tool_call_id" in (t.get("error") or {}).get("message")
-                for t in traces
-            )
-        )
-
     def test_system_prompt_includes_tool_guidance_for_telegram_channel(self) -> None:
-        from anima_backend_lg.runtime.graph import build_system_prompt_text
+        from anima_backend_core.runtime.graph import build_system_prompt_text
 
         settings_obj = {"settings": {"defaultToolMode": "all"}}
         prompt = build_system_prompt_text(settings_obj, {"channel": "telegram"}, "hi")
-        self.assertIn("你是Anima，由小涛创建的AI管家", prompt)
+        self.assertIn("你是Anima", prompt)
         self.assertIn("工具使用规则", prompt)
 
         prompt2 = build_system_prompt_text(settings_obj, {}, "hi")
-        self.assertIn("你是Anima，由小涛创建的AI管家", prompt2)
+        self.assertIn("你是Anima", prompt2)
         self.assertNotIn("工具使用规则", prompt2)
 
+    def test_system_prompt_includes_coder_delegation_block_when_enabled(self) -> None:
+        from anima_backend_core.runtime.graph import build_system_prompt_text
+
+        settings_obj = {
+            "settings": {
+                "coder": {
+                    "enabled": True,
+                    "name": "Codex Desktop",
+                    "backendKind": "codex",
+                    "endpointType": "desktop",
+                    "transport": "cdpbridge",
+                    "commandTemplates": {
+                        "status": "codex status",
+                        "ask": "codex exec \"{prompt}\"",
+                    },
+                }
+            }
+        }
+        prompt = build_system_prompt_text(settings_obj, {}, "请实现一个接口")
+        self.assertIn("Coder委托规则:", prompt)
+        self.assertIn("Codex Desktop", prompt)
+        self.assertIn("底层: Codex", prompt)
+        self.assertIn("cdpbridge", prompt)
+        self.assertIn("Coder命令模板:", prompt)
+        self.assertIn("status: codex status", prompt)
+
     def test_system_prompt_injects_workspace_user_memory_file(self) -> None:
-        from anima_backend_lg.runtime.graph import build_system_prompt_text
+        from anima_backend_core.runtime.graph import build_system_prompt_text
 
         with tempfile.TemporaryDirectory() as td:
             anima_dir = os.path.join(td, ".anima")
@@ -238,37 +209,8 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
             self.assertIn("喜欢咖啡", prompt)
             self.assertIn("讨厌早起", prompt)
 
-    def test_telegram_legacy_tool_markup_is_executed(self) -> None:
-        from anima_backend_lg.runtime.graph import build_run_graph
-
-        with tempfile.TemporaryDirectory() as td:
-            provider = MockProviderLegacyToolMarkup()
-            graph = build_run_graph(provider)
-
-            init_state = {
-                "run_id": "r1",
-                "thread_id": "t1",
-                "messages": [{"role": "user", "content": "hi"}],
-                "composer": {"toolMode": "all", "channel": "telegram", "workspaceDir": td},
-                "settings": {"settings": {"defaultToolMode": "all", "workspaceDir": td}},
-                "temperature": 0.7,
-                "max_tokens": 128,
-                "extra_body": None,
-                "step": 0,
-                "traces": [],
-                "usage": None,
-                "rate_limit": None,
-                "reasoning": "",
-                "final_content": "",
-            }
-
-            out = graph.invoke(init_state)
-        self.assertEqual(str((out or {}).get("final_content") or ""), "ok")
-        traces = (out or {}).get("traces") or []
-        self.assertTrue(any(isinstance(t, dict) and t.get("name") == "list_dir" and t.get("status") == "succeeded" for t in traces))
-
     def test_openclaw_prompt_injects_workspace_files_and_bootstraps(self) -> None:
-        from anima_backend_lg.runtime.graph import build_system_prompt_text
+        from anima_backend_core.runtime.graph import build_system_prompt_text
 
         with tempfile.TemporaryDirectory() as td:
             settings_obj = {"settings": {"openclaw": {"enabled": True}, "systemPromptMode": "openclaw"}}
@@ -283,7 +225,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(base, "HEARTBEAT.md")))
 
     def test_openclaw_prompt_does_not_include_memory_md_when_not_main_session(self) -> None:
-        from anima_backend_lg.runtime.graph import build_system_prompt_text
+        from anima_backend_core.runtime.graph import build_system_prompt_text
 
         with tempfile.TemporaryDirectory() as td:
             os.makedirs(os.path.join(td, ".anima"), exist_ok=True)
@@ -294,7 +236,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
             self.assertNotIn("MEMORY_SECRET_123", prompt)
 
     def test_telegram_save_image_to_workspace(self) -> None:
-        from anima_backend_lg import telegram_integration as tg
+        from anima_backend_core import telegram_integration as tg
 
         with tempfile.TemporaryDirectory() as td:
             def _mock_download(_token: str, _file_id: str):
@@ -315,7 +257,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
                     self.assertEqual(f.read(), b"pngdata")
 
     def test_telegram_extract_image_to_send_from_reply(self) -> None:
-        from anima_backend_lg import telegram_integration as tg
+        from anima_backend_core import telegram_integration as tg
 
         with tempfile.TemporaryDirectory() as td:
             os.makedirs(os.path.join(td, "out"), exist_ok=True)
@@ -328,7 +270,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
             self.assertNotIn(img, caption)
 
     def test_telegram_send_message_supports_reply_to(self) -> None:
-        from anima_backend_lg import telegram_integration as tg
+        from anima_backend_core import telegram_integration as tg
 
         calls = []
 
@@ -342,7 +284,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         self.assertTrue(any(m == "sendMessage" and int(p.get("reply_to_message_id") or 0) == 99 for m, p in calls))
 
     def test_default_composer_for_telegram_supports_provider_model_override(self) -> None:
-        from anima_backend_lg.telegram_integration import _default_composer_for_telegram
+        from anima_backend_core.telegram_integration import _default_composer_for_telegram
 
         settings_obj = {
             "settings": {
@@ -358,7 +300,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         self.assertEqual(str(composer.get("modelOverride") or ""), "m1")
 
     def test_telegram_extract_file_from_artifacts(self) -> None:
-        from anima_backend_lg import telegram_integration as tg
+        from anima_backend_core import telegram_integration as tg
 
         with tempfile.TemporaryDirectory() as td:
             os.makedirs(os.path.join(td, "out"), exist_ok=True)
@@ -369,7 +311,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
             self.assertEqual(os.path.realpath(str(picked)), os.path.realpath(str(fp)))
 
     def test_executor_sanitizes_artifacts_and_attaches_to_trace(self) -> None:
-        from anima_backend_lg.tools import executor
+        from anima_backend_core.tools import executor
 
         with tempfile.TemporaryDirectory() as td:
             os.makedirs(os.path.join(td, "out"), exist_ok=True)
@@ -405,7 +347,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
                 self.assertEqual(str(arts[0].get("kind") or ""), "image")
 
     def test_telegram_extract_image_from_traces(self) -> None:
-        from anima_backend_lg import telegram_integration as tg
+        from anima_backend_core import telegram_integration as tg
 
         with tempfile.TemporaryDirectory() as td:
             os.makedirs(os.path.join(td, "out"), exist_ok=True)
@@ -431,7 +373,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
             self.assertEqual(os.path.realpath(str(picked2)), os.path.realpath(str(img)))
 
     def test_heartbeat_md_empty_skips_model_call(self) -> None:
-        from anima_backend_lg.cron import _execute_job_payload
+        from anima_backend_core.cron import _execute_job_payload
 
         with tempfile.TemporaryDirectory() as td:
             os.makedirs(os.path.join(td, ".anima"), exist_ok=True)
@@ -449,7 +391,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
                 },
             }
 
-            with patch("anima_backend_lg.api.runs.handle_post_runs_non_stream") as mocked:
+            with patch("anima_backend_core.api.runs.handle_post_runs_non_stream") as mocked:
                 ok, out, err = _execute_job_payload(job)
                 self.assertTrue(ok)
                 self.assertEqual(out, "")
@@ -457,7 +399,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
                 mocked.assert_not_called()
 
     def test_heartbeat_ok_suppresses_telegram_delivery(self) -> None:
-        from anima_backend_lg.cron import _execute_job_payload
+        from anima_backend_core.cron import _execute_job_payload
         import anima_backend_shared.database as db
         import anima_backend_shared.settings as settings
 
@@ -483,8 +425,8 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
                             "delivery": {"kind": "telegram", "chatId": "123"},
                         }
 
-                        with patch("anima_backend_lg.api.runs.handle_post_runs_non_stream", return_value=(200, {"ok": True, "content": "HEARTBEAT_OK"})):
-                            with patch("anima_backend_lg.telegram_integration._tg_send_message") as send_mock:
+                        with patch("anima_backend_core.api.runs.handle_post_runs_non_stream", return_value=(200, {"ok": True, "content": "HEARTBEAT_OK"})):
+                            with patch("anima_backend_core.telegram_integration._tg_send_message") as send_mock:
                                 ok, out, err = _execute_job_payload(job)
                                 self.assertTrue(ok)
                                 self.assertEqual(out.strip(), "HEARTBEAT_OK")
@@ -492,7 +434,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
                                 send_mock.assert_not_called()
 
     def test_run_resume_stream_emits_done(self) -> None:
-        from anima_backend_lg.api.runs import handle_post_run_resume
+        from anima_backend_core.api.runs import handle_post_run_resume
         from anima_backend_shared.database import create_run, get_run, set_app_settings
 
         set_app_settings({"settings": {}})
@@ -533,13 +475,13 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         h.rfile = type("rf", (), {"read": lambda _self, n=-1: h.rfile_read()})()
         h.headers = {"Content-Length": str(len(h.rfile_read()))}
 
-        with patch("anima_backend_lg.api.runs.create_provider", return_value=MockProvider()):
+        with patch("anima_backend_core.api.runs.create_provider", return_value=MockProvider()):
             handle_post_run_resume(h, run_id)
         out = h.wfile.buf.decode("utf-8")
         self.assertIn('"type": "done"', out)
 
     def test_runs_stream_dangerous_command_emits_approval_and_pauses_run(self) -> None:
-        from anima_backend_lg.api.runs_stream import handle_post_runs_stream
+        from anima_backend_core.api.runs_stream import handle_post_runs_stream
 
         class _FakeProvider:
             def chat_completion(self, _messages, **_kwargs):
@@ -581,12 +523,12 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
 
         h = self._make_handler()
         body = {"messages": [{"role": "user", "content": "hi"}], "composer": {"workspaceDir": "/tmp"}}
-        with patch("anima_backend_lg.api.runs_stream.load_settings", return_value={"settings": {}}):
-            with patch("anima_backend_lg.api.runs_stream.create_provider", return_value=_FakeProvider()):
-                with patch("anima_backend_lg.api.runs_stream.select_tools", return_value=([], {}, None)):
-                    with patch("anima_backend_lg.api.runs_stream.create_run", return_value=None):
-                        with patch("anima_backend_lg.api.runs_stream.execute_tool", side_effect=_fake_execute_tool):
-                            with patch("anima_backend_lg.api.runs_stream.update_run") as p_update:
+        with patch("anima_backend_core.api.runs_stream.load_settings", return_value={"settings": {}}):
+            with patch("anima_backend_core.api.runs_stream.create_provider", return_value=_FakeProvider()):
+                with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
+                    with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
+                        with patch("anima_backend_core.api.runs_stream.execute_tool", side_effect=_fake_execute_tool):
+                            with patch("anima_backend_core.api.runs_stream.update_run") as p_update:
                                 handle_post_runs_stream(h, body)
                                 self.assertTrue(any(len(c.args) >= 2 and c.args[1] == "paused" for c in p_update.call_args_list))
 
@@ -610,10 +552,10 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
             ),
             None,
         )
-        self.assertIsNone(bash_trace_evt)
+        self.assertTrue(isinstance(bash_trace_evt, dict))
 
     def test_run_resume_stream_from_paused_run_completes_same_run(self) -> None:
-        from anima_backend_lg.api.runs import handle_post_run_resume
+        from anima_backend_core.api.runs import handle_post_run_resume
         from anima_backend_shared.database import create_run, get_run, set_app_settings, update_run
 
         set_app_settings({"settings": {}})
@@ -696,9 +638,9 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
             "rate_limit": None,
         }
 
-        with patch("anima_backend_lg.api.runs.create_provider", return_value=MockProvider()):
-            with patch("anima_backend_lg.api.runs.execute_tool", return_value=(json.dumps({"ok": True}, ensure_ascii=False), trace)):
-                with patch("anima_backend_lg.api.runs._run_tool_loop", return_value=out_payload):
+        with patch("anima_backend_core.api.runs.create_provider", return_value=MockProvider()):
+            with patch("anima_backend_core.api.runs.execute_tool", return_value=(json.dumps({"ok": True}, ensure_ascii=False), trace)):
+                with patch("anima_backend_core.api.runs._run_tool_loop", return_value=out_payload):
                     handle_post_run_resume(h, run_id)
 
         out = h.wfile.buf.decode("utf-8")
@@ -708,7 +650,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         self.assertEqual(str((run or {}).get("status") or ""), "succeeded")
 
     def test_runs_stream_emits_artifacts_in_trace_and_done(self) -> None:
-        from anima_backend_lg.api.runs_stream import handle_post_runs_stream
+        from anima_backend_core.api.runs_stream import handle_post_runs_stream
 
         class _FakeProvider:
             def __init__(self) -> None:
@@ -757,12 +699,12 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
 
         h = self._make_handler()
         body = {"messages": [{"role": "user", "content": "hi"}], "composer": {"workspaceDir": "/tmp"}}
-        with patch("anima_backend_lg.api.runs_stream.load_settings", return_value={"settings": {}}):
-            with patch("anima_backend_lg.api.runs_stream.create_provider", return_value=_FakeProvider()):
-                with patch("anima_backend_lg.api.runs_stream.select_tools", return_value=([], {}, None)):
-                    with patch("anima_backend_lg.api.runs_stream.create_run", return_value=None):
-                        with patch("anima_backend_lg.api.runs_stream.update_run", return_value=None):
-                            with patch("anima_backend_lg.api.runs_stream.execute_tool", side_effect=_fake_execute_tool):
+        with patch("anima_backend_core.api.runs_stream.load_settings", return_value={"settings": {}}):
+            with patch("anima_backend_core.api.runs_stream.create_provider", return_value=_FakeProvider()):
+                with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
+                    with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
+                        with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
+                            with patch("anima_backend_core.api.runs_stream.execute_tool", side_effect=_fake_execute_tool):
                                 handle_post_runs_stream(h, body)
 
         raw = h.wfile.buf.decode("utf-8")
@@ -790,7 +732,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         self.assertTrue(isinstance(tr_evt, dict))
 
     def test_runs_stream_emits_compression_delta_and_end(self) -> None:
-        from anima_backend_lg.api.runs_stream import handle_post_runs_stream
+        from anima_backend_core.api.runs_stream import handle_post_runs_stream
 
         class _FakeProvider:
             def chat_completion_stream(self, _messages, **_kwargs):
@@ -825,14 +767,14 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         }
         settings_obj = {"settings": {"enableAutoCompression": True, "compressionThreshold": 10, "keepRecentMessages": 2}}
 
-        with patch("anima_backend_lg.api.runs_stream.load_settings", return_value=settings_obj):
-            with patch("anima_backend_lg.api.runs_stream.create_provider", return_value=_FakeProvider()):
-                with patch("anima_backend_lg.api.runs_stream.select_tools", return_value=([], {}, None)):
-                    with patch("anima_backend_lg.api.runs_stream.create_run", return_value=None):
-                        with patch("anima_backend_lg.api.runs_stream.update_run", return_value=None):
-                            with patch("anima_backend_lg.api.runs_stream.get_chat", return_value={"messages": history}):
-                                with patch("anima_backend_lg.api.runs_stream.get_chat_meta", return_value={}):
-                                    with patch("anima_backend_lg.api.runs_stream.merge_chat_meta", side_effect=_fake_merge_chat_meta):
+        with patch("anima_backend_core.api.runs_stream.load_settings", return_value=settings_obj):
+            with patch("anima_backend_core.api.runs_stream.create_provider", return_value=_FakeProvider()):
+                with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
+                    with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
+                        with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
+                            with patch("anima_backend_core.api.runs_stream.get_chat", return_value={"messages": history}):
+                                with patch("anima_backend_core.api.runs_stream.get_chat_meta", return_value={}):
+                                    with patch("anima_backend_core.api.runs_stream.merge_chat_meta", side_effect=_fake_merge_chat_meta):
                                         handle_post_runs_stream(h, body)
 
         raw = h.wfile.buf.decode("utf-8")
@@ -846,7 +788,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         self.assertTrue(any(e.get("type") == "compression_end" for e in events))
 
     def test_runs_stream_compression_reports_error_when_stream_empty(self) -> None:
-        from anima_backend_lg.api.runs_stream import handle_post_runs_stream
+        from anima_backend_core.api.runs_stream import handle_post_runs_stream
 
         class _FakeProvider:
             def chat_completion_stream(self, _messages, **_kwargs):
@@ -880,14 +822,14 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         }
         settings_obj = {"settings": {"enableAutoCompression": True, "compressionThreshold": 10, "keepRecentMessages": 2}}
 
-        with patch("anima_backend_lg.api.runs_stream.load_settings", return_value=settings_obj):
-            with patch("anima_backend_lg.api.runs_stream.create_provider", return_value=_FakeProvider()):
-                with patch("anima_backend_lg.api.runs_stream.select_tools", return_value=([], {}, None)):
-                    with patch("anima_backend_lg.api.runs_stream.create_run", return_value=None):
-                        with patch("anima_backend_lg.api.runs_stream.update_run", return_value=None):
-                            with patch("anima_backend_lg.api.runs_stream.get_chat", return_value={"messages": history}):
-                                with patch("anima_backend_lg.api.runs_stream.get_chat_meta", return_value={}):
-                                    with patch("anima_backend_lg.api.runs_stream.merge_chat_meta", side_effect=_fake_merge_chat_meta):
+        with patch("anima_backend_core.api.runs_stream.load_settings", return_value=settings_obj):
+            with patch("anima_backend_core.api.runs_stream.create_provider", return_value=_FakeProvider()):
+                with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
+                    with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
+                        with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
+                            with patch("anima_backend_core.api.runs_stream.get_chat", return_value={"messages": history}):
+                                with patch("anima_backend_core.api.runs_stream.get_chat_meta", return_value={}):
+                                    with patch("anima_backend_core.api.runs_stream.merge_chat_meta", side_effect=_fake_merge_chat_meta):
                                         handle_post_runs_stream(h, body)
 
         raw = h.wfile.buf.decode("utf-8")
@@ -901,7 +843,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         self.assertTrue(isinstance(end, dict) and end.get("ok") is False and "0 events" in str(end.get("error") or ""))
 
     def test_artifacts_file_serves_bytes(self) -> None:
-        from anima_backend_lg.api.settings_tools import handle_get_artifact_file
+        from anima_backend_core.api.settings_tools import handle_get_artifact_file
 
         with tempfile.TemporaryDirectory() as td:
             os.makedirs(os.path.join(td, ".anima", "artifacts"), exist_ok=True)
@@ -944,7 +886,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
             self.assertEqual(h.wfile.buf, b"xyz")
 
     def test_attachments_file_serves_abs_image_outside_workspace(self) -> None:
-        from anima_backend_lg.api.settings_tools import handle_get_attachment_file
+        from anima_backend_core.api.settings_tools import handle_get_attachment_file
 
         with tempfile.TemporaryDirectory() as td:
             ws = os.path.join(td, "workspace")
@@ -985,45 +927,6 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
             self.assertEqual(int(getattr(h, "_code", 0)), 200)
             self.assertEqual(h.wfile.buf, b"xyz")
 
-    def test_chat_prepare_returns_messages(self) -> None:
-        from anima_backend_lg.api.runs import handle_post_chat_prepare
-
-        class _WFile:
-            def __init__(self) -> None:
-                self.buf = b""
-
-            def write(self, b: bytes) -> None:
-                self.buf += b
-
-            def flush(self) -> None:
-                return
-
-        class _Handler:
-            def __init__(self) -> None:
-                self.headers = {}
-                self.wfile = _WFile()
-
-            def send_response(self, code) -> None:
-                self._code = int(code)
-
-            def send_header(self, k, v) -> None:
-                return
-
-            def end_headers(self) -> None:
-                return
-
-            def rfile_read(self) -> bytes:
-                return b'{"messages":[{"role":"user","content":"hi"}],"composer":{}}'
-
-        h = _Handler()
-        h.rfile = type("rf", (), {"read": lambda _self, n=-1: h.rfile_read()})()
-        h.headers = {"Content-Length": str(len(h.rfile_read()))}
-
-        handle_post_chat_prepare(h)
-        out = h.wfile.buf.decode("utf-8")
-        self.assertIn('"ok": true', out)
-        self.assertIn('"messages"', out)
-
     def test_apply_attachments_inline_embeds_image_blocks(self) -> None:
         from anima_backend_shared.chat import apply_attachments_inline
 
@@ -1049,74 +952,8 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
             url = ((img.get("image_url") or {}) if isinstance(img.get("image_url"), dict) else {}).get("url")
             self.assertTrue(isinstance(url, str) and url.startswith("data:image/png;base64,"))
 
-    def test_chat_stream_emits_done_and_turn_id(self) -> None:
-        from anima_backend_lg.api.runs import handle_post_chat
-        from anima_backend_shared.database import set_app_settings
-
-        set_app_settings(
-            {
-                "settings": {"defaultToolMode": "all"},
-                "providers": [
-                    {
-                        "id": "p1",
-                        "type": "openai",
-                        "isEnabled": True,
-                        "config": {"baseUrl": "http://example.com", "apiKey": "x", "selectedModel": "m"},
-                    }
-                ],
-            }
-        )
-
-        turn_id = f"t_{uuid.uuid4().hex}"
-
-        class _WFile:
-            def __init__(self) -> None:
-                self.buf = b""
-
-            def write(self, b: bytes) -> None:
-                self.buf += b
-
-            def flush(self) -> None:
-                return
-
-        class _Handler:
-            def __init__(self) -> None:
-                self.headers = {}
-                self.wfile = _WFile()
-                self.query = {"stream": "1"}
-
-            def send_response(self, code) -> None:
-                self._code = int(code)
-
-            def send_header(self, k, v) -> None:
-                return
-
-            def end_headers(self) -> None:
-                return
-
-            def rfile_read(self) -> bytes:
-                payload = {
-                    "turnId": turn_id,
-                    "messages": [{"role": "user", "content": "hi"}],
-                    "composer": {"toolMode": "all"},
-                }
-                import json
-
-                return json.dumps(payload).encode("utf-8")
-
-        h = _Handler()
-        h.rfile = type("rf", (), {"read": lambda _self, n=-1: h.rfile_read()})()
-        h.headers = {"Content-Length": str(len(h.rfile_read()))}
-
-        with patch("anima_backend_shared.providers.create_chat_provider", return_value=MockProvider()):
-            handle_post_chat(h)
-
-        out = h.wfile.buf.decode("utf-8")
-        self.assertIn('"type": "done"', out)
-        self.assertIn(f'"turnId": "{turn_id}"', out)
-
     def test_dispatch_chats_crud(self) -> None:
-        from anima_backend_lg.api import dispatch
+        from anima_backend_core.api import dispatch
         from anima_backend_shared.database import init_db
 
         td, env, db, _settings = self._with_temp_config_root()
@@ -1164,7 +1001,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
                         self.assertTrue(bool(deleted.get("ok")))
 
     def test_dispatch_settings_tools_skills(self) -> None:
-        from anima_backend_lg.api import dispatch
+        from anima_backend_core.api import dispatch
         from anima_backend_shared.database import init_db, set_app_settings
 
         td, env, db, settings = self._with_temp_config_root()
@@ -1212,7 +1049,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
                         self.assertTrue(isinstance(out6.get("tools"), list))
 
     def test_dispatch_settings_bootstraps_defaults_when_missing(self) -> None:
-        from anima_backend_lg.api import dispatch
+        from anima_backend_core.api import dispatch
         from anima_backend_shared.database import get_app_settings, get_db_connection, init_db
 
         td, env, db, _settings = self._with_temp_config_root()
@@ -1238,7 +1075,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
                         self.assertTrue(isinstance((persisted or {}).get("settings"), dict))
 
     def test_dispatch_db_export_import_clear(self) -> None:
-        from anima_backend_lg.api import dispatch
+        from anima_backend_core.api import dispatch
         from anima_backend_shared.database import init_db, set_app_settings
 
         td, env, db, _settings = self._with_temp_config_root()
@@ -1300,7 +1137,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
                         self.assertFalse(bool(empty_out2.get("empty")))
 
     def test_dispatch_runs_non_stream(self) -> None:
-        from anima_backend_lg.api import dispatch
+        from anima_backend_core.api import dispatch
         from anima_backend_shared.database import init_db, set_app_settings
 
         td, env, db, _settings = self._with_temp_config_root()
@@ -1313,14 +1150,14 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
 
                         payload = {"runId": f"r_{uuid.uuid4().hex}", "messages": [{"role": "user", "content": "hi"}], "composer": {}}
                         h = self._make_handler(payload)
-                        with patch("anima_backend_lg.api.runs.create_provider", return_value=MockProvider()):
+                        with patch("anima_backend_core.api.runs_stream.create_provider", return_value=MockProvider()):
                             self.assertTrue(dispatch(h, "POST", "/api/runs"))
                         out = self._json_out(h)
                         self.assertTrue(bool(out.get("ok")))
-                        self.assertEqual(out.get("backendImpl"), "langgraph")
+                        self.assertEqual(out.get("backendImpl"), "stream-executor")
 
     def test_dispatch_fetch_models(self) -> None:
-        from anima_backend_lg.api import dispatch
+        from anima_backend_core.api import dispatch
         from anima_backend_shared.database import init_db, set_app_settings
 
         td, env, db, _settings = self._with_temp_config_root()
@@ -1338,7 +1175,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
                         self.assertTrue(isinstance(out.get("models"), list))
 
     def test_dispatch_cron_jobs_upsert_and_list(self) -> None:
-        from anima_backend_lg.api import dispatch
+        from anima_backend_core.api import dispatch
         from anima_backend_shared.database import init_db
 
         td, env, db, settings = self._with_temp_config_root()
@@ -1441,7 +1278,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
     def test_cron_compute_next_run_cron_every_5_minutes(self) -> None:
         from datetime import datetime, timezone
 
-        from anima_backend_lg import cron
+        from anima_backend_core import cron
 
         after_ms = int(datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
         schedule = {"kind": "cron", "expr": "*/5 * * * *", "tz": "UTC"}
@@ -1449,7 +1286,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         self.assertEqual(nr, after_ms + 5 * 60 * 1000)
 
     def test_select_tools_hides_cron_tools_when_disabled(self) -> None:
-        from anima_backend_lg.tools.executor import select_tools
+        from anima_backend_core.tools.executor import select_tools
 
         tools, _mcp_index, _tool_choice = select_tools({"settings": {"cron": {"allowAgentManage": False}}}, {"toolMode": "all"})
         names = []
@@ -1468,7 +1305,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         self.assertNotIn("cron_run", names)
 
     def test_voice_base_dir_returns_dir(self) -> None:
-        from anima_backend_lg.api.voice import handle_get_voice_models_base_dir
+        from anima_backend_core.api.voice import handle_get_voice_models_base_dir
 
         class _WFile:
             def __init__(self) -> None:
@@ -1509,7 +1346,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         self.assertIn('"dir"', out)
 
     def test_voice_catalog_uses_handler(self) -> None:
-        from anima_backend_lg.api.voice import handle_get_voice_models_catalog
+        from anima_backend_core.api.voice import handle_get_voice_models_catalog
 
         class _WFile:
             def __init__(self) -> None:
@@ -1537,7 +1374,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
 
         h = _Handler()
         with patch(
-            "anima_backend_lg.api.voice.voice_model_catalog",
+            "anima_backend_core.api.voice.voice_model_catalog",
             return_value=[{"id": "openai/whisper-tiny", "name": "Whisper Tiny", "sizeBytes": 123}],
         ):
             handle_get_voice_models_catalog(h)
@@ -1546,7 +1383,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         self.assertIn('"openai/whisper-tiny"', out)
 
     def test_voice_download_status_requires_task_id(self) -> None:
-        from anima_backend_lg.api.voice import handle_get_voice_models_download_status
+        from anima_backend_core.api.voice import handle_get_voice_models_download_status
 
         class _WFile:
             def __init__(self) -> None:
@@ -1580,7 +1417,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         self.assertIn("taskId is required", out)
 
     def test_voice_download_and_cancel(self) -> None:
-        from anima_backend_lg.api.voice import (
+        from anima_backend_core.api.voice import (
             handle_post_voice_models_download,
             handle_post_voice_models_download_cancel,
         )
@@ -1619,15 +1456,15 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         h = _Handler(body)
         h.rfile = type("rf", (), {"read": lambda _self, n=-1: h.rfile_read()})()
 
-        with patch("anima_backend_lg.api.voice.voice_model_catalog", return_value=[{"id": "openai/whisper-tiny"}]):
-            with patch("anima_backend_lg.api.voice._start_download_task", return_value="task123"):
+        with patch("anima_backend_core.api.voice.voice_model_catalog", return_value=[{"id": "openai/whisper-tiny"}]):
+            with patch("anima_backend_core.api.voice._start_download_task", return_value="task123"):
                 handle_post_voice_models_download(h)
 
         out = h.wfile.buf.decode("utf-8")
         self.assertIn('"ok": true', out)
         self.assertIn('"taskId": "task123"', out)
 
-        from anima_backend_lg.api import voice as lg_voice
+        from anima_backend_core.api import voice as lg_voice
 
         with lg_voice.voice_download_lock:
             lg_voice.voice_download_tasks["task123"] = {"taskId": "task123"}
@@ -1642,7 +1479,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
             self.assertTrue(bool(lg_voice.voice_download_tasks["task123"].get("cancelRequested")))
 
     def test_voice_transcribe_no_content(self) -> None:
-        from anima_backend_lg.api.voice import handle_post_voice_transcribe
+        from anima_backend_core.api.voice import handle_post_voice_transcribe
 
         class _WFile:
             def __init__(self) -> None:
@@ -1676,7 +1513,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
         self.assertIn("No content", out)
 
     def test_telegram_send_message_splits_long_text(self) -> None:
-        from anima_backend_lg import telegram_integration as tg
+        from anima_backend_core import telegram_integration as tg
 
         calls = []
 
@@ -1694,7 +1531,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
             self.assertLessEqual(len(str(payload.get("text") or "")), 3900)
 
     def test_telegram_transcribe_audio_uses_voice_pipeline(self) -> None:
-        from anima_backend_lg import telegram_integration as tg
+        from anima_backend_core import telegram_integration as tg
         from anima_backend_shared import settings as shared_settings
         from anima_backend_shared import voice as shared_voice
 
@@ -1843,7 +1680,7 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
                             }
                         )
 
-                        from anima_backend_lg.api import qwen_auth as api_qwen_auth
+                        from anima_backend_core.api import qwen_auth as api_qwen_auth
 
                         fake_device = {
                             "device_code": "dc",
@@ -2348,54 +2185,6 @@ class LangGraphBackendIntegrationTests(unittest.TestCase):
                         if isinstance(part, str) and part:
                             out += part
                     self.assertEqual(out, "hi")
-
-    def test_codex_provider_disables_tools_in_run_graph(self) -> None:
-        from anima_backend_lg.runtime.graph import build_run_graph
-        from anima_backend_shared.providers import ProviderSpec
-
-        class _Prov:
-            def __init__(self) -> None:
-                self._spec = ProviderSpec(
-                    provider_id="codex1",
-                    provider_type="openai_codex",
-                    base_url="https://chatgpt.com/backend-api",
-                    api_key="ACCESS",
-                    model="gpt-5.2-codex",
-                    proxy_url="",
-                    thinking_enabled=False,
-                    api_format="responses",
-                    use_max_completion_tokens=False,
-                    extra_headers={},
-                )
-
-            def chat_completion(self, messages, *, temperature, max_tokens, tools=None, tool_choice=None, model_override=None, extra_body=None):
-                if tools is not None:
-                    raise RuntimeError("tools should be disabled")
-                if tool_choice is not None:
-                    raise RuntimeError("tool_choice should be disabled")
-                return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
-
-        g = build_run_graph(_Prov())
-        out = g.invoke(
-            {
-                "run_id": "r1",
-                "thread_id": "t1",
-                "messages": [{"role": "user", "content": "hi"}],
-                "composer": {"toolMode": "all", "workspaceDir": "", "isMainSession": True},
-                "settings": {"settings": {"defaultToolMode": "all"}},
-                "temperature": 0.2,
-                "max_tokens": 16,
-                "extra_body": None,
-                "step": 0,
-                "traces": [],
-                "artifacts": [],
-                "usage": None,
-                "rate_limit": None,
-                "reasoning": "",
-                "final_content": "",
-            }
-        )
-        self.assertEqual(str((out or {}).get("final_content") or ""), "ok")
 
     def test_bash_full_access_allows_blocked_patterns(self) -> None:
         import anima_backend_shared.tools as shared_tools

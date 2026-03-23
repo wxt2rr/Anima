@@ -82,6 +82,28 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
             {"id": "anima", "name": "Anima (Embedded)", "kind": "embedded"},
         ],
     },
+    "coder": {
+        "enabled": False,
+        "name": "Codex",
+        "backendKind": "codex",
+        "backendLabel": "",
+        "endpointType": "desktop",
+        "transport": "cdpbridge",
+        "autoStart": False,
+        "command": "/usr/bin/open",
+        "args": ["-a", "Codex", "--args", "--remote-debugging-port=9222"],
+        "cwd": "",
+        "env": {},
+        "remoteDebuggingPort": 9222,
+        "commandTemplates": {
+            "status": "",
+            "send": "",
+            "ask": "codex exec \"{prompt}\"",
+            "read": "",
+            "new": "codex",
+            "screenshot": "",
+        },
+    },
     "im": {
         "provider": "telegram",
         "telegram": {
@@ -259,4 +281,3 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
 
 def default_app_settings() -> Dict[str, Any]:
     return copy.deepcopy(DEFAULT_APP_SETTINGS)
-

@@ -1137,6 +1137,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           general: 'General',
           providers: 'Providers',
           chat: 'Chat',
+          coder: 'Coder',
           im: 'IM',
           memory: 'Memory',
           skills: 'Skills',
@@ -1240,6 +1241,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           general: '通用',
           providers: '提供商',
           chat: '聊天',
+          coder: 'Coder',
           im: 'IM',
           memory: '记忆',
           skills: '技能',
@@ -1343,6 +1345,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           general: '一般',
           providers: 'プロバイダー',
           chat: 'チャット',
+          coder: 'Coder',
           im: 'IM',
           memory: 'メモリー',
           skills: 'スキル',
@@ -1446,6 +1449,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
     { id: 'general', label: t.tabs.general, icon: Settings },
     { id: 'providers', label: t.tabs.providers, icon: Cpu },
     { id: 'chat', label: t.tabs.chat, icon: MessageSquare },
+    { id: 'coder', label: t.tabs.coder, icon: Sparkles },
     { id: 'im', label: t.tabs.im, icon: ExternalLink },
     { id: 'skills', label: t.tabs.skills, icon: Wand2 },
     { id: 'network', label: t.tabs.network, icon: Globe },
@@ -1504,6 +1508,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
             {activeTab === 'providers' && <ProvidersSettings />}
             {activeTab === 'general' && <GeneralSettings />}
             {activeTab === 'chat' && <ChatSettings />}
+            {activeTab === 'coder' && <CoderSettings />}
             {activeTab === 'im' && <ImSettings />}
             {activeTab === 'skills' && <SkillsSettings />}
             {activeTab === 'network' && <NetworkSettings />}
@@ -1547,6 +1552,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           general: 'General',
           providers: 'Providers',
           chat: 'Chat',
+          coder: 'Coder',
           im: 'IM',
           memory: 'Memory',
           skills: 'Skills',
@@ -1578,6 +1584,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           general: '通用',
           providers: '提供商',
           chat: '聊天',
+          coder: 'Coder',
           im: 'IM',
           memory: '记忆',
           skills: '技能',
@@ -1609,6 +1616,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           general: '一般',
           providers: 'プロバイダー',
           chat: 'チャット',
+          coder: 'Coder',
           im: 'IM',
           memory: 'メモリー',
           skills: 'スキル',
@@ -1675,6 +1683,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
     { id: 'general', label: t.tabs.general, icon: Settings },
     { id: 'providers', label: t.tabs.providers, icon: Cpu },
     { id: 'chat', label: t.tabs.chat, icon: MessageSquare },
+    { id: 'coder', label: t.tabs.coder, icon: Sparkles },
     { id: 'memory', label: t.tabs.memory, icon: Search },
     { id: 'im', label: t.tabs.im, icon: ExternalLink },
     { id: 'skills', label: t.tabs.skills, icon: Wand2 },
@@ -1728,6 +1737,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
             {activeTab === 'providers' && <ProvidersSettings />}
             {activeTab === 'general' && <GeneralSettings />}
             {activeTab === 'chat' && <ChatSettings />}
+            {activeTab === 'coder' && <CoderSettings />}
             {activeTab === 'memory' && <MemorySettings />}
             {activeTab === 'im' && <ImSettings />}
             {activeTab === 'skills' && <SkillsSettings />}
@@ -1759,6 +1769,298 @@ export const SettingsWindow = memo(function SettingsWindow() {
     </div>
   )
 })
+
+function CoderSettings() {
+  const settings = useStore(s => s.settings)
+  const updateSettings = useStore(s => s.updateSettings)
+  const [status, setStatus] = useState<{ running?: boolean; pid?: number | null; lastError?: string; debugPortReady?: boolean }>({})
+  const [busy, setBusy] = useState(false)
+
+  const language = (settings?.language || 'en') as 'en' | 'zh' | 'ja'
+  const t = useMemo(() => {
+    const dict = {
+      en: {
+        title: 'Coder',
+        desc: 'Configure coder endpoint and transport. After saving, Anima can delegate coding tasks to coder and verify completion.',
+        enabled: 'Enable Coder Delegation',
+        name: 'Name',
+        backend: 'Coder Backend',
+        backendCodex: 'Codex',
+        backendCursor: 'Cursor',
+        backendCustom: 'Custom',
+        backendCustomLabel: 'Custom Backend Name',
+        endpoint: 'Endpoint Type',
+        transport: 'Transport',
+        autoStart: 'Auto Start',
+        command: 'Launch Command',
+        args: 'Launch Args',
+        cwd: 'Working Directory (optional)',
+        remoteDebuggingPort: 'Remote Debugging Port',
+        refresh: 'Refresh',
+        start: 'Start',
+        stop: 'Stop',
+        running: 'Running',
+        stopped: 'Stopped',
+        debugReady: 'Debug Port Ready',
+        debugNotReady: 'Debug Port Not Ready',
+        terminal: 'Terminal',
+        desktop: 'Desktop',
+        acp: 'ACP',
+        cdpbridge: 'CDPBridge'
+      },
+      zh: {
+        title: 'Coder',
+        desc: '配置 coder 的端类型和通信方式。保存后，Anima 可将编码任务委托给 coder，并负责验收完成情况。',
+        enabled: '启用 Coder 委托',
+        name: '名称',
+        backend: 'Coder 底层',
+        backendCodex: 'Codex',
+        backendCursor: 'Cursor',
+        backendCustom: '自定义',
+        backendCustomLabel: '自定义底层名称',
+        endpoint: '端类型',
+        transport: '通信方式',
+        autoStart: '自动启动',
+        command: '启动命令',
+        args: '启动参数',
+        cwd: '工作目录（可选）',
+        remoteDebuggingPort: '远程调试端口',
+        refresh: '刷新状态',
+        start: '启动',
+        stop: '停止',
+        running: '运行中',
+        stopped: '未运行',
+        debugReady: '调试端口可用',
+        debugNotReady: '调试端口不可用',
+        terminal: '终端',
+        desktop: '桌面端',
+        acp: 'ACP',
+        cdpbridge: 'CDPBridge'
+      },
+      ja: {
+        title: 'Coder',
+        desc: 'coder のエンドポイントと通信方式を設定します。保存後、Anima はコーディング作業を coder に委任し、完了検証に集中できます。',
+        enabled: 'Coder 委任を有効化',
+        name: '名前',
+        backend: 'Coder バックエンド',
+        backendCodex: 'Codex',
+        backendCursor: 'Cursor',
+        backendCustom: 'カスタム',
+        backendCustomLabel: 'カスタムバックエンド名',
+        endpoint: 'エンドポイント種別',
+        transport: '通信方式',
+        autoStart: '自動起動',
+        command: '起動コマンド',
+        args: '起動引数',
+        cwd: '作業ディレクトリ（任意）',
+        remoteDebuggingPort: 'リモートデバッグポート',
+        refresh: '状態更新',
+        start: '起動',
+        stop: '停止',
+        running: '起動中',
+        stopped: '停止中',
+        debugReady: 'デバッグポート接続可',
+        debugNotReady: 'デバッグポート未接続',
+        terminal: 'ターミナル',
+        desktop: 'デスクトップ',
+        acp: 'ACP',
+        cdpbridge: 'CDPBridge'
+      }
+    } as const
+    return dict[language] || dict.en
+  }, [language])
+
+  const coder = (settings?.coder || {
+    enabled: false,
+    name: 'Codex',
+    backendKind: 'codex',
+    backendLabel: '',
+    endpointType: 'desktop',
+    transport: 'cdpbridge',
+    autoStart: false,
+    command: '/usr/bin/open',
+    args: ['-a', 'Codex', '--args', '--remote-debugging-port=9222'],
+    cwd: '',
+    env: {},
+    remoteDebuggingPort: 9222
+  }) as any
+
+  const updateCoder = (patch: Record<string, any>) => {
+    const next = { ...coder, ...patch }
+    if (next.transport === 'acp' && (!Array.isArray(next.args) || next.args.length === 0)) {
+      next.args = ['--acp']
+    }
+    if (next.transport === 'cdpbridge' && (!Array.isArray(next.args) || next.args.length === 0)) {
+      next.args = [`--remote-debugging-port=${Number(next.remoteDebuggingPort || 9222)}`]
+    }
+    updateSettings({ coder: next } as any)
+  }
+
+  const refreshStatus = useCallback(async () => {
+    const api = window.anima?.coder
+    if (!api?.status) return
+    try {
+      const res = await api.status()
+      if (res?.ok) {
+        setStatus({
+          running: Boolean(res.running),
+          pid: res.pid ?? null,
+          lastError: String(res.lastError || '').trim(),
+          debugPortReady: Boolean(res.debugPortReady)
+        })
+      }
+    } catch {
+      //
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshStatus()
+    const timer = window.setInterval(() => {
+      void refreshStatus()
+    }, 2000)
+    return () => window.clearInterval(timer)
+  }, [refreshStatus])
+
+  const startCoder = async () => {
+    const api = window.anima?.coder
+    if (!api?.start) return
+    setBusy(true)
+    try {
+      await api.start({ settings: coder })
+      await refreshStatus()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const stopCoder = async () => {
+    const api = window.anima?.coder
+    if (!api?.stop) return
+    setBusy(true)
+    try {
+      await api.stop()
+      await refreshStatus()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const argsText = Array.isArray(coder.args) ? coder.args.join(' ') : ''
+
+  return (
+    <div className="p-6 space-y-6">
+      <Card>
+        <CardContent className="pt-6 space-y-4">
+          <div>
+            <div className="text-[15px] font-semibold">{t.title}</div>
+            <div className="text-[13px] text-muted-foreground mt-1">{t.desc}</div>
+          </div>
+          <div className="flex items-center justify-between rounded-lg border p-3">
+            <div className="text-[13px]">{t.enabled}</div>
+            <Switch checked={Boolean(coder.enabled)} onCheckedChange={(v) => updateCoder({ enabled: Boolean(v) })} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label className="text-[13px]">{t.name}</Label>
+              <Input value={String(coder.name || '')} onChange={(e) => updateCoder({ name: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-[13px]">{t.backend}</Label>
+              <Select
+                value={String(coder.backendKind || 'codex')}
+                onValueChange={(v) => updateCoder({ backendKind: v === 'cursor' ? 'cursor' : v === 'custom' ? 'custom' : 'codex' })}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="codex">{t.backendCodex}</SelectItem>
+                  <SelectItem value="cursor">{t.backendCursor}</SelectItem>
+                  <SelectItem value="custom">{t.backendCustom}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-[13px]">{t.autoStart}</Label>
+              <div className="h-10 rounded-md border px-3 flex items-center justify-end">
+                <Switch checked={Boolean(coder.autoStart)} onCheckedChange={(v) => updateCoder({ autoStart: Boolean(v) })} />
+              </div>
+            </div>
+            {String(coder.backendKind || '') === 'custom' ? (
+              <div className="space-y-2">
+                <Label className="text-[13px]">{t.backendCustomLabel}</Label>
+                <Input value={String(coder.backendLabel || '')} onChange={(e) => updateCoder({ backendLabel: e.target.value })} />
+              </div>
+            ) : null}
+            <div className="space-y-2">
+              <Label className="text-[13px]">{t.endpoint}</Label>
+              <Select value={String(coder.endpointType || 'desktop')} onValueChange={(v) => updateCoder({ endpointType: v === 'terminal' ? 'terminal' : 'desktop' })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="terminal">{t.terminal}</SelectItem>
+                  <SelectItem value="desktop">{t.desktop}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-[13px]">{t.transport}</Label>
+              <Select value={String(coder.transport || 'cdpbridge')} onValueChange={(v) => updateCoder({ transport: v === 'acp' ? 'acp' : 'cdpbridge' })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="acp">{t.acp}</SelectItem>
+                  <SelectItem value="cdpbridge">{t.cdpbridge}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-3">
+            <div className="space-y-2">
+              <Label className="text-[13px]">{t.command}</Label>
+              <Input value={String(coder.command || '')} onChange={(e) => updateCoder({ command: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-[13px]">{t.args}</Label>
+              <Input
+                value={argsText}
+                onChange={(e) => {
+                  const text = String(e.target.value || '')
+                  const parts = text.split(' ').map((x) => x.trim()).filter(Boolean)
+                  updateCoder({ args: parts })
+                }}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-[13px]">{t.cwd}</Label>
+              <Input value={String(coder.cwd || '')} onChange={(e) => updateCoder({ cwd: e.target.value })} />
+            </div>
+            {String(coder.transport || '') === 'cdpbridge' ? (
+              <div className="space-y-2">
+                <Label className="text-[13px]">{t.remoteDebuggingPort}</Label>
+                <Input
+                  type="number"
+                  value={String(coder.remoteDebuggingPort || 9222)}
+                  onChange={(e) => updateCoder({ remoteDebuggingPort: Number(e.target.value || 9222) || 9222 })}
+                />
+              </div>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant={status.running ? 'default' : 'secondary'}>{status.running ? t.running : t.stopped}</Badge>
+            <Badge variant={status.debugPortReady ? 'default' : 'secondary'}>
+              {status.debugPortReady ? t.debugReady : t.debugNotReady}
+            </Badge>
+            {status.pid ? <Badge variant="outline">PID {status.pid}</Badge> : null}
+            {status.lastError ? <div className="text-[12px] text-destructive truncate">{status.lastError}</div> : null}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => void refreshStatus()} disabled={busy}>{t.refresh}</Button>
+            <Button onClick={() => void startCoder()} disabled={busy}>{t.start}</Button>
+            <Button variant="destructive" onClick={() => void stopCoder()} disabled={busy}>{t.stop}</Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
 
 function AboutSettings() {
   const settings = useStore(s => s.settings)

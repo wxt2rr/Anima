@@ -18,8 +18,6 @@ from .db import handle_get_db_export, handle_get_db_path, handle_get_db_status, 
 from .debug import handle_get_debug_config
 from .runs import (
     handle_get_run,
-    handle_post_chat,
-    handle_post_chat_prepare,
     handle_post_run_resume,
     handle_post_runs_non_stream,
 )
@@ -223,13 +221,6 @@ def dispatch(handler: Any, method: str, path: str) -> bool:
         return True
     if m == "GET" and path == "/api/providers/auth/profiles":
         handle_get_provider_auth_profiles(handler)
-        return True
-
-    if m == "POST" and path == "/chat/prepare":
-        handle_post_chat_prepare(handler)
-        return True
-    if m == "POST" and path == "/chat":
-        handle_post_chat(handler)
         return True
 
     if m == "GET" and path == "/voice/models/base_dir":

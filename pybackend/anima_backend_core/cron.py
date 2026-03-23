@@ -10,7 +10,7 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from anima_backend_shared.database import close_db_connection, close_langgraph_db_connection
+from anima_backend_shared.database import close_db_connection, close_runs_db_connection
 from anima_backend_shared.http import json_response, read_body_json
 from anima_backend_shared.settings import config_root
 from anima_backend_shared.util import is_within, norm_abs, now_ms, read_text_file
@@ -307,7 +307,7 @@ def _execute_job_payload(job: Dict[str, Any]) -> Tuple[bool, str, Optional[str]]
             return False, "", "Telegram bot token not configured"
 
         try:
-            from anima_backend_lg.telegram_integration import _tg_send_message
+            from anima_backend_core.telegram_integration import _tg_send_message
 
             _tg_send_message(token, chat_id, text)
             return True, "ok", None
@@ -369,7 +369,7 @@ def _execute_job_payload(job: Dict[str, Any]) -> Tuple[bool, str, Optional[str]]
         )
         body["messages"] = [{"role": "user", "content": prompt}]
 
-    from anima_backend_lg.api.runs import handle_post_runs_non_stream
+    from anima_backend_core.api.runs import handle_post_runs_non_stream
 
     status, resp = handle_post_runs_non_stream(body)
     if int(status) != int(HTTPStatus.OK) or not (isinstance(resp, dict) and resp.get("ok") is True):
@@ -409,7 +409,7 @@ def _execute_job_payload(job: Dict[str, Any]) -> Tuple[bool, str, Optional[str]]
                 token = ""
             if token:
                 try:
-                    from anima_backend_lg.telegram_integration import _tg_send_message
+                    from anima_backend_core.telegram_integration import _tg_send_message
 
                     _tg_send_message(token, chat_id, content or "(empty)", reply_to_message_id=None)
                 except Exception:
@@ -615,7 +615,7 @@ class CronService:
 
             try:
                 close_db_connection()
-                close_langgraph_db_connection()
+                close_runs_db_connection()
             except Exception:
                 pass
 

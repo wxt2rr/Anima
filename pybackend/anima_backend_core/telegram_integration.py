@@ -1337,7 +1337,7 @@ class TelegramPoller:
                     pass
 
                 try:
-                    from anima_backend_lg.api.runs_stream import handle_post_runs_non_stream_via_stream_executor
+                    from anima_backend_core.api.runs_stream import handle_post_runs_non_stream_via_stream_executor
 
                     status, payload = handle_post_runs_non_stream_via_stream_executor(
                         {

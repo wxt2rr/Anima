@@ -321,6 +321,29 @@ export interface Settings {
     agents?: AcpAgent[]
   }
 
+  coder?: {
+    enabled?: boolean
+    name?: string
+    backendKind?: 'codex' | 'cursor' | 'custom'
+    backendLabel?: string
+    endpointType?: 'terminal' | 'desktop'
+    transport?: 'acp' | 'cdpbridge'
+    autoStart?: boolean
+    command?: string
+    args?: string[]
+    cwd?: string
+    env?: Record<string, string>
+    remoteDebuggingPort?: number
+    commandTemplates?: {
+      status?: string
+      send?: string
+      ask?: string
+      read?: string
+      new?: string
+      screenshot?: string
+    }
+  }
+
   im?: {
     provider?: 'telegram'
     telegram?: {
@@ -755,6 +778,82 @@ const normalizeSettingsPayload = (rawSettings: any): any => {
   }
   if (!Array.isArray(rawSettings.commandWhitelist)) {
     rawSettings.commandWhitelist = Array.isArray(rawSettings.commandWhitelistPatterns) ? rawSettings.commandWhitelistPatterns : []
+  }
+
+  if (!rawSettings.coder || typeof rawSettings.coder !== 'object') {
+    rawSettings.coder = {
+      enabled: false,
+      name: 'Codex',
+      backendKind: 'codex',
+      backendLabel: '',
+      endpointType: 'desktop',
+      transport: 'cdpbridge',
+      autoStart: false,
+      command: '/usr/bin/open',
+      args: ['-a', 'Codex', '--args', '--remote-debugging-port=9222'],
+      cwd: '',
+      env: {},
+      remoteDebuggingPort: 9222,
+      commandTemplates: {
+        status: '',
+        send: '',
+        ask: 'codex exec "{prompt}"',
+        read: '',
+        new: 'codex',
+        screenshot: ''
+      }
+    }
+  } else {
+    const c = rawSettings.coder
+    c.enabled = Boolean(c.enabled)
+    c.name = String(c.name || '').trim() || 'Codex'
+    c.backendKind = c.backendKind === 'cursor' ? 'cursor' : c.backendKind === 'custom' ? 'custom' : 'codex'
+    c.backendLabel = String(c.backendLabel || '').trim()
+    c.endpointType = c.endpointType === 'terminal' ? 'terminal' : 'desktop'
+    c.transport = c.transport === 'acp' ? 'acp' : 'cdpbridge'
+    c.autoStart = Boolean(c.autoStart)
+    c.command = String(c.command || '').trim() || '/usr/bin/open'
+    c.args = Array.isArray(c.args) ? c.args.map((x: any) => String(x)) : (c.transport === 'acp' ? ['--acp'] : ['-a', 'Codex', '--args', '--remote-debugging-port=9222'])
+    c.cwd = String(c.cwd || '').trim()
+    c.env = c.env && typeof c.env === 'object' ? c.env : {}
+    const rd = Number(c.remoteDebuggingPort || 9222)
+    c.remoteDebuggingPort = Number.isFinite(rd) && rd > 0 ? rd : 9222
+    if (!c.commandTemplates || typeof c.commandTemplates !== 'object') {
+      c.commandTemplates = {
+        status: '',
+        send: '',
+        ask: 'codex exec "{prompt}"',
+        read: '',
+        new: 'codex',
+        screenshot: ''
+      }
+    } else {
+      const ct = c.commandTemplates
+      ct.status = String(ct.status || '').trim()
+      ct.send = String(ct.send || '').trim()
+      ct.ask = String(ct.ask || '').trim() || 'codex exec "{prompt}"'
+      ct.read = String(ct.read || '').trim()
+      ct.new = String(ct.new || '').trim() || 'codex'
+      ct.screenshot = String(ct.screenshot || '').trim()
+    }
+    if (
+      c.transport === 'cdpbridge' &&
+      c.command === 'codex' &&
+      Array.isArray(c.args) &&
+      c.args.some((x: string) => String(x).includes('--remote-debugging-port'))
+    ) {
+      c.command = '/usr/bin/open'
+      c.args = ['-a', 'Codex', '--args', `--remote-debugging-port=${c.remoteDebuggingPort}`]
+    }
+    if (
+      c.transport === 'cdpbridge' &&
+      c.command === '/usr/bin/open' &&
+      Array.isArray(c.args) &&
+      c.args.length > 0 &&
+      c.args[0] === '-n'
+    ) {
+      c.args = c.args.slice(1)
+    }
   }
   return rawSettings
 }
@@ -1375,6 +1474,14 @@ export const useStore = create<AppState>()(
             configLoaded: true,
             configError: ''
           })
+          try {
+            const coderSettings = (rawSettings as any)?.coder
+            if (coderSettings) {
+              void window.anima?.coder?.configure?.({ settings: coderSettings })
+            }
+          } catch {
+            //
+          }
         } catch (e) {
           if (seq !== loadRemoteConfigSeq) return
           set({
@@ -1604,6 +1711,14 @@ export const useStore = create<AppState>()(
                       .filter((m: any) => Boolean(m.id))
                   : s.voiceModelsInstalled
               }))
+              try {
+                const coderSettings = (rawSettings as any)?.coder
+                if (coderSettings) {
+                  void window.anima?.coder?.configure?.({ settings: coderSettings })
+                }
+              } catch {
+                //
+              }
             }
             bumpSettingsRevision()
           })

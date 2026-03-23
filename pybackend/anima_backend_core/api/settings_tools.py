@@ -37,21 +37,21 @@ def handle_patch_settings(handler: Any) -> None:
             return
         merged = save_settings(body)
         try:
-            from anima_backend_lg.telegram_integration import reconcile_telegram_from_settings
+            from anima_backend_core.telegram_integration import reconcile_telegram_from_settings
 
             if isinstance(merged, dict):
                 reconcile_telegram_from_settings(merged)
         except Exception:
             pass
         try:
-            from anima_backend_lg.cron import reconcile_cron_from_settings
+            from anima_backend_core.cron import reconcile_cron_from_settings
 
             if isinstance(merged, dict):
                 reconcile_cron_from_settings(merged)
         except Exception:
             pass
         try:
-            from anima_backend_lg.runtime.graph import reconcile_openclaw_from_settings
+            from anima_backend_core.runtime.graph import reconcile_openclaw_from_settings
 
             if isinstance(merged, dict):
                 reconcile_openclaw_from_settings(merged)
