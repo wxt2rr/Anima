@@ -28,6 +28,7 @@ import { RightSidebar } from './components/sidebar/RightSidebar'
 import { useUpdateStore } from './store/useUpdateStore'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { SHORTCUTS, isMacLike, matchShortcut, normalizeBinding, type ShortcutId } from '@/lib/shortcuts'
+import { useLeftPaneLayout } from './hooks/useLeftPaneLayout'
 
 type BackendUsage = {
   prompt_tokens?: number
@@ -406,7 +407,6 @@ function AppLoaded(): JSX.Element {
     settings: settings0, 
     providers: providers0,
     voiceModelsInstalled,
-    setSettingsOpen,
     getActiveProvider,
     ui,
     updateComposer,
@@ -428,9 +428,13 @@ function AppLoaded(): JSX.Element {
     return list.some((m: any) => String(m?.id || '').trim() === voiceModelId)
   }, [voiceModelsInstalled, voiceModelId])
 
-  const [leftWidth, setLeftWidth] = useState(288)
+  const { leftWidth, isResizingLeft, startResizingLeft, stopResizingLeft, updateLeftWidthFromClientX } = useLeftPaneLayout({
+    initialWidth: 288,
+    minWidth: 200,
+    maxWidth: 800,
+    dragOffsetPx: 8
+  })
   const [rightWidth, setRightWidth] = useState(600)
-  const [isResizingLeft, setIsResizingLeft] = useState(false)
   const [isResizingRight, setIsResizingRight] = useState(false)
   const [backendBaseUrl, setBackendBaseUrl] = useState('')
   const [summaryOpen, setSummaryOpen] = useState(false)
@@ -709,7 +713,7 @@ function AppLoaded(): JSX.Element {
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (isResizingLeft) {
-        setLeftWidth(Math.max(200, Math.min(800, e.clientX - 8)))
+        updateLeftWidthFromClientX(e.clientX)
       }
       if (isResizingRight) {
         setRightWidth(Math.max(300, Math.min(1200, window.innerWidth - e.clientX - 8)))
@@ -717,7 +721,7 @@ function AppLoaded(): JSX.Element {
     }
 
     const handleMouseUp = () => {
-      setIsResizingLeft(false)
+      stopResizingLeft()
       setIsResizingRight(false)
     }
 
@@ -737,7 +741,7 @@ function AppLoaded(): JSX.Element {
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
     }
-  }, [isResizingLeft, isResizingRight])
+  }, [isResizingLeft, isResizingRight, stopResizingLeft, updateLeftWidthFromClientX])
 
   useEffect(() => {
     void initApp()
@@ -853,16 +857,23 @@ function AppLoaded(): JSX.Element {
   }, [])
 
   const activeProvider = getActiveProvider()
-  const isSettingsWindow = typeof window !== 'undefined' && window.location.hash.startsWith('#/settings')
+  const [routeHash, setRouteHash] = useState(() => (typeof window !== 'undefined' ? window.location.hash || '' : ''))
+  const isSettingsWindow = routeHash.startsWith('#/settings')
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const onHashChange = () => setRouteHash(window.location.hash || '')
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
 
   const openSettings = useCallback(() => {
-    const anima = window.anima
-    if (anima?.window?.openSettings) {
-      void anima.window.openSettings()
-      return
+    if (typeof window === 'undefined') return
+    if (!window.location.hash.startsWith('#/settings')) {
+      window.location.hash = '/settings'
+      setRouteHash(window.location.hash || '#/settings')
     }
-    setSettingsOpen(true)
-  }, [setSettingsOpen])
+  }, [])
 
   const downsampleToPcm16le = (input: Float32Array, inputRate: number, targetRate: number) => {
     const inRate = Number(inputRate) || 0
@@ -1175,12 +1186,10 @@ function AppLoaded(): JSX.Element {
       }
 
       const openSettingsLocal = () => {
-        const anima = window.anima
-        if (anima?.window?.openSettings) {
-          void anima.window.openSettings()
-          return
+        if (!window.location.hash.startsWith('#/settings')) {
+          window.location.hash = '/settings'
+          setRouteHash(window.location.hash || '#/settings')
         }
-        useStore.getState().setSettingsOpen(true)
       }
 
       if (handle('openSettings', () => openSettingsLocal())) return
@@ -3298,6 +3307,7 @@ function AppLoaded(): JSX.Element {
   return (
     <div
       className="h-screen w-full overflow-hidden bg-white text-foreground transition-colors duration-300 relative"
+      style={{ ['--app-left-pane-width' as any]: `${leftWidth}px` }}
       onDragEnter={handleRootDragEnter}
       onDragOver={handleRootDragOver}
       onDragLeave={handleRootDragLeave}
@@ -3311,13 +3321,6 @@ function AppLoaded(): JSX.Element {
         </div>
       ) : null}
       <div className="draggable absolute inset-x-0 top-0 h-2" />
-      {!ui.sidebarCollapsed && (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute left-0 top-0 bottom-0 rounded-l-[20px] bg-[#EBE9EA]"
-          style={{ width: `${leftWidth + 12}px` }}
-        />
-      )}
       <div className="flex h-full w-full overflow-hidden gap-0">
         <SettingsDialog />
         <UpdateDialog />
@@ -3516,14 +3519,15 @@ function AppLoaded(): JSX.Element {
           <SettingsWindow />
         ) : (
           <>
-            <div className="relative h-full shrink-0 flex">
-              <ChatHistoryPanel onOpenSettings={openSettings} width={leftWidth} />
-              <div
-                className={`absolute right-0 top-0 bottom-0 w-1.5 translate-x-full cursor-col-resize hover:bg-primary/20 active:bg-primary/40 transition-colors z-50 ${ui.sidebarCollapsed ? 'hidden' : ''}`}
-                onMouseDown={(e) => { e.preventDefault(); setIsResizingLeft(true); }}
-              />
-            </div>
-            <div className="flex-1 flex flex-col h-full overflow-hidden relative rounded-l-xl bg-white">
+            <ChatHistoryPanel
+              onOpenSettings={openSettings}
+              width={leftWidth}
+              onResizeStart={(e) => {
+                e.preventDefault()
+                startResizingLeft()
+              }}
+            />
+            <div className="flex-1 flex flex-col h-full overflow-hidden relative rounded-l-[var(--app-shell-content-radius)] bg-[var(--app-shell-content-bg)]">
               <div className="flex h-full min-w-0 flex-col overflow-hidden pt-2 pr-2 pb-2">
               <header className="h-[52px] shrink-0 draggable relative z-30">
               <div className="absolute left-4 top-[4px] flex items-center">

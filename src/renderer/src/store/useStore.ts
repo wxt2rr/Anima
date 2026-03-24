@@ -343,6 +343,30 @@ export interface Settings {
       screenshot?: string
     }
   }
+  coderProfiles?: Array<{
+    id: string
+    enabled?: boolean
+    name?: string
+    backendKind?: 'codex' | 'cursor' | 'custom'
+    backendLabel?: string
+    endpointType?: 'terminal' | 'desktop'
+    transport?: 'acp' | 'cdpbridge'
+    autoStart?: boolean
+    command?: string
+    args?: string[]
+    cwd?: string
+    env?: Record<string, string>
+    remoteDebuggingPort?: number
+    commandTemplates?: {
+      status?: string
+      send?: string
+      ask?: string
+      read?: string
+      new?: string
+      screenshot?: string
+    }
+  }>
+  activeCoderProfileId?: string
 
   im?: {
     provider?: 'telegram'
@@ -780,31 +804,8 @@ const normalizeSettingsPayload = (rawSettings: any): any => {
     rawSettings.commandWhitelist = Array.isArray(rawSettings.commandWhitelistPatterns) ? rawSettings.commandWhitelistPatterns : []
   }
 
-  if (!rawSettings.coder || typeof rawSettings.coder !== 'object') {
-    rawSettings.coder = {
-      enabled: false,
-      name: 'Codex',
-      backendKind: 'codex',
-      backendLabel: '',
-      endpointType: 'desktop',
-      transport: 'cdpbridge',
-      autoStart: false,
-      command: '/usr/bin/open',
-      args: ['-a', 'Codex', '--args', '--remote-debugging-port=9222'],
-      cwd: '',
-      env: {},
-      remoteDebuggingPort: 9222,
-      commandTemplates: {
-        status: '',
-        send: '',
-        ask: 'codex exec "{prompt}"',
-        read: '',
-        new: 'codex',
-        screenshot: ''
-      }
-    }
-  } else {
-    const c = rawSettings.coder
+  const normalizeCoderProfile = (raw: any): any => {
+    const c = raw && typeof raw === 'object' ? raw : {}
     c.enabled = Boolean(c.enabled)
     c.name = String(c.name || '').trim() || 'Codex'
     c.backendKind = c.backendKind === 'cursor' ? 'cursor' : c.backendKind === 'custom' ? 'custom' : 'codex'
@@ -854,7 +855,56 @@ const normalizeSettingsPayload = (rawSettings: any): any => {
     ) {
       c.args = c.args.slice(1)
     }
+    return c
   }
+
+  if (!rawSettings.coder || typeof rawSettings.coder !== 'object') {
+    rawSettings.coder = normalizeCoderProfile({
+      enabled: false,
+      name: 'Codex',
+      backendKind: 'codex',
+      backendLabel: '',
+      endpointType: 'desktop',
+      transport: 'cdpbridge',
+      autoStart: false,
+      command: '/usr/bin/open',
+      args: ['-a', 'Codex', '--args', '--remote-debugging-port=9222'],
+      cwd: '',
+      env: {},
+      remoteDebuggingPort: 9222,
+      commandTemplates: {
+        status: '',
+        send: '',
+        ask: 'codex exec "{prompt}"',
+        read: '',
+        new: 'codex',
+        screenshot: ''
+      }
+    })
+  } else {
+    rawSettings.coder = normalizeCoderProfile(rawSettings.coder)
+  }
+
+  const profileList = Array.isArray(rawSettings.coderProfiles) ? rawSettings.coderProfiles : []
+  const normalizedProfiles = profileList
+    .map((profile: any, index: number) => {
+      const normalized = normalizeCoderProfile(profile)
+      normalized.id = String(profile?.id || '').trim() || `coder-${index + 1}`
+      return normalized
+    })
+    .filter((profile: any) => String(profile.id || '').trim())
+  if (normalizedProfiles.length === 0) {
+    normalizedProfiles.push({
+      id: 'codex-default',
+      ...normalizeCoderProfile(rawSettings.coder)
+    })
+  }
+  const activeIdRaw = String(rawSettings.activeCoderProfileId || '').trim()
+  const hasActive = normalizedProfiles.some((profile: any) => profile.id === activeIdRaw)
+  rawSettings.activeCoderProfileId = hasActive ? activeIdRaw : String(normalizedProfiles[0].id)
+  rawSettings.coderProfiles = normalizedProfiles
+  const activeProfile = normalizedProfiles.find((profile: any) => profile.id === rawSettings.activeCoderProfileId) || normalizedProfiles[0]
+  rawSettings.coder = normalizeCoderProfile(activeProfile)
   return rawSettings
 }
 

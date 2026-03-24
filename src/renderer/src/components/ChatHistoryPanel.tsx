@@ -1,13 +1,13 @@
 import { Search, Trash2, MessageSquarePlus, PanelLeftClose, MoreHorizontal, Settings, Folder, FolderOpen, FolderPlus, ChevronDown, ChevronRight, Star, Pencil, Clock3, Sparkles } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, memo } from 'react'
+import { useEffect, useMemo, useRef, useState, memo, type MouseEvent } from 'react'
 import { useStore } from '../store/useStore'
 import { useUpdateStore } from '../store/useUpdateStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Card } from '@/components/ui/card'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { AppShellLeftPane } from '@/components/layout/AppShellLeftPane'
 import {
   Dialog,
   DialogContent,
@@ -17,7 +17,15 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 
-export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings, width = 288 }: { onOpenSettings?: () => void, width?: number }) {
+export const ChatHistoryPanel = memo(function ChatHistoryPanel({
+  onOpenSettings,
+  width = 288,
+  onResizeStart
+}: {
+  onOpenSettings?: () => void
+  width?: number
+  onResizeStart?: (e: MouseEvent<HTMLDivElement>) => void
+}) {
   const {
     chats,
     activeChatId,
@@ -209,20 +217,28 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
   }, [updateState?.status])
 
   return (
-    <Card
-      style={{ width: ui.sidebarCollapsed ? 0 : width }}
-      className={`flex flex-col no-drag transition-all duration-300 ease-in-out relative overflow-hidden rounded-none border-0 shadow-none bg-[#EBE9EA] ${
-        ui.sidebarCollapsed ? 'opacity-0 p-0 m-0 border-0' : ''
-      }`}
+    <AppShellLeftPane
+      width={width}
+      collapsed={ui.sidebarCollapsed}
+      bleedPx={12}
+      showResizeHandle
+      resizeInteractive={!ui.sidebarCollapsed}
+      onResizeStart={onResizeStart}
+      className="rounded-none"
     >
       <TooltipProvider delayDuration={300}>
       {/* Header Area */}
-      <div className="h-[44px] flex items-center justify-between px-4 shrink-0 draggable">
-        <div className="w-[80px] h-full" />
-        <div className="flex items-center gap-2 no-drag">
+      <div className="h-[var(--app-left-pane-header-height)] flex items-center justify-between px-[var(--app-left-pane-pad-x)] shrink-0 draggable">
+        <div className="w-[var(--app-left-pane-leading-safe)] h-full" />
+        <div className="flex items-center gap-[var(--app-left-pane-header-btn-gap)] no-drag">
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" onClick={toggleSidebarCollapsed} className="h-7 w-7 rounded-md">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={toggleSidebarCollapsed}
+                className="h-[var(--app-left-pane-header-btn-size)] w-[var(--app-left-pane-header-btn-size)] rounded-[var(--app-left-pane-header-btn-radius)]"
+              >
                 <PanelLeftClose className="w-4 h-4" />
               </Button>
             </TooltipTrigger>
@@ -239,7 +255,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
         </div>
       </div>
 
-      <div className="px-3 pb-2 space-y-0.5">
+      <div className="px-[var(--app-left-pane-pad-x)] pb-2 space-y-0.5">
         <button
           type="button"
           className="w-full h-8 px-2.5 rounded-md flex items-center gap-2 text-[13px] text-foreground/85 hover:bg-black/5 transition-colors text-left"
@@ -268,11 +284,11 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
           <span>技能</span>
         </button>
       </div>
-      <div className="mx-3 mb-1 h-px bg-black/5" />
+      <div className="mx-[var(--app-left-pane-pad-x)] mb-1 h-px bg-black/5" />
 
       {/* Search Bar */}
       {!ui.sidebarCollapsed && ui.sidebarSearchOpen && (
-        <div className="px-3 pb-2 animate-in slide-in-from-top-2 duration-200">
+        <div className="px-[var(--app-left-pane-pad-x)] pb-2 animate-in slide-in-from-top-2 duration-200">
            <div className="relative group">
             <Search className="w-3.5 h-3.5 text-muted-foreground/70 absolute left-2.5 top-1/2 -translate-y-1/2 z-10" />
             <Input
@@ -287,7 +303,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
       )}
 
       {/* Chat List */}
-      <div className="px-3 pb-1 pt-1 flex items-center justify-between text-[12px] text-muted-foreground/90">
+      <div className="px-[var(--app-left-pane-pad-x)] pb-1 pt-1 flex items-center justify-between text-[12px] text-muted-foreground/90">
         <span className="tracking-wide">线程</span>
         <div className="flex items-center gap-1">
           <button
@@ -309,7 +325,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 pb-2 space-y-1 scrollbar-none">
+      <div className="flex-1 overflow-y-auto px-[var(--app-left-pane-pad-x)] pb-2 space-y-1 scrollbar-none">
         {projects.length === 0 ? (
           <div className="px-2 py-10 text-center space-y-3">
             <div className="text-sm font-medium text-foreground">{t.emptyProjects}</div>
@@ -570,7 +586,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
 
       {/* Footer */}
       {!ui.sidebarCollapsed && (
-        <div className="p-3 mt-auto">
+        <div className="p-[var(--app-left-pane-pad-x)] mt-auto">
           <button
             className="w-full h-8 px-2.5 rounded-md flex items-center gap-2 text-[13px] text-foreground/85 hover:bg-black/5 transition-colors text-left"
             onClick={() => onOpenSettings?.()}
@@ -581,6 +597,6 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({ onOpenSettings,
         </div>
       )}
       </TooltipProvider>
-    </Card>
+    </AppShellLeftPane>
   )
 })

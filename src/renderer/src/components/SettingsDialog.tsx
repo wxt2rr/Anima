@@ -1,7 +1,7 @@
 import { 
   Settings, MessageSquare, Database, Globe, 
   Cpu, Search, Plus, Trash2, CheckCircle2, XCircle, RefreshCw,
-  Copy, ChevronDown, ChevronRight, Eye, EyeOff, ExternalLink, Wand2, FolderOpen, Sparkles, Mic, Info, Keyboard, X
+  Copy, ChevronDown, ChevronRight, Eye, EyeOff, ExternalLink, Wand2, FolderOpen, Sparkles, Mic, Info, Keyboard, X, ArrowLeft
 } from 'lucide-react'
 import { resolveBackendBaseUrl, useStore, type Provider, type ProviderModel, type VoiceModelEntry } from '../store/useStore'
 import { THEMES, ThemeColor } from '../lib/themes'
@@ -20,6 +20,7 @@ import { Slider } from '@/components/ui/slider'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { UpdateDialog } from './UpdateDialog'
 import { useUpdateStore } from '../store/useUpdateStore'
+import { AppShellLeftPane } from '@/components/layout/AppShellLeftPane'
 
 const EMPTY_PROVIDERS: Provider[] = []
 
@@ -1458,21 +1459,30 @@ export const SettingsDialog = memo(function SettingsDialog() {
     { id: 'shortcuts', label: t.tabs.shortcuts, icon: Keyboard },
     { id: 'about', label: t.tabs.about, icon: Info },
   ]
+  const isDenseLayoutTab = activeTab === 'providers' || activeTab === 'coder'
+  const renderActiveTab = () => {
+    if (activeTab === 'providers') return <ProvidersSettings />
+    if (activeTab === 'general') return <GeneralSettings />
+    if (activeTab === 'chat') return <ChatSettings />
+    if (activeTab === 'coder') return <CoderSettings />
+    if (activeTab === 'im') return <ImSettings />
+    if (activeTab === 'skills') return <SkillsSettings />
+    if (activeTab === 'network') return <NetworkSettings />
+    if (activeTab === 'data') return <DataSettings />
+    if (activeTab === 'voice') return <VoiceSettings t={t} />
+    if (activeTab === 'shortcuts') return <ShortcutsSettings />
+    if (activeTab === 'about') return <AboutSettings />
+    return null
+  }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="flex h-[720px] w-[1080px] overflow-hidden rounded-xl bg-background border border-border shadow-2xl animate-in fade-in zoom-in-95 duration-200 font-sans text-[13px]">
-        
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+      <div className="relative flex h-[min(88vh,900px)] w-[min(94vw,1280px)] overflow-hidden rounded-2xl border border-border/70 bg-background shadow-2xl animate-in fade-in zoom-in-95 duration-200 font-sans text-[13px]">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_8%,hsl(var(--primary)/0.08),transparent_34%),radial-gradient(circle_at_90%_100%,hsl(var(--foreground)/0.05),transparent_42%)]" />
+
         {/* Sidebar */}
-        <div className="w-60 border-r border-border bg-white flex flex-col py-6">
-          <div className="px-6 mb-6">
-             <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-[#FF5F57]" />
-                <div className="w-3 h-3 rounded-full bg-[#FEBC2E]" />
-                <div className="w-3 h-3 rounded-full bg-[#28C840]" />
-             </div>
-          </div>
-          <nav className="flex-1 px-3 space-y-1">
+        <AppShellLeftPane showResizeHandle={false} className="z-10">
+          <nav className="flex-1 px-[var(--app-left-pane-pad-x)] py-5 space-y-1">
             {tabs.map((tab) => {
               const Icon = tab.icon
               return (
@@ -1492,33 +1502,29 @@ export const SettingsDialog = memo(function SettingsDialog() {
               )
             })}
           </nav>
-        </div>
+        </AppShellLeftPane>
 
         {/* Content Area */}
-        <div className="flex-1 flex flex-col bg-background">
-           {activeTab !== 'providers' && (
-              <div className="flex items-center justify-between p-6 border-b border-border bg-white">
-                <h2 className="font-semibold text-lg">
-                  {tabs.find(t => t.id === activeTab)?.label}
-                </h2>
-              </div>
-           )}
+        <div className="relative z-10 flex-1 flex flex-col bg-transparent">
+           <div className="flex items-center justify-between px-7 py-5 border-b border-border/80 bg-card/50 backdrop-blur">
+             <h2 className="font-semibold text-lg tracking-tight">
+               {tabs.find(t => t.id === activeTab)?.label}
+             </h2>
+           </div>
           
           <div className="flex-1 overflow-hidden relative">
-            {activeTab === 'providers' && <ProvidersSettings />}
-            {activeTab === 'general' && <GeneralSettings />}
-            {activeTab === 'chat' && <ChatSettings />}
-            {activeTab === 'coder' && <CoderSettings />}
-            {activeTab === 'im' && <ImSettings />}
-            {activeTab === 'skills' && <SkillsSettings />}
-            {activeTab === 'network' && <NetworkSettings />}
-            {activeTab === 'data' && <DataSettings />}
-            {activeTab === 'voice' && <VoiceSettings t={t} />}
-            {activeTab === 'shortcuts' && <ShortcutsSettings />}
-            {activeTab === 'about' && <AboutSettings />}
+            {isDenseLayoutTab ? (
+              renderActiveTab()
+            ) : (
+              <div className="h-full overflow-y-auto custom-scrollbar">
+                <div className="mx-auto w-full max-w-[880px]">
+                  {renderActiveTab()}
+                </div>
+              </div>
+            )}
           </div>
           
-          <div className="h-16 px-8 border-t border-border bg-background flex justify-between items-center text-[13px] text-muted-foreground">
+          <div className="h-16 px-7 border-t border-border/80 bg-card/40 backdrop-blur flex justify-between items-center text-[13px] text-muted-foreground">
              <span>{t.savedHint}</span>
              <div className="flex items-center gap-3">
                <Button 
@@ -1563,6 +1569,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           about: 'About'
         },
         savedHint: 'All changes are saved automatically.',
+        backToApp: 'Back',
         footer: { close: 'Close', save: 'Save' },
         voice: {
           title: 'Voice',
@@ -1595,6 +1602,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           about: '关于'
         },
         savedHint: '所有更改会自动保存。',
+        backToApp: '返回',
         footer: { close: '关闭', save: '保存' },
         voice: {
           title: '语音',
@@ -1627,6 +1635,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           about: '情報'
         },
         savedHint: '変更は自動的に保存されます。',
+        backToApp: '戻る',
         footer: { close: '閉じる', save: '保存' },
         voice: {
           title: '音声',
@@ -1693,18 +1702,58 @@ export const SettingsWindow = memo(function SettingsWindow() {
     { id: 'shortcuts', label: t.tabs.shortcuts, icon: Keyboard },
     { id: 'about', label: t.tabs.about, icon: Info }
   ]
+  const isDenseLayoutTab = activeTab === 'providers' || activeTab === 'coder'
+  const renderActiveTab = () => {
+    if (activeTab === 'providers') return <ProvidersSettings />
+    if (activeTab === 'general') return <GeneralSettings />
+    if (activeTab === 'chat') return <ChatSettings />
+    if (activeTab === 'coder') return <CoderSettings />
+    if (activeTab === 'memory') return <MemorySettings />
+    if (activeTab === 'im') return <ImSettings />
+    if (activeTab === 'skills') return <SkillsSettings />
+    if (activeTab === 'network') return <NetworkSettings />
+    if (activeTab === 'data') return <DataSettings />
+    if (activeTab === 'voice') return <VoiceSettings t={t} />
+    if (activeTab === 'shortcuts') return <ShortcutsSettings />
+    if (activeTab === 'about') return <AboutSettings />
+    return null
+  }
 
-  const onClose = () => window.close()
+  const onClose = () => {
+    if (typeof window !== 'undefined' && window.location.hash.startsWith('#/settings')) {
+      window.location.hash = ''
+      return
+    }
+    window.close()
+  }
 
   return (
-    <div className="flex h-full w-full bg-white text-foreground transition-colors duration-300 overflow-hidden gap-0 font-sans text-[13px] relative">
+    <div className="settings-font-unified flex h-full w-full bg-background text-foreground transition-colors duration-300 overflow-hidden gap-0 font-sans text-[13px] relative">
       <div className="draggable absolute inset-x-0 top-0 h-3" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_10%_6%,hsl(var(--primary)/0.08),transparent_35%),radial-gradient(circle_at_88%_100%,hsl(var(--foreground)/0.05),transparent_45%)]" />
       <UpdateDialog />
-      <div className="w-64 bg-white rounded-xl border border-border shadow-sm flex flex-col overflow-hidden shrink-0">
-        <div className="h-[52px] flex items-center shrink-0 draggable select-none pl-[80px]">
+      <AppShellLeftPane bleedPx={12} showResizeHandle resizeInteractive={false} className="z-10">
+        <div className="h-[var(--app-left-pane-header-height)] shrink-0 draggable select-none pr-[var(--app-left-pane-pad-x)] relative">
+          <div
+            className="absolute left-[var(--app-left-pane-leading-safe)] flex items-center no-drag"
+            style={{
+              top: 'var(--app-left-pane-traffic-row-top)',
+              height: 'var(--app-left-pane-traffic-row-height)'
+            }}
+          >
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-[var(--app-left-pane-header-btn-radius)] px-1 text-[13px] font-medium leading-[14px] text-muted-foreground/90 transition-colors hover:bg-background/55 hover:text-foreground"
+              style={{ height: 'var(--app-left-pane-traffic-row-height)' }}
+              onClick={onClose}
+            >
+              <ArrowLeft className="h-3 w-3 shrink-0" />
+              <span className="block leading-[14px]">{t.backToApp}</span>
+            </button>
+          </div>
         </div>
 
-        <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto custom-scrollbar">
+        <nav className="flex-1 px-[var(--app-left-pane-pad-x)] py-[var(--app-left-pane-pad-x)] space-y-1 overflow-y-auto custom-scrollbar">
           {tabs.map((tab) => {
             const Icon = tab.icon
             return (
@@ -1724,32 +1773,27 @@ export const SettingsWindow = memo(function SettingsWindow() {
             )
           })}
         </nav>
-      </div>
+      </AppShellLeftPane>
 
-      <div className="flex-1 bg-white rounded-xl flex flex-col overflow-hidden min-w-0 pt-5">
-        <div className="flex-1 overflow-y-auto relative no-drag bg-white custom-scrollbar">
-          <div className="max-w-[760px] mx-auto w-full px-6 pt-0 pb-1">
-            <h2 className="font-semibold text-lg cursor-default">
-              {tabs.find((t) => t.id === activeTab)?.label}
-            </h2>
-          </div>
-          <div className="max-w-[760px] mx-auto w-full">
-            {activeTab === 'providers' && <ProvidersSettings />}
-            {activeTab === 'general' && <GeneralSettings />}
-            {activeTab === 'chat' && <ChatSettings />}
-            {activeTab === 'coder' && <CoderSettings />}
-            {activeTab === 'memory' && <MemorySettings />}
-            {activeTab === 'im' && <ImSettings />}
-            {activeTab === 'skills' && <SkillsSettings />}
-            {activeTab === 'network' && <NetworkSettings />}
-            {activeTab === 'data' && <DataSettings />}
-            {activeTab === 'voice' && <VoiceSettings t={t} />}
-            {activeTab === 'shortcuts' && <ShortcutsSettings />}
-            {activeTab === 'about' && <AboutSettings />}
-          </div>
+      <div className="relative z-10 flex-1 rounded-l-[var(--app-shell-content-radius)] bg-[var(--app-shell-content-bg)] flex flex-col h-full overflow-hidden min-w-0">
+        <div className="px-7 py-5 border-b border-border/80 bg-card/50 backdrop-blur">
+          <h2 className="font-semibold text-lg tracking-tight cursor-default">
+            {tabs.find((t) => t.id === activeTab)?.label}
+          </h2>
         </div>
+        {isDenseLayoutTab ? (
+          <div className="flex-1 overflow-hidden relative no-drag bg-transparent">
+            {renderActiveTab()}
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto relative no-drag bg-transparent custom-scrollbar">
+            <div className="max-w-[880px] mx-auto w-full">
+              {renderActiveTab()}
+            </div>
+          </div>
+        )}
 
-        <div className="h-14 px-6 bg-white flex justify-between items-center text-[13px] text-muted-foreground shrink-0">
+        <div className="h-14 px-6 border-t border-border/80 bg-card/30 backdrop-blur flex justify-between items-center text-[13px] text-muted-foreground shrink-0">
           <span>{t.savedHint}</span>
           <div className="flex items-center gap-3">
             <Button
@@ -1807,6 +1851,18 @@ function CoderSettings() {
         desktop: 'Desktop',
         acp: 'ACP',
         cdpbridge: 'CDPBridge'
+        ,
+        profileList: 'Coders',
+        addProfile: 'Add Coder',
+        duplicateProfile: 'Duplicate',
+        deleteProfile: 'Delete',
+        commandTemplates: 'Command Templates',
+        cmdStatus: 'status',
+        cmdSend: 'send',
+        cmdAsk: 'ask',
+        cmdRead: 'read',
+        cmdNew: 'new',
+        cmdScreenshot: 'screenshot'
       },
       zh: {
         title: 'Coder',
@@ -1835,7 +1891,18 @@ function CoderSettings() {
         terminal: '终端',
         desktop: '桌面端',
         acp: 'ACP',
-        cdpbridge: 'CDPBridge'
+        cdpbridge: 'CDPBridge',
+        profileList: 'Coders',
+        addProfile: '新增 Coder',
+        duplicateProfile: '复制',
+        deleteProfile: '删除',
+        commandTemplates: '命令模板',
+        cmdStatus: 'status',
+        cmdSend: 'send',
+        cmdAsk: 'ask',
+        cmdRead: 'read',
+        cmdNew: 'new',
+        cmdScreenshot: 'screenshot'
       },
       ja: {
         title: 'Coder',
@@ -1864,13 +1931,24 @@ function CoderSettings() {
         terminal: 'ターミナル',
         desktop: 'デスクトップ',
         acp: 'ACP',
-        cdpbridge: 'CDPBridge'
+        cdpbridge: 'CDPBridge',
+        profileList: 'Coders',
+        addProfile: 'Coderを追加',
+        duplicateProfile: '複製',
+        deleteProfile: '削除',
+        commandTemplates: 'コマンドテンプレート',
+        cmdStatus: 'status',
+        cmdSend: 'send',
+        cmdAsk: 'ask',
+        cmdRead: 'read',
+        cmdNew: 'new',
+        cmdScreenshot: 'screenshot'
       }
     } as const
     return dict[language] || dict.en
   }, [language])
 
-  const coder = (settings?.coder || {
+  const defaultCoder = {
     enabled: false,
     name: 'Codex',
     backendKind: 'codex',
@@ -1882,19 +1960,138 @@ function CoderSettings() {
     args: ['-a', 'Codex', '--args', '--remote-debugging-port=9222'],
     cwd: '',
     env: {},
-    remoteDebuggingPort: 9222
-  }) as any
+    remoteDebuggingPort: 9222,
+    commandTemplates: {
+      status: '',
+      send: '',
+      ask: 'codex exec "{prompt}"',
+      read: '',
+      new: 'codex',
+      screenshot: ''
+    }
+  } as any
 
-  const updateCoder = (patch: Record<string, any>) => {
-    const next = { ...coder, ...patch }
+  const normalizeCoder = useCallback((raw: any) => {
+    const next = { ...defaultCoder, ...(raw && typeof raw === 'object' ? raw : {}) }
+    next.name = String(next.name || '').trim() || 'Codex'
+    next.backendKind = next.backendKind === 'cursor' ? 'cursor' : next.backendKind === 'custom' ? 'custom' : 'codex'
+    next.backendLabel = String(next.backendLabel || '').trim()
+    next.endpointType = next.endpointType === 'terminal' ? 'terminal' : 'desktop'
+    next.transport = next.transport === 'acp' ? 'acp' : 'cdpbridge'
+    next.command = String(next.command || '').trim() || '/usr/bin/open'
+    next.cwd = String(next.cwd || '').trim()
+    next.env = next.env && typeof next.env === 'object' ? next.env : {}
+    const rd = Number(next.remoteDebuggingPort || 9222)
+    next.remoteDebuggingPort = Number.isFinite(rd) && rd > 0 ? rd : 9222
+    next.commandTemplates = {
+      status: String(next.commandTemplates?.status || '').trim(),
+      send: String(next.commandTemplates?.send || '').trim(),
+      ask: String(next.commandTemplates?.ask || '').trim() || 'codex exec "{prompt}"',
+      read: String(next.commandTemplates?.read || '').trim(),
+      new: String(next.commandTemplates?.new || '').trim() || 'codex',
+      screenshot: String(next.commandTemplates?.screenshot || '').trim()
+    }
+    next.args = Array.isArray(next.args)
+      ? next.args.map((x: any) => String(x))
+      : (next.transport === 'acp' ? ['--acp'] : ['-a', 'Codex', '--args', `--remote-debugging-port=${next.remoteDebuggingPort}`])
     if (next.transport === 'acp' && (!Array.isArray(next.args) || next.args.length === 0)) {
       next.args = ['--acp']
     }
     if (next.transport === 'cdpbridge' && (!Array.isArray(next.args) || next.args.length === 0)) {
-      next.args = [`--remote-debugging-port=${Number(next.remoteDebuggingPort || 9222)}`]
+      next.args = ['-a', 'Codex', '--args', `--remote-debugging-port=${Number(next.remoteDebuggingPort || 9222)}`]
     }
-    updateSettings({ coder: next } as any)
-  }
+    if (
+      next.transport === 'cdpbridge' &&
+      next.command === 'codex' &&
+      next.args.some((x: string) => String(x).includes('--remote-debugging-port'))
+    ) {
+      next.command = '/usr/bin/open'
+      next.args = ['-a', 'Codex', '--args', `--remote-debugging-port=${next.remoteDebuggingPort}`]
+    }
+    return next
+  }, [])
+
+  const rawProfiles = Array.isArray((settings as any)?.coderProfiles) ? (settings as any).coderProfiles : []
+  const profiles = useMemo(() => {
+    const seed = rawProfiles.length > 0 ? rawProfiles : [{ id: 'codex-default', ...(settings?.coder || defaultCoder) }]
+    return seed
+      .map((profile: any, index: number) => {
+        const normalized = normalizeCoder(profile)
+        normalized.id = String(profile?.id || '').trim() || `coder-${index + 1}`
+        return normalized
+      })
+      .filter((profile: any) => String(profile.id || '').trim())
+  }, [defaultCoder, normalizeCoder, rawProfiles, settings?.coder])
+  const activeId = String((settings as any)?.activeCoderProfileId || '').trim() || String(profiles[0]?.id || '')
+  const activeProfile = profiles.find((profile: any) => profile.id === activeId) || profiles[0]
+
+  const persistProfiles = useCallback((nextProfilesRaw: any[], nextActiveIdRaw?: string) => {
+    const nextProfiles = nextProfilesRaw
+      .map((profile: any, index: number) => {
+        const normalized = normalizeCoder(profile)
+        normalized.id = String(profile?.id || '').trim() || `coder-${index + 1}`
+        return normalized
+      })
+      .filter((profile: any) => String(profile.id || '').trim())
+    if (nextProfiles.length === 0) return
+    const targetId = String(nextActiveIdRaw || '').trim()
+    const active = nextProfiles.find((profile: any) => profile.id === targetId) || nextProfiles[0]
+    updateSettings({
+      coderProfiles: nextProfiles,
+      activeCoderProfileId: String(active.id),
+      coder: normalizeCoder(active)
+    } as any)
+  }, [normalizeCoder, updateSettings])
+
+  const selectProfile = useCallback((id: string) => {
+    persistProfiles(profiles, id)
+  }, [persistProfiles, profiles])
+
+  const updateActiveProfile = useCallback((patch: Record<string, any>) => {
+    if (!activeProfile) return
+    const nextProfiles = profiles.map((profile: any) => {
+      if (profile.id !== activeProfile.id) return profile
+      return normalizeCoder({ ...profile, ...patch })
+    })
+    persistProfiles(nextProfiles, activeProfile.id)
+  }, [activeProfile, normalizeCoder, persistProfiles, profiles])
+
+  const addProfile = useCallback(() => {
+    const base = normalizeCoder(activeProfile || defaultCoder)
+    const baseName = String(base.name || 'Coder').trim() || 'Coder'
+    const exists = new Set(profiles.map((profile: any) => String(profile.name || '').trim().toLowerCase()))
+    let index = 2
+    let nextName = `${baseName} ${index}`
+    while (exists.has(nextName.toLowerCase())) {
+      index += 1
+      nextName = `${baseName} ${index}`
+    }
+    const id = `coder-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+    const nextProfile = normalizeCoder({ ...base, id, name: nextName })
+    persistProfiles([...profiles, nextProfile], id)
+  }, [activeProfile, defaultCoder, normalizeCoder, persistProfiles, profiles])
+
+  const duplicateProfile = useCallback(() => {
+    if (!activeProfile) return
+    const baseName = String(activeProfile.name || 'Coder').trim() || 'Coder'
+    const exists = new Set(profiles.map((profile: any) => String(profile.name || '').trim().toLowerCase()))
+    let index = 2
+    let nextName = `${baseName} ${index}`
+    while (exists.has(nextName.toLowerCase())) {
+      index += 1
+      nextName = `${baseName} ${index}`
+    }
+    const id = `coder-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+    const nextProfile = normalizeCoder({ ...activeProfile, id, name: nextName })
+    persistProfiles([...profiles, nextProfile], id)
+  }, [activeProfile, normalizeCoder, persistProfiles, profiles])
+
+  const deleteProfile = useCallback(() => {
+    if (!activeProfile || profiles.length <= 1) return
+    const nextProfiles = profiles.filter((profile: any) => profile.id !== activeProfile.id)
+    const nextActive = nextProfiles[0]?.id
+    persistProfiles(nextProfiles, nextActive)
+  }, [activeProfile, persistProfiles, profiles])
 
   const refreshStatus = useCallback(async () => {
     const api = window.anima?.coder
@@ -1925,9 +2122,10 @@ function CoderSettings() {
   const startCoder = async () => {
     const api = window.anima?.coder
     if (!api?.start) return
+    if (!activeProfile) return
     setBusy(true)
     try {
-      await api.start({ settings: coder })
+      await api.start({ settings: normalizeCoder(activeProfile) })
       await refreshStatus()
     } finally {
       setBusy(false)
@@ -1946,118 +2144,235 @@ function CoderSettings() {
     }
   }
 
-  const argsText = Array.isArray(coder.args) ? coder.args.join(' ') : ''
+  const argsText = Array.isArray(activeProfile?.args) ? activeProfile.args.join(' ') : ''
 
   return (
-    <div className="p-6 space-y-6">
-      <Card>
-        <CardContent className="pt-6 space-y-4">
-          <div>
-            <div className="text-[15px] font-semibold">{t.title}</div>
-            <div className="text-[13px] text-muted-foreground mt-1">{t.desc}</div>
-          </div>
-          <div className="flex items-center justify-between rounded-lg border p-3">
-            <div className="text-[13px]">{t.enabled}</div>
-            <Switch checked={Boolean(coder.enabled)} onCheckedChange={(v) => updateCoder({ enabled: Boolean(v) })} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label className="text-[13px]">{t.name}</Label>
-              <Input value={String(coder.name || '')} onChange={(e) => updateCoder({ name: e.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label className="text-[13px]">{t.backend}</Label>
-              <Select
-                value={String(coder.backendKind || 'codex')}
-                onValueChange={(v) => updateCoder({ backendKind: v === 'cursor' ? 'cursor' : v === 'custom' ? 'custom' : 'codex' })}
+    <div className="flex h-full">
+      <div className="w-72 border-r border-border/60 p-4 pr-5 flex flex-col gap-3 bg-card/35">
+        <div className="space-y-1">
+          <div className="text-[12px] uppercase tracking-wide text-muted-foreground">{t.profileList}</div>
+          <div className="text-xs text-muted-foreground">{t.desc}</div>
+        </div>
+        <Button variant="outline" className="justify-start gap-2" onClick={addProfile}>
+          <Plus className="w-4 h-4" />
+          {t.addProfile}
+        </Button>
+        <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar space-y-1">
+          {profiles.map((profile: any) => {
+            const selected = activeProfile?.id === profile.id
+            const backendName =
+              profile.backendKind === 'cursor'
+                ? t.backendCursor
+                : profile.backendKind === 'custom'
+                  ? (String(profile.backendLabel || '').trim() || t.backendCustom)
+                  : t.backendCodex
+            return (
+              <Button
+                key={profile.id}
+                variant={selected ? 'secondary' : 'ghost'}
+                className={`w-full justify-between h-auto py-2.5 px-3 rounded-lg ${selected ? 'bg-card border border-border/70 shadow-none' : ''}`}
+                onClick={() => selectProfile(String(profile.id))}
               >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="codex">{t.backendCodex}</SelectItem>
-                  <SelectItem value="cursor">{t.backendCursor}</SelectItem>
-                  <SelectItem value="custom">{t.backendCustom}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-[13px]">{t.autoStart}</Label>
-              <div className="h-10 rounded-md border px-3 flex items-center justify-end">
-                <Switch checked={Boolean(coder.autoStart)} onCheckedChange={(v) => updateCoder({ autoStart: Boolean(v) })} />
-              </div>
-            </div>
-            {String(coder.backendKind || '') === 'custom' ? (
-              <div className="space-y-2">
-                <Label className="text-[13px]">{t.backendCustomLabel}</Label>
-                <Input value={String(coder.backendLabel || '')} onChange={(e) => updateCoder({ backendLabel: e.target.value })} />
-              </div>
-            ) : null}
-            <div className="space-y-2">
-              <Label className="text-[13px]">{t.endpoint}</Label>
-              <Select value={String(coder.endpointType || 'desktop')} onValueChange={(v) => updateCoder({ endpointType: v === 'terminal' ? 'terminal' : 'desktop' })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="terminal">{t.terminal}</SelectItem>
-                  <SelectItem value="desktop">{t.desktop}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-[13px]">{t.transport}</Label>
-              <Select value={String(coder.transport || 'cdpbridge')} onValueChange={(v) => updateCoder({ transport: v === 'acp' ? 'acp' : 'cdpbridge' })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="acp">{t.acp}</SelectItem>
-                  <SelectItem value="cdpbridge">{t.cdpbridge}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+                <div className="min-w-0 text-left">
+                  <div className="truncate">{String(profile.name || 'Coder')}</div>
+                  <div className="truncate text-[11px] text-muted-foreground">{backendName}</div>
+                </div>
+                <div className={`w-2 h-2 rounded-full shrink-0 ${profile.enabled ? 'bg-emerald-500' : 'bg-muted-foreground/35'}`} />
+              </Button>
+            )
+          })}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-8 pb-8 pt-5 custom-scrollbar">
+        {!activeProfile ? null : (
+          <div className="max-w-[860px] space-y-5 animate-in fade-in duration-200">
+            <Card className="border-border/60 bg-background/40 shadow-none">
+              <CardContent className="pt-5 pb-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <h2 className="text-2xl font-semibold text-foreground">{String(activeProfile.name || t.title)}</h2>
+                    <p className="text-[13px] text-muted-foreground">{t.desc}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" className="gap-1.5" onClick={duplicateProfile}>
+                      <Copy className="w-3.5 h-3.5" />
+                      {t.duplicateProfile}
+                    </Button>
+                    <Button variant="outline" size="sm" className="gap-1.5" onClick={deleteProfile} disabled={profiles.length <= 1}>
+                      <Trash2 className="w-3.5 h-3.5" />
+                      {t.deleteProfile}
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="pt-6 space-y-4">
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div className="text-[13px]">{t.enabled}</div>
+                  <Switch checked={Boolean(activeProfile.enabled)} onCheckedChange={(v) => updateActiveProfile({ enabled: Boolean(v) })} />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label className="text-[13px]">{t.name}</Label>
+                    <Input value={String(activeProfile.name || '')} onChange={(e) => updateActiveProfile({ name: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[13px]">{t.backend}</Label>
+                    <Select
+                      value={String(activeProfile.backendKind || 'codex')}
+                      onValueChange={(v) => updateActiveProfile({ backendKind: v === 'cursor' ? 'cursor' : v === 'custom' ? 'custom' : 'codex' })}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="codex">{t.backendCodex}</SelectItem>
+                        <SelectItem value="cursor">{t.backendCursor}</SelectItem>
+                        <SelectItem value="custom">{t.backendCustom}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[13px]">{t.autoStart}</Label>
+                    <div className="h-10 rounded-md border px-3 flex items-center justify-end">
+                      <Switch checked={Boolean(activeProfile.autoStart)} onCheckedChange={(v) => updateActiveProfile({ autoStart: Boolean(v) })} />
+                    </div>
+                  </div>
+                  {String(activeProfile.backendKind || '') === 'custom' ? (
+                    <div className="space-y-2">
+                      <Label className="text-[13px]">{t.backendCustomLabel}</Label>
+                      <Input value={String(activeProfile.backendLabel || '')} onChange={(e) => updateActiveProfile({ backendLabel: e.target.value })} />
+                    </div>
+                  ) : null}
+                  <div className="space-y-2">
+                    <Label className="text-[13px]">{t.endpoint}</Label>
+                    <Select value={String(activeProfile.endpointType || 'desktop')} onValueChange={(v) => updateActiveProfile({ endpointType: v === 'terminal' ? 'terminal' : 'desktop' })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="terminal">{t.terminal}</SelectItem>
+                        <SelectItem value="desktop">{t.desktop}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[13px]">{t.transport}</Label>
+                    <Select value={String(activeProfile.transport || 'cdpbridge')} onValueChange={(v) => updateActiveProfile({ transport: v === 'acp' ? 'acp' : 'cdpbridge' })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="acp">{t.acp}</SelectItem>
+                        <SelectItem value="cdpbridge">{t.cdpbridge}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-3">
+                  <div className="space-y-2">
+                    <Label className="text-[13px]">{t.command}</Label>
+                    <Input value={String(activeProfile.command || '')} onChange={(e) => updateActiveProfile({ command: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[13px]">{t.args}</Label>
+                    <Input
+                      value={argsText}
+                      onChange={(e) => {
+                        const text = String(e.target.value || '')
+                        const parts = text.split(' ').map((x) => x.trim()).filter(Boolean)
+                        updateActiveProfile({ args: parts })
+                      }}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[13px]">{t.cwd}</Label>
+                    <Input value={String(activeProfile.cwd || '')} onChange={(e) => updateActiveProfile({ cwd: e.target.value })} />
+                  </div>
+                  {String(activeProfile.transport || '') === 'cdpbridge' ? (
+                    <div className="space-y-2">
+                      <Label className="text-[13px]">{t.remoteDebuggingPort}</Label>
+                      <Input
+                        type="number"
+                        value={String(activeProfile.remoteDebuggingPort || 9222)}
+                        onChange={(e) => updateActiveProfile({ remoteDebuggingPort: Number(e.target.value || 9222) || 9222 })}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="pt-6 space-y-4">
+                <h3 className="text-[13px] font-semibold">{t.commandTemplates}</h3>
+                <div className="grid grid-cols-1 gap-3">
+                  <div className="space-y-2">
+                    <Label className="text-[13px]">{t.cmdStatus}</Label>
+                    <Input
+                      value={String(activeProfile.commandTemplates?.status || '')}
+                      onChange={(e) => updateActiveProfile({ commandTemplates: { ...activeProfile.commandTemplates, status: e.target.value } })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[13px]">{t.cmdSend}</Label>
+                    <Input
+                      value={String(activeProfile.commandTemplates?.send || '')}
+                      onChange={(e) => updateActiveProfile({ commandTemplates: { ...activeProfile.commandTemplates, send: e.target.value } })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[13px]">{t.cmdAsk}</Label>
+                    <Input
+                      value={String(activeProfile.commandTemplates?.ask || '')}
+                      onChange={(e) => updateActiveProfile({ commandTemplates: { ...activeProfile.commandTemplates, ask: e.target.value } })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[13px]">{t.cmdRead}</Label>
+                    <Input
+                      value={String(activeProfile.commandTemplates?.read || '')}
+                      onChange={(e) => updateActiveProfile({ commandTemplates: { ...activeProfile.commandTemplates, read: e.target.value } })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[13px]">{t.cmdNew}</Label>
+                    <Input
+                      value={String(activeProfile.commandTemplates?.new || '')}
+                      onChange={(e) => updateActiveProfile({ commandTemplates: { ...activeProfile.commandTemplates, new: e.target.value } })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[13px]">{t.cmdScreenshot}</Label>
+                    <Input
+                      value={String(activeProfile.commandTemplates?.screenshot || '')}
+                      onChange={(e) => updateActiveProfile({ commandTemplates: { ...activeProfile.commandTemplates, screenshot: e.target.value } })}
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="pt-6 space-y-4">
+                <div className="flex items-center gap-2">
+                  <Badge variant={status.running ? 'default' : 'secondary'}>{status.running ? t.running : t.stopped}</Badge>
+                  <Badge variant={status.debugPortReady ? 'default' : 'secondary'}>
+                    {status.debugPortReady ? t.debugReady : t.debugNotReady}
+                  </Badge>
+                  {status.pid ? <Badge variant="outline">PID {status.pid}</Badge> : null}
+                  {status.lastError ? <div className="text-[12px] text-destructive truncate">{status.lastError}</div> : null}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" onClick={() => void refreshStatus()} disabled={busy} className="gap-2">
+                    <RefreshCw className={`w-4 h-4 ${busy ? 'animate-spin' : ''}`} />
+                    {t.refresh}
+                  </Button>
+                  <Button onClick={() => void startCoder()} disabled={busy}>{t.start}</Button>
+                  <Button variant="destructive" onClick={() => void stopCoder()} disabled={busy}>{t.stop}</Button>
+                </div>
+              </CardContent>
+            </Card>
           </div>
-          <div className="grid grid-cols-1 gap-3">
-            <div className="space-y-2">
-              <Label className="text-[13px]">{t.command}</Label>
-              <Input value={String(coder.command || '')} onChange={(e) => updateCoder({ command: e.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label className="text-[13px]">{t.args}</Label>
-              <Input
-                value={argsText}
-                onChange={(e) => {
-                  const text = String(e.target.value || '')
-                  const parts = text.split(' ').map((x) => x.trim()).filter(Boolean)
-                  updateCoder({ args: parts })
-                }}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label className="text-[13px]">{t.cwd}</Label>
-              <Input value={String(coder.cwd || '')} onChange={(e) => updateCoder({ cwd: e.target.value })} />
-            </div>
-            {String(coder.transport || '') === 'cdpbridge' ? (
-              <div className="space-y-2">
-                <Label className="text-[13px]">{t.remoteDebuggingPort}</Label>
-                <Input
-                  type="number"
-                  value={String(coder.remoteDebuggingPort || 9222)}
-                  onChange={(e) => updateCoder({ remoteDebuggingPort: Number(e.target.value || 9222) || 9222 })}
-                />
-              </div>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-2">
-            <Badge variant={status.running ? 'default' : 'secondary'}>{status.running ? t.running : t.stopped}</Badge>
-            <Badge variant={status.debugPortReady ? 'default' : 'secondary'}>
-              {status.debugPortReady ? t.debugReady : t.debugNotReady}
-            </Badge>
-            {status.pid ? <Badge variant="outline">PID {status.pid}</Badge> : null}
-            {status.lastError ? <div className="text-[12px] text-destructive truncate">{status.lastError}</div> : null}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={() => void refreshStatus()} disabled={busy}>{t.refresh}</Button>
-            <Button onClick={() => void startCoder()} disabled={busy}>{t.start}</Button>
-            <Button variant="destructive" onClick={() => void stopCoder()} disabled={busy}>{t.stop}</Button>
-          </div>
-        </CardContent>
-      </Card>
+        )}
+      </div>
     </div>
   )
 }
@@ -2699,13 +3014,13 @@ function ProvidersSettings() {
   return (
     <div className="flex h-full">
       {/* Providers List - Left Column */}
-      <div className="w-64 border-r border-border/60 p-4 pr-5 flex flex-col gap-3 bg-transparent">
+      <div className="w-64 border-r border-border/60 p-4 pr-5 flex flex-col gap-3 bg-card/35">
         <div className="relative">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground z-10" />
           <Input
             type="text"
             placeholder={t.search}
-            className="pl-9 bg-white"
+            className="pl-9 bg-background/80"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -2748,7 +3063,7 @@ function ProvidersSettings() {
                 onClick={() => setSelectedProviderId(provider.id)}
                 className={`w-full justify-between h-auto py-2.5 px-3 font-normal rounded-lg hover:bg-muted/50 cursor-grab active:cursor-grabbing ${
                   selectedProviderId === provider.id
-                    ? 'bg-white border border-border/70 shadow-none'
+                    ? 'bg-card border border-border/70 shadow-none'
                     : ''
                 }`}
               >
@@ -2760,7 +3075,7 @@ function ProvidersSettings() {
                    </div>
                    <span className="truncate max-w-[120px]">{provider.name}</span>
                 </div>
-                <div className={`w-2 h-2 rounded-full shrink-0 transition-colors ${provider.isEnabled ? 'bg-green-500' : 'bg-gray-300'}`} />
+                <div className={`w-2 h-2 rounded-full shrink-0 transition-colors ${provider.isEnabled ? 'bg-emerald-500' : 'bg-muted-foreground/35'}`} />
               </Button>
             </div>
           ))}
@@ -2783,7 +3098,7 @@ function ProvidersSettings() {
             </Button>
             <Button
               variant="outline"
-              className="h-9 rounded-full px-4 bg-white"
+              className="h-9 rounded-full px-4 bg-card/70"
               onClick={() => {
                 setCustomProviderMode('acp')
                 setCustomProviderDialogOpen(true)
@@ -2807,8 +3122,8 @@ function ProvidersSettings() {
                        <h2 className="text-2xl font-semibold text-foreground">{activeProvider.name}</h2>
                        <Badge variant="outline" className={`font-medium border-0 ${
                           activeProvider.isEnabled 
-                            ? 'bg-green-100 text-green-700' 
-                            : 'bg-gray-100 text-gray-600'
+                            ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                            : 'bg-muted text-muted-foreground'
                        }`}>
                          {activeProvider.isEnabled ? t.active : t.inactive}
                        </Badge>
@@ -3413,7 +3728,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
               )}
               {qwenLogin.state === 'error' && <span className="text-destructive">{qwenLogin.error || 'OAuth failed'}</span>}
               {qwenLogin.state === 'success' && (
-                <span className="text-green-600">{settings.language === 'zh' ? '登录成功' : 'Success'}</span>
+                <span className="text-emerald-600 dark:text-emerald-400">{settings.language === 'zh' ? '登录成功' : 'Success'}</span>
               )}
             </div>
           </div>
@@ -3478,7 +3793,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
               )}
               {codexLogin.state === 'error' && <span className="text-destructive">{codexLogin.error || 'OAuth failed'}</span>}
               {codexLogin.state === 'success' && (
-                <span className="text-green-600">{settings.language === 'zh' ? '登录成功' : 'Success'}</span>
+                <span className="text-emerald-600 dark:text-emerald-400">{settings.language === 'zh' ? '登录成功' : 'Success'}</span>
               )}
             </div>
           </div>
@@ -3694,7 +4009,7 @@ function NetworkSettings() {
             {t.clear}
           </Button>
           {status.type === 'ok' && (
-            <span className="inline-flex items-center gap-1 text-xs text-green-500">
+            <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
               <CheckCircle2 className="w-4 h-4" />
               {status.text}
             </span>
@@ -4350,7 +4665,7 @@ function ChatSettings() {
           >
             {t.cleanupArtifacts}
           </Button>
-          {cleanupStatus.type === 'ok' && <span className="text-xs text-green-500">{cleanupStatus.text}</span>}
+          {cleanupStatus.type === 'ok' && <span className="text-xs text-emerald-600 dark:text-emerald-400">{cleanupStatus.text}</span>}
           {cleanupStatus.type === 'error' && <span className="text-xs text-destructive">{cleanupStatus.text}</span>}
         </div>
       </Card>
@@ -4917,7 +5232,7 @@ function SkillsSettings() {
       {skills.length === 0 ? (
         <div className="flex-1 flex items-center justify-center">
           <div className="flex flex-col items-center text-center gap-3">
-            <div className="group w-20 h-20 rounded-full bg-white border border-border shadow-sm flex items-center justify-center transition-colors">
+            <div className="group w-20 h-20 rounded-full bg-card border border-border shadow-sm flex items-center justify-center transition-colors">
               <div className="relative">
                 <div className="absolute -inset-4 rounded-full bg-[radial-gradient(circle,rgba(99,102,241,0.18),transparent_60%)] opacity-0 blur-sm transition-opacity group-hover:opacity-100 motion-reduce:transition-none" />
                 <Sparkles className="relative w-9 h-9 text-muted-foreground motion-safe:anima-float group-hover:text-foreground transition-colors motion-reduce:transition-none" />
@@ -5457,7 +5772,7 @@ function DataSettings() {
             {t.importJson}
           </Button>
           {importStatus.type === 'ok' && (
-            <div className="inline-flex items-center gap-1 text-xs text-green-500">
+            <div className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
               <CheckCircle2 className="w-4 h-4" />
               {importStatus.text}
             </div>

@@ -9,7 +9,6 @@ const animaAPI = {
     getBaseUrl: () => ipcRenderer.invoke('anima:backend:getBaseUrl')
   },
   window: {
-    openSettings: () => ipcRenderer.invoke('anima:window:openSettings'),
     pickFiles: () => ipcRenderer.invoke('anima:dialog:pickFiles'),
     pickDirectory: () => ipcRenderer.invoke('anima:dialog:pickDirectory'),
     saveImageAttachment: (params: { bytes: Uint8Array | number[]; fileName?: string; workspaceDir?: string; mime?: string }) =>

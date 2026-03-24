@@ -104,6 +104,32 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
             "screenshot": "",
         },
     },
+    "coderProfiles": [
+        {
+            "id": "codex-default",
+            "enabled": False,
+            "name": "Codex",
+            "backendKind": "codex",
+            "backendLabel": "",
+            "endpointType": "desktop",
+            "transport": "cdpbridge",
+            "autoStart": False,
+            "command": "/usr/bin/open",
+            "args": ["-a", "Codex", "--args", "--remote-debugging-port=9222"],
+            "cwd": "",
+            "env": {},
+            "remoteDebuggingPort": 9222,
+            "commandTemplates": {
+                "status": "",
+                "send": "",
+                "ask": "codex exec \"{prompt}\"",
+                "read": "",
+                "new": "codex",
+                "screenshot": "",
+            },
+        }
+    ],
+    "activeCoderProfileId": "codex-default",
     "im": {
         "provider": "telegram",
         "telegram": {

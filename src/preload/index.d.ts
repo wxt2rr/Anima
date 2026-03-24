@@ -11,7 +11,6 @@ declare global {
         getBaseUrl: () => Promise<{ ok: boolean; baseUrl: string }>
       }
       window: {
-        openSettings: () => Promise<{ ok: boolean }>
         pickFiles: () => Promise<{ ok: boolean; canceled: boolean; paths: string[] }>
         pickDirectory: () => Promise<{ ok: boolean; canceled: boolean; path: string }>
         saveImageAttachment: (params: { bytes: Uint8Array | number[]; fileName?: string; workspaceDir?: string; mime?: string }) => Promise<{ ok: boolean; path?: string; error?: string }>

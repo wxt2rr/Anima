@@ -26,6 +26,20 @@
     --input: 240 5.9% 90%;
     --ring: 240 5.9% 10%;
     --radius: 1rem;
+    --app-left-pane-width: 288px;
+    --app-left-pane-bg: #efefef;
+    --app-left-pane-header-height: 44px;
+    --app-left-pane-pad-x: 12px;
+    --app-left-pane-leading-safe: 84px;
+    --app-left-pane-divider-width: 6px;
+    --app-left-pane-header-btn-size: 28px;
+    --app-left-pane-header-btn-radius: 6px;
+    --app-left-pane-header-btn-gap: 8px;
+    --app-left-pane-header-btn-pad-x: 10px;
+    --app-left-pane-traffic-row-top: 19px;
+    --app-left-pane-traffic-row-height: 14px;
+    --app-shell-content-bg: #ffffff;
+    --app-shell-content-radius: 0.75rem;
   }
 
   :root[data-density='compact'] {
@@ -52,6 +66,8 @@
     --border: 240 3.7% 15.9%;
     --input: 240 3.7% 15.9%;
     --ring: 240 4.9% 83.9%;
+    --app-left-pane-bg: #1f1f1f;
+    --app-shell-content-bg: hsl(var(--background));
   }
 }
  
@@ -68,6 +84,32 @@
   }
   button, input, textarea, .no-drag {
     -webkit-app-region: no-drag;
+  }
+
+  .settings-font-unified :where(
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    p,
+    span,
+    label,
+    button,
+    input,
+    textarea,
+    select,
+    option,
+    li,
+    a,
+    code,
+    pre,
+    th,
+    td,
+    div
+  ) {
+    font-size: 13px;
   }
 
   /* Custom Scrollbar Styling */

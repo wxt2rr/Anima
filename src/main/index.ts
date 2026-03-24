@@ -13,7 +13,6 @@ import { registerAcpService } from './services/acpService'
 import { registerCoderService } from './services/coderService'
 
 let mainWindow: BrowserWindow | null = null
-let settingsWindow: BrowserWindow | null = null
 let backendProcess: ChildProcessWithoutNullStreams | null = null
 
 type WindowState = {
@@ -21,27 +20,26 @@ type WindowState = {
   isMaximized?: boolean
 }
 
-const windowStore = new Store<{ mainWindow: WindowState; settingsWindow: WindowState }>({ name: 'window-state' })
+const windowStore = new Store<{ mainWindow: WindowState }>({ name: 'window-state' })
 
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n))
 }
 
-function getDefaultBounds(kind: 'main' | 'settings'): { width: number; height: number } {
+function getDefaultBounds(): { width: number; height: number } {
   const work = screen.getPrimaryDisplay().workAreaSize
   const maxW = Math.max(800, work.width - 80)
   const maxH = Math.max(600, work.height - 80)
-  const base = kind === 'settings' ? { width: 1080, height: 720 } : { width: 1280, height: 820 }
+  const base = { width: 1280, height: 820 }
   return {
     width: clamp(base.width, 800, maxW),
     height: clamp(base.height, 600, maxH)
   }
 }
 
-function restoreWindowState(kind: 'main' | 'settings'): { bounds: { width: number; height: number; x?: number; y?: number }; isMaximized: boolean } {
-  const key = kind === 'main' ? 'mainWindow' : 'settingsWindow'
-  const saved = (windowStore.get(key) || {}) as WindowState
-  const def = getDefaultBounds(kind)
+function restoreWindowState(): { bounds: { width: number; height: number; x?: number; y?: number }; isMaximized: boolean } {
+  const saved = (windowStore.get('mainWindow') || {}) as WindowState
+  const def = getDefaultBounds()
   const b = saved.bounds
   const bounds = {
     width: clamp(Number(b?.width || def.width), 800, 10000),
@@ -52,15 +50,14 @@ function restoreWindowState(kind: 'main' | 'settings'): { bounds: { width: numbe
   return { bounds, isMaximized: Boolean(saved.isMaximized) }
 }
 
-function attachWindowStatePersistence(win: BrowserWindow, kind: 'main' | 'settings'): void {
-  const key = kind === 'main' ? 'mainWindow' : 'settingsWindow'
+function attachWindowStatePersistence(win: BrowserWindow): void {
   let t: NodeJS.Timeout | null = null
 
   const save = () => {
     if (win.isDestroyed()) return
     const isMaximized = win.isMaximized()
     const bounds = isMaximized ? win.getNormalBounds() : win.getBounds()
-    windowStore.set(key, { bounds, isMaximized })
+    windowStore.set('mainWindow', { bounds, isMaximized })
   }
 
   const scheduleSave = () => {
@@ -350,7 +347,6 @@ function getDevToolsTargetWindow(): BrowserWindow | null {
   const focused = BrowserWindow.getFocusedWindow()
   if (focused && !focused.isDestroyed()) return focused
   if (mainWindow && !mainWindow.isDestroyed()) return mainWindow
-  if (settingsWindow && !settingsWindow.isDestroyed()) return settingsWindow
   return null
 }
 
@@ -383,7 +379,7 @@ function normalizeReleaseNotes(notes: any): string | undefined {
 }
 
 function broadcastUpdateState(): void {
-  const wins = [mainWindow, settingsWindow].filter((w): w is BrowserWindow => Boolean(w && !w.isDestroyed()))
+  const wins = [mainWindow].filter((w): w is BrowserWindow => Boolean(w && !w.isDestroyed()))
   for (const w of wins) {
     if (!w.webContents.isDestroyed()) w.webContents.send('anima:update:state', updateState)
   }
@@ -444,76 +440,6 @@ function registerIpcHandlers(): void {
     } catch (error: any) {
       return { ok: false, error: error?.message || String(error) }
     }
-  })
-
-  ipcMain.handle('anima:window:openSettings', async () => {
-    if (settingsWindow && !settingsWindow.isDestroyed()) {
-      if (settingsWindow.isMinimized()) settingsWindow.restore()
-      settingsWindow.show()
-      settingsWindow.focus()
-      return { ok: true }
-    }
-
-    const restored = restoreWindowState('settings')
-    settingsWindow = new BrowserWindow({
-      ...restored.bounds,
-      show: false,
-      titleBarStyle: 'hiddenInset',
-      trafficLightPosition: { x: 20, y: 18 },
-      backgroundColor: '#F5F7FA',
-      autoHideMenuBar: true,
-      webPreferences: {
-        preload: join(__dirname, '../preload/index.js'),
-        sandbox: false,
-        contextIsolation: true,
-        webviewTag: true
-      },
-      icon: getDevIconPath()
-    })
-    const win = settingsWindow
-    if (restored.isMaximized) win.maximize()
-    attachWindowStatePersistence(win, 'settings')
-
-    settingsWindow.on('ready-to-show', () => {
-      if (!win.isDestroyed()) win.show()
-    })
-
-    settingsWindow.on('closed', () => {
-      if (settingsWindow === win) settingsWindow = null
-    })
-
-    win.webContents.setWindowOpenHandler((details) => {
-      shell.openExternal(details.url)
-      return { action: 'deny' }
-    })
-
-    if (is.dev) {
-      const devUrl =
-        process.env['ELECTRON_RENDERER_URL'] || process.env['VITE_DEV_SERVER_URL'] || 'http://localhost:5173/'
-      try {
-        const base = devUrl.endsWith('/') ? devUrl : `${devUrl}/`
-        await win.loadURL(`${base}#/settings`)
-      } catch (error) {
-        console.error('[settingsWindow loadURL failed]', error)
-        if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
-          try {
-            await win.loadURL(
-              `data:text/html,${encodeURIComponent(
-                '<pre>Failed to load renderer dev server. Is "npm run dev" running?</pre>'
-              )}`
-            )
-          } catch {
-            // ignore
-          }
-        }
-      }
-    } else {
-      if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
-        await win.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/settings' })
-      }
-    }
-
-    return { ok: true }
   })
 
   ipcMain.handle('anima:dialog:pickFiles', async () => {
@@ -730,7 +656,7 @@ function setupAutoUpdates(): void {
 }
 
 async function createWindow(): Promise<void> {
-  const restored = restoreWindowState('main')
+  const restored = restoreWindowState()
   mainWindow = new BrowserWindow({
     ...restored.bounds,
     show: false,
@@ -747,7 +673,7 @@ async function createWindow(): Promise<void> {
     icon: getDevIconPath()
   })
   if (restored.isMaximized) mainWindow.maximize()
-  attachWindowStatePersistence(mainWindow, 'main')
+  attachWindowStatePersistence(mainWindow)
   
   // We want native traffic lights, so do NOT hide them
   // if (process.platform === 'darwin') {
