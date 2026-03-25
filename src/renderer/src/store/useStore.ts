@@ -368,6 +368,22 @@ export interface Settings {
   }>
   activeCoderProfileId?: string
 
+  statusCenter?: {
+    tray?: {
+      enabled?: boolean
+      animated?: boolean
+      frameIntervalMs?: number
+      fallbackToBuiltin?: boolean
+      icons?: {
+        idle?: { sizes?: Record<string, string>; frames?: string[] }
+        running?: { sizes?: Record<string, string>; frames?: string[] }
+        waiting_user?: { sizes?: Record<string, string>; frames?: string[] }
+        done?: { sizes?: Record<string, string>; frames?: string[] }
+        error?: { sizes?: Record<string, string>; frames?: string[] }
+      }
+    }
+  }
+
   im?: {
     provider?: 'telegram'
     telegram?: {
@@ -905,6 +921,35 @@ const normalizeSettingsPayload = (rawSettings: any): any => {
   rawSettings.coderProfiles = normalizedProfiles
   const activeProfile = normalizedProfiles.find((profile: any) => profile.id === rawSettings.activeCoderProfileId) || normalizedProfiles[0]
   rawSettings.coder = normalizeCoderProfile(activeProfile)
+
+  const normalizeStatusIcon = (raw: any) => {
+    const sizesRaw = raw?.sizes && typeof raw.sizes === 'object' ? raw.sizes : {}
+    const nextSizes: Record<string, string> = {}
+    for (const k of ['16', '18', '22']) {
+      const p = String(sizesRaw[k] || '').trim()
+      if (p) nextSizes[k] = p
+    }
+    const nextFrames = Array.isArray(raw?.frames) ? raw.frames.map((x: any) => String(x || '').trim()).filter(Boolean) : []
+    return { sizes: nextSizes, frames: nextFrames }
+  }
+
+  const statusCenterRaw = rawSettings.statusCenter && typeof rawSettings.statusCenter === 'object' ? rawSettings.statusCenter : {}
+  const trayRaw = statusCenterRaw.tray && typeof statusCenterRaw.tray === 'object' ? statusCenterRaw.tray : {}
+  rawSettings.statusCenter = {
+    tray: {
+      enabled: trayRaw.enabled !== false,
+      animated: trayRaw.animated !== false,
+      frameIntervalMs: Number(trayRaw.frameIntervalMs || 260),
+      fallbackToBuiltin: trayRaw.fallbackToBuiltin !== false,
+      icons: {
+        idle: normalizeStatusIcon(trayRaw.icons?.idle),
+        running: normalizeStatusIcon(trayRaw.icons?.running),
+        waiting_user: normalizeStatusIcon(trayRaw.icons?.waiting_user),
+        done: normalizeStatusIcon(trayRaw.icons?.done),
+        error: normalizeStatusIcon(trayRaw.icons?.error)
+      }
+    }
+  }
   return rawSettings
 }
 
@@ -1529,6 +1574,10 @@ export const useStore = create<AppState>()(
             if (coderSettings) {
               void window.anima?.coder?.configure?.({ settings: coderSettings })
             }
+            const statusCenterSettings = (rawSettings as any)?.statusCenter
+            if (statusCenterSettings) {
+              void window.anima?.statusCenter?.applySettings?.({ settings: statusCenterSettings })
+            }
           } catch {
             //
           }
@@ -1765,6 +1814,10 @@ export const useStore = create<AppState>()(
                 const coderSettings = (rawSettings as any)?.coder
                 if (coderSettings) {
                   void window.anima?.coder?.configure?.({ settings: coderSettings })
+                }
+                const statusCenterSettings = (rawSettings as any)?.statusCenter
+                if (statusCenterSettings) {
+                  void window.anima?.statusCenter?.applySettings?.({ settings: statusCenterSettings })
                 }
               } catch {
                 //

@@ -130,6 +130,21 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         }
     ],
     "activeCoderProfileId": "codex-default",
+    "statusCenter": {
+        "tray": {
+            "enabled": True,
+            "animated": True,
+            "frameIntervalMs": 260,
+            "fallbackToBuiltin": True,
+            "icons": {
+                "idle": {"sizes": {}, "frames": []},
+                "running": {"sizes": {}, "frames": []},
+                "waiting_user": {"sizes": {}, "frames": []},
+                "done": {"sizes": {}, "frames": []},
+                "error": {"sizes": {}, "frames": []},
+            },
+        }
+    },
     "im": {
         "provider": "telegram",
         "telegram": {

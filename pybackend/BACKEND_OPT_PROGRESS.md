@@ -77,3 +77,8 @@
 - 2026-03-24：壳层 token 收敛：新增 `--app-shell-content-bg` / `--app-shell-content-radius`，主页与设置右侧内容区共用，移除硬编码 `bg-white/rounded-l-xl` 差异（`src/renderer/src/assets/index.css`、`AppShadcn.tsx`、`SettingsDialog.tsx`）。
 - 2026-03-24：交互一致性：设置页“返回应用”按钮接入左栏头部按钮 token（尺寸/圆角/水平内边距），与主页头部交互控件统一（`SettingsDialog.tsx`）。
 - 2026-03-24：质量保障：新增设置壳层 UI 回归基线文档，固化同页设置关键验收点（`docs/ui-settings-shell-regression.md`）。
+- 2026-03-25：状态中心首批开发：主进程新增 `statusCenterService`，支持菜单栏 Tray 状态显示、运行中多帧轮播、图标上传落地（`userData/status-center/tray-icons`）与热重载 IPC（`src/main/services/statusCenterService.ts`、`src/main/index.ts`）。
+- 2026-03-25：设置模型扩展：新增 `settings.statusCenter` 并在前端配置加载/保存后同步下发主进程应用（`src/renderer/src/store/useStore.ts`、`pybackend/anima_backend_shared/defaults.py`）。
+- 2026-03-25：设置页新增“状态中心”Tab：支持开关菜单栏图标、动画间隔、回退策略、按状态上传 16/18/22 图标与状态测试按钮（`src/renderer/src/components/SettingsDialog.tsx`）。
+- 2026-03-25：预加载桥接：新增 `window.anima.statusCenter` API 类型与实现（`src/preload/index.ts`、`src/preload/index.d.ts`、`src/renderer/src/env.d.ts`）。
+- 2026-03-25：回归验证：执行 `npm run -s typecheck` 通过。

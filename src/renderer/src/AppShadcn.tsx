@@ -447,11 +447,37 @@ function AppLoaded(): JSX.Element {
   const [imageDragActive, setImageDragActive] = useState(false)
   const imageDragDepthRef = useRef(0)
   const showComposerToolSkillEntrances = false
+  const wasLoadingRef = useRef(false)
+  const statusCenterBootstrappedRef = useRef(false)
   const setChatBottomIfChanged = useCallback((next: boolean) => {
     if (chatIsAtBottomRef.current === next) return
     chatIsAtBottomRef.current = next
     setChatIsAtBottom(next)
   }, [])
+
+  useEffect(() => {
+    if (statusCenterBootstrappedRef.current) return
+    statusCenterBootstrappedRef.current = true
+    const api = window.anima?.statusCenter
+    if (!api?.setState) return
+    void api.setState({ state: 'idle', title: 'Idle' })
+  }, [])
+
+  useEffect(() => {
+    const api = window.anima?.statusCenter
+    if (!api?.setState) return
+
+    if (isLoading) {
+      wasLoadingRef.current = true
+      void api.setState({ state: 'running', title: 'Running' })
+      return
+    }
+
+    if (wasLoadingRef.current) {
+      wasLoadingRef.current = false
+      void api.setState({ state: 'done', title: 'Done' })
+    }
+  }, [isLoading])
 
   const setScrollToBottomIfChanged = useCallback((next: boolean) => {
     if (showScrollToBottomRef.current === next) return

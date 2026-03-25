@@ -66,6 +66,17 @@ const animaAPI = {
     stop: () => ipcRenderer.invoke('coder:stop'),
     status: () => ipcRenderer.invoke('coder:status')
   },
+  statusCenter: {
+    getState: () => ipcRenderer.invoke('anima:statusCenter:getState'),
+    applySettings: (params: { settings?: any }) => ipcRenderer.invoke('anima:statusCenter:applySettings', params),
+    setState: (params: { state: 'idle' | 'running' | 'waiting_user' | 'done' | 'error'; title?: string; progress?: number }) =>
+      ipcRenderer.invoke('anima:statusCenter:setState', params),
+    uploadTrayIcon: (params: { state: 'idle' | 'running' | 'waiting_user' | 'done' | 'error'; size?: 22; sourcePath: string }) =>
+      ipcRenderer.invoke('anima:statusCenter:uploadTrayIcon', params),
+    uploadTrayFrame: (params: { state?: 'idle' | 'running' | 'waiting_user' | 'done' | 'error'; sourcePath: string }) =>
+      ipcRenderer.invoke('anima:statusCenter:uploadTrayFrame', params),
+    reloadIcons: () => ipcRenderer.invoke('anima:statusCenter:reloadIcons')
+  },
   preview: {
     openExternal: (url: string) => ipcRenderer.invoke('preview:openExternal', url),
     onServerDetected: (callback: (payload: { url: string; terminalId?: string }) => void) => {

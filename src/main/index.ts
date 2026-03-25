@@ -11,9 +11,11 @@ import { registerGitService } from './services/gitService'
 import { registerTerminalService } from './services/terminalService'
 import { registerAcpService } from './services/acpService'
 import { registerCoderService } from './services/coderService'
+import { createStatusCenterService } from './services/statusCenterService'
 
 let mainWindow: BrowserWindow | null = null
 let backendProcess: ChildProcessWithoutNullStreams | null = null
+let statusCenterService: ReturnType<typeof createStatusCenterService> | null = null
 
 type WindowState = {
   bounds?: { x?: number; y?: number; width: number; height: number }
@@ -394,6 +396,16 @@ function trySetDockIcon(): void {
   if (process.platform !== 'darwin') return
   const dock = (app as any).dock
   if (!dock || typeof dock.setIcon !== 'function') return
+
+  const idlePath = statusCenterService?.getPreferredIconPathForState?.('idle') || ''
+  if (idlePath && existsSync(idlePath)) {
+    const img = nativeImage.createFromPath(idlePath)
+    if (!img.isEmpty()) {
+      dock.setIcon(img)
+      return
+    }
+  }
+
   const preferred = join(process.cwd(), 'images', 'logo_padded.png')
   const fallback = join(process.cwd(), 'images', 'logo.png')
   const p = existsSync(preferred) ? preferred : fallback
@@ -429,6 +441,75 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('anima:backend:getBaseUrl', async () => {
     return { ok: true, baseUrl: backendBaseUrl }
+  })
+
+  ipcMain.handle('anima:statusCenter:getState', async () => {
+    if (!statusCenterService) return { ok: false, error: 'status center not ready' }
+    return { ok: true, ...statusCenterService.getState() }
+  })
+
+  ipcMain.handle('anima:statusCenter:applySettings', async (_evt, params: any) => {
+    if (!statusCenterService) return { ok: false, error: 'status center not ready' }
+    try {
+      statusCenterService.applySettings(params?.settings || {})
+      trySetDockIcon()
+      return { ok: true }
+    } catch (error: any) {
+      return { ok: false, error: error?.message || String(error) }
+    }
+  })
+
+  ipcMain.handle('anima:statusCenter:setState', async (_evt, params: any) => {
+    if (!statusCenterService) return { ok: false, error: 'status center not ready' }
+    try {
+      const state = String(params?.state || '').trim() as any
+      if (!state) return { ok: false, error: 'Missing state' }
+      statusCenterService.setState({
+        state,
+        title: String(params?.title || '').trim() || undefined,
+        progress: typeof params?.progress === 'number' ? Number(params.progress) : undefined
+      } as any)
+      return { ok: true }
+    } catch (error: any) {
+      return { ok: false, error: error?.message || String(error) }
+    }
+  })
+
+  ipcMain.handle('anima:statusCenter:uploadTrayIcon', async (_evt, params: any) => {
+    if (!statusCenterService) return { ok: false, error: 'status center not ready' }
+    try {
+      return statusCenterService.uploadTrayIcon({
+        state: String(params?.state || 'idle') as any,
+        size: Number(params?.size || 18),
+        sourcePath: String(params?.sourcePath || '')
+      })
+    } catch (error: any) {
+      return { ok: false, error: error?.message || String(error) }
+    }
+  })
+
+  ipcMain.handle('anima:statusCenter:uploadTrayFrame', async (_evt, params: any) => {
+    if (!statusCenterService) return { ok: false, error: 'status center not ready' }
+    try {
+      return statusCenterService.uploadTrayFrame({
+        state: String(params?.state || 'running') as any,
+        sourcePath: String(params?.sourcePath || '')
+      })
+    } catch (error: any) {
+      return { ok: false, error: error?.message || String(error) }
+    }
+  })
+
+  ipcMain.handle('anima:statusCenter:reloadIcons', async () => {
+    if (!statusCenterService) return { ok: false, error: 'status center not ready' }
+    try {
+      const current = statusCenterService.getState()
+      statusCenterService.applySettings(current.settings)
+      trySetDockIcon()
+      return { ok: true }
+    } catch (error: any) {
+      return { ok: false, error: error?.message || String(error) }
+    }
   })
 
   ipcMain.handle('preview:openExternal', async (_, url: string) => {
@@ -717,6 +798,8 @@ async function createWindow(): Promise<void> {
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.anima.app')
   ensureCliShimInstalled()
+  statusCenterService = createStatusCenterService(() => mainWindow)
+  statusCenterService.ensureTray()
   registerIpcHandlers()
   trySetDockIcon()
   setupAppMenu()
@@ -750,6 +833,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   globalShortcut.unregisterAll()
+  statusCenterService?.dispose()
   if (backendProcess && !backendProcess.killed) {
     backendProcess.kill()
   }

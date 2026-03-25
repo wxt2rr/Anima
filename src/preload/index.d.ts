@@ -57,6 +57,14 @@ declare global {
         stop: () => Promise<{ ok: boolean; error?: string }>
         status: () => Promise<{ ok: boolean; running?: boolean; pid?: number | null; startedAt?: number | null; uptimeMs?: number; lastError?: string; settings?: any; debugPortReady?: boolean; error?: string }>
       }
+      statusCenter: {
+        getState: () => Promise<{ ok: boolean; settings?: any; runState?: any; error?: string }>
+        applySettings: (params: { settings?: any }) => Promise<{ ok: boolean; error?: string }>
+        setState: (params: { state: 'idle' | 'running' | 'waiting_user' | 'done' | 'error'; title?: string; progress?: number }) => Promise<{ ok: boolean; error?: string }>
+        uploadTrayIcon: (params: { state: 'idle' | 'running' | 'waiting_user' | 'done' | 'error'; size?: 22; sourcePath: string }) => Promise<{ ok: boolean; path?: string; state?: string; size?: number; error?: string }>
+        uploadTrayFrame: (params: { state?: 'idle' | 'running' | 'waiting_user' | 'done' | 'error'; sourcePath: string }) => Promise<{ ok: boolean; path?: string; state?: string; error?: string }>
+        reloadIcons: () => Promise<{ ok: boolean; error?: string }>
+      }
       update: {
         getState: () => Promise<{ ok: boolean; state: any }>
         check: (opts?: { interactive?: boolean }) => Promise<{ ok: boolean; updateInfo?: any; error?: string }>

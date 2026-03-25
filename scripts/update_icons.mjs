@@ -8,7 +8,6 @@ function run(cmd, args, options = {}) {
 
 const repoRoot = new URL('..', import.meta.url).pathname
 const input = join(repoRoot, 'images', 'logo.png')
-const padded = join(repoRoot, 'images', 'logo_padded.png')
 const iconsetDir = join(repoRoot, 'build', 'icon.iconset')
 const icnsOut = join(repoRoot, 'build', 'icon.icns')
 
@@ -17,8 +16,6 @@ if (!existsSync(input)) {
 }
 
 mkdirSync(iconsetDir, { recursive: true })
-
-run('swift', [join(repoRoot, 'scripts', 'make_padded_icon.swift'), input, padded, '0.86'])
 
 const sizes = [
   [16, 'icon_16x16.png'],
@@ -34,7 +31,7 @@ const sizes = [
 ]
 
 for (const [px, name] of sizes) {
-  run('sips', ['-z', String(px), String(px), padded, '--out', join(iconsetDir, name)])
+  run('sips', ['-z', String(px), String(px), input, '--out', join(iconsetDir, name)])
 }
 
 run('iconutil', ['-c', 'icns', iconsetDir, '-o', icnsOut])

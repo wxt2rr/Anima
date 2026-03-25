@@ -1,7 +1,7 @@
 import { 
   Settings, MessageSquare, Database, Globe, 
   Cpu, Search, Plus, Trash2, CheckCircle2, XCircle, RefreshCw,
-  Copy, ChevronDown, ChevronRight, Eye, EyeOff, ExternalLink, Wand2, FolderOpen, Sparkles, Mic, Info, Keyboard, X, ArrowLeft
+  Copy, ChevronDown, ChevronRight, Eye, EyeOff, ExternalLink, Wand2, FolderOpen, Sparkles, Mic, Info, Keyboard, X, ArrowLeft, Bell
 } from 'lucide-react'
 import { resolveBackendBaseUrl, useStore, type Provider, type ProviderModel, type VoiceModelEntry } from '../store/useStore'
 import { THEMES, ThemeColor } from '../lib/themes'
@@ -1144,6 +1144,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           skills: 'Skills',
           network: 'Network',
           data: 'Data',
+          statusCenter: 'Status Center',
           voice: 'Voice',
           shortcuts: 'Shortcuts',
           about: 'About'
@@ -1248,6 +1249,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           skills: '技能',
           network: '网络',
           data: '数据',
+          statusCenter: '状态中心',
           voice: '语音',
           shortcuts: '快捷键',
           about: '关于'
@@ -1352,6 +1354,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           skills: 'スキル',
           network: 'ネットワーク',
           data: 'データ',
+          statusCenter: 'ステータスセンター',
           voice: '音声',
           shortcuts: 'ショートカット',
           about: '情報'
@@ -1455,6 +1458,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
     { id: 'skills', label: t.tabs.skills, icon: Wand2 },
     { id: 'network', label: t.tabs.network, icon: Globe },
     { id: 'data', label: t.tabs.data, icon: Database },
+    { id: 'statusCenter', label: t.tabs.statusCenter, icon: Bell },
     { id: 'voice', label: t.tabs.voice, icon: Mic },
     { id: 'shortcuts', label: t.tabs.shortcuts, icon: Keyboard },
     { id: 'about', label: t.tabs.about, icon: Info },
@@ -1469,6 +1473,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
     if (activeTab === 'skills') return <SkillsSettings />
     if (activeTab === 'network') return <NetworkSettings />
     if (activeTab === 'data') return <DataSettings />
+    if (activeTab === 'statusCenter') return <StatusCenterSettings />
     if (activeTab === 'voice') return <VoiceSettings t={t} />
     if (activeTab === 'shortcuts') return <ShortcutsSettings />
     if (activeTab === 'about') return <AboutSettings />
@@ -1564,6 +1569,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           skills: 'Skills',
           network: 'Network',
           data: 'Data',
+          statusCenter: 'Status Center',
           voice: 'Voice',
           shortcuts: 'Shortcuts',
           about: 'About'
@@ -1597,6 +1603,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           skills: '技能',
           network: '网络',
           data: '数据',
+          statusCenter: '状态中心',
           voice: '语音',
           shortcuts: '快捷键',
           about: '关于'
@@ -1630,6 +1637,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           skills: 'スキル',
           network: 'ネットワーク',
           data: 'データ',
+          statusCenter: 'ステータスセンター',
           voice: '音声',
           shortcuts: 'ショートカット',
           about: '情報'
@@ -1698,6 +1706,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
     { id: 'skills', label: t.tabs.skills, icon: Wand2 },
     { id: 'network', label: t.tabs.network, icon: Globe },
     { id: 'data', label: t.tabs.data, icon: Database },
+    { id: 'statusCenter', label: t.tabs.statusCenter, icon: Bell },
     { id: 'voice', label: t.tabs.voice, icon: Mic },
     { id: 'shortcuts', label: t.tabs.shortcuts, icon: Keyboard },
     { id: 'about', label: t.tabs.about, icon: Info }
@@ -1713,6 +1722,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
     if (activeTab === 'skills') return <SkillsSettings />
     if (activeTab === 'network') return <NetworkSettings />
     if (activeTab === 'data') return <DataSettings />
+    if (activeTab === 'statusCenter') return <StatusCenterSettings />
     if (activeTab === 'voice') return <VoiceSettings t={t} />
     if (activeTab === 'shortcuts') return <ShortcutsSettings />
     if (activeTab === 'about') return <AboutSettings />
@@ -2373,6 +2383,324 @@ function CoderSettings() {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function StatusCenterSettings() {
+  const settings = useStore((s) => s.settings)
+  const updateSettings = useStore((s) => s.updateSettings)
+  const [busyKey, setBusyKey] = useState('')
+  const language = (settings?.language || 'en') as 'en' | 'zh' | 'ja'
+  const t = useMemo(() => {
+    const dict = {
+      en: {
+        title: 'Status Center',
+        desc: 'Configure menu bar tray icons and runtime state display.',
+        trayEnabled: 'Enable Menu Bar Icon',
+        trayAnimated: 'Enable Running Animation',
+        frameInterval: 'Animation Interval (ms)',
+        fallback: 'Fallback To Built-in Icon',
+        states: 'State Icons',
+        test: 'Test State',
+        upload: 'Upload',
+        icon22: '22px',
+        idle: 'Idle',
+        running: 'Running',
+        waiting: 'Waiting User',
+        done: 'Done',
+        error: 'Error',
+        open: 'Open',
+        clear: 'Clear',
+        frames: 'Running Frames',
+        noFrames: 'No frames uploaded'
+      },
+      zh: {
+        title: '状态中心',
+        desc: '配置菜单栏图标与运行状态显示。',
+        trayEnabled: '启用菜单栏图标',
+        trayAnimated: '启用运行中动画',
+        frameInterval: '动画间隔 (ms)',
+        fallback: '图标失败时回退内置图标',
+        states: '状态图标',
+        test: '测试状态',
+        upload: '上传',
+        icon22: '22px',
+        idle: '空闲',
+        running: '运行中',
+        waiting: '等待用户',
+        done: '完成',
+        error: '错误',
+        open: '打开',
+        clear: '清空',
+        frames: '运行中动画帧',
+        noFrames: '未上传动画帧'
+      },
+      ja: {
+        title: 'ステータスセンター',
+        desc: 'メニューバーアイコンと実行状態表示を設定します。',
+        trayEnabled: 'メニューバーアイコンを有効化',
+        trayAnimated: '実行中アニメーションを有効化',
+        frameInterval: 'アニメ間隔 (ms)',
+        fallback: '失敗時は内蔵アイコンへフォールバック',
+        states: '状態アイコン',
+        test: '状態テスト',
+        upload: 'アップロード',
+        icon22: '22px',
+        idle: '待機',
+        running: '実行中',
+        waiting: 'ユーザー待ち',
+        done: '完了',
+        error: 'エラー',
+        open: '開く',
+        clear: 'クリア',
+        frames: '実行中フレーム',
+        noFrames: 'フレーム未設定'
+      }
+    } as const
+    return dict[language] || dict.en
+  }, [language])
+
+  const normalize = useCallback((raw: any) => {
+    const trayRaw = raw?.tray && typeof raw.tray === 'object' ? raw.tray : {}
+    const icon = (entry: any) => {
+      const sizesRaw = entry?.sizes && typeof entry.sizes === 'object' ? entry.sizes : {}
+      return {
+        sizes: {
+          '16': String(sizesRaw['16'] || '').trim(),
+          '18': String(sizesRaw['18'] || '').trim(),
+          '22': String(sizesRaw['22'] || '').trim()
+        },
+        frames: Array.isArray(entry?.frames) ? entry.frames.map((x: any) => String(x || '').trim()).filter(Boolean) : []
+      }
+    }
+    return {
+      tray: {
+        enabled: trayRaw.enabled !== false,
+        animated: trayRaw.animated !== false,
+        frameIntervalMs: Number(trayRaw.frameIntervalMs || 260),
+        fallbackToBuiltin: trayRaw.fallbackToBuiltin !== false,
+        icons: {
+          idle: icon(trayRaw.icons?.idle),
+          running: icon(trayRaw.icons?.running),
+          waiting_user: icon(trayRaw.icons?.waiting_user),
+          done: icon(trayRaw.icons?.done),
+          error: icon(trayRaw.icons?.error)
+        }
+      }
+    }
+  }, [])
+
+  const statusCenter = useMemo(() => normalize((settings as any)?.statusCenter), [normalize, settings])
+
+  const saveStatusCenter = useCallback(
+    (next: any) => {
+      updateSettings({ statusCenter: next } as any)
+      void window.anima?.statusCenter?.applySettings?.({ settings: next })
+    },
+    [updateSettings]
+  )
+
+  const updateTray = useCallback((patch: Record<string, any>) => {
+    const next = normalize(statusCenter)
+    next.tray = { ...next.tray, ...patch }
+    saveStatusCenter(next)
+  }, [normalize, saveStatusCenter, statusCenter])
+
+  const uploadIcon = useCallback(async (stateKey: 'idle' | 'running' | 'waiting_user' | 'done' | 'error') => {
+    const picker = await window.anima?.window?.pickFiles?.()
+    if (!picker?.ok || picker.canceled || !picker.paths?.length) return
+    const sourcePath = String(picker.paths[0] || '').trim()
+    if (!sourcePath) return
+    setBusyKey(stateKey)
+    try {
+      const saved = await window.anima?.statusCenter?.uploadTrayIcon?.({ state: stateKey, size: 22, sourcePath })
+      if (!saved?.ok || !saved.path) return
+      const next = normalize(statusCenter)
+      next.tray.icons[stateKey].sizes['22'] = String(saved.path)
+      saveStatusCenter(next)
+      void window.anima?.statusCenter?.reloadIcons?.()
+    } finally {
+      setBusyKey('')
+    }
+  }, [normalize, saveStatusCenter, statusCenter])
+
+  const clearIcon = useCallback((stateKey: 'idle' | 'running' | 'waiting_user' | 'done' | 'error') => {
+    const next = normalize(statusCenter)
+    next.tray.icons[stateKey].sizes['22'] = ''
+    saveStatusCenter(next)
+    void window.anima?.statusCenter?.reloadIcons?.()
+  }, [normalize, saveStatusCenter, statusCenter])
+
+  const uploadRunningFrames = useCallback(async () => {
+    const picker = await window.anima?.window?.pickFiles?.()
+    if (!picker?.ok || picker.canceled || !picker.paths?.length) return
+    setBusyKey('running:frames')
+    try {
+      const savedPaths: string[] = []
+      for (const p of picker.paths) {
+        const sourcePath = String(p || '').trim()
+        if (!sourcePath) continue
+        const saved = await window.anima?.statusCenter?.uploadTrayFrame?.({ state: 'running', sourcePath })
+        if (saved?.ok && saved.path) savedPaths.push(String(saved.path))
+      }
+      if (!savedPaths.length) return
+      const next = normalize(statusCenter)
+      const existing = Array.isArray(next.tray.icons.running.frames) ? next.tray.icons.running.frames : []
+      const merged = [...existing, ...savedPaths].map((x: any) => String(x || '').trim()).filter(Boolean)
+      next.tray.icons.running.frames = Array.from(new Set(merged))
+      saveStatusCenter(next)
+      void window.anima?.statusCenter?.reloadIcons?.()
+    } finally {
+      setBusyKey('')
+    }
+  }, [normalize, saveStatusCenter, statusCenter])
+
+  const removeRunningFrame = useCallback((idx: number) => {
+    const next = normalize(statusCenter)
+    const frames = Array.isArray(next.tray.icons.running.frames) ? next.tray.icons.running.frames : []
+    next.tray.icons.running.frames = frames.filter((_: any, i: number) => i !== idx)
+    saveStatusCenter(next)
+    void window.anima?.statusCenter?.reloadIcons?.()
+  }, [normalize, saveStatusCenter, statusCenter])
+
+  const clearRunningFrames = useCallback(() => {
+    const next = normalize(statusCenter)
+    next.tray.icons.running.frames = []
+    saveStatusCenter(next)
+    void window.anima?.statusCenter?.reloadIcons?.()
+  }, [normalize, saveStatusCenter, statusCenter])
+
+  const testState = useCallback((state: 'idle' | 'running' | 'waiting_user' | 'done' | 'error') => {
+    const titleByState: Record<'idle' | 'running' | 'waiting_user' | 'done' | 'error', string> = {
+      idle: t.idle,
+      running: t.running,
+      waiting_user: t.waiting,
+      done: t.done,
+      error: t.error
+    }
+    void window.anima?.statusCenter?.setState?.({ state, title: titleByState[state] || state })
+  }, [t])
+
+  const stateRows: Array<{ key: 'idle' | 'running' | 'waiting_user' | 'done' | 'error'; label: string }> = [
+    { key: 'idle', label: t.idle },
+    { key: 'running', label: t.running },
+    { key: 'waiting_user', label: t.waiting },
+    { key: 'done', label: t.done },
+    { key: 'error', label: t.error }
+  ]
+
+  const iconPath = (stateKey: 'idle' | 'running' | 'waiting_user' | 'done' | 'error') =>
+    String(statusCenter.tray.icons[stateKey].sizes['22'] || '').trim()
+  const runningFrames = Array.isArray(statusCenter.tray.icons.running.frames) ? statusCenter.tray.icons.running.frames : []
+
+  return (
+    <div className="p-7 space-y-5">
+      <Card>
+        <CardContent className="pt-5 space-y-4">
+          <div>
+            <h3 className="text-[13px] font-semibold">{t.title}</h3>
+            <p className="text-[13px] text-muted-foreground">{t.desc}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2">
+              <Label>{t.trayEnabled}</Label>
+              <Switch checked={Boolean(statusCenter.tray.enabled)} onCheckedChange={(v) => updateTray({ enabled: Boolean(v) })} />
+            </div>
+            <div className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2">
+              <Label>{t.trayAnimated}</Label>
+              <Switch checked={Boolean(statusCenter.tray.animated)} onCheckedChange={(v) => updateTray({ animated: Boolean(v) })} />
+            </div>
+            <div className="space-y-2">
+              <Label>{t.frameInterval}</Label>
+              <Input
+                value={String(statusCenter.tray.frameIntervalMs || 260)}
+                onChange={(e) => updateTray({ frameIntervalMs: Number(e.target.value || 260) })}
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2">
+              <Label>{t.fallback}</Label>
+              <Switch checked={Boolean(statusCenter.tray.fallbackToBuiltin)} onCheckedChange={(v) => updateTray({ fallbackToBuiltin: Boolean(v) })} />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Label>{t.test}</Label>
+            <Button size="sm" variant="outline" onClick={() => testState('idle')}>{t.idle}</Button>
+            <Button size="sm" variant="outline" onClick={() => testState('running')}>{t.running}</Button>
+            <Button size="sm" variant="outline" onClick={() => testState('waiting_user')}>{t.waiting}</Button>
+            <Button size="sm" variant="outline" onClick={() => testState('done')}>{t.done}</Button>
+            <Button size="sm" variant="outline" onClick={() => testState('error')}>{t.error}</Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="pt-5 space-y-4">
+          <h3 className="text-[13px] font-semibold">{t.states}</h3>
+          {stateRows.map((row) => (
+            <div key={row.key} className="rounded-md border border-border bg-background p-3 space-y-2">
+              <div className="font-medium">{row.label}</div>
+              <div className="grid grid-cols-1 gap-2">
+                <div className="rounded-md border border-border px-2 py-2 space-y-1">
+                  <div className="text-xs text-muted-foreground">{t.icon22}</div>
+                  <div className="text-xs truncate text-muted-foreground">{iconPath(row.key) || '-'}</div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busyKey === row.key}
+                      onClick={() => void uploadIcon(row.key)}
+                    >
+                      {t.upload}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => clearIcon(row.key)}>
+                      {t.clear}
+                    </Button>
+                    {iconPath(row.key) ? (
+                      <Button size="sm" variant="ghost" onClick={() => void window.anima?.shell?.openPath?.(iconPath(row.key))}>
+                        {t.open}
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+              {row.key === 'running' ? (
+                <div className="rounded-md border border-border px-2 py-2 space-y-2">
+                  <div className="text-xs text-muted-foreground">{t.frames}</div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busyKey === 'running:frames'}
+                      onClick={() => void uploadRunningFrames()}
+                    >
+                      {t.upload}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={clearRunningFrames}>
+                      {t.clear}
+                    </Button>
+                  </div>
+                  <div className="space-y-1">
+                    {runningFrames.length ? runningFrames.map((p: string, idx: number) => (
+                      <div key={`${p}-${idx}`} className="flex items-center gap-1">
+                        <div className="text-xs truncate text-muted-foreground flex-1">{p}</div>
+                        <Button size="sm" variant="ghost" onClick={() => void window.anima?.shell?.openPath?.(p)}>
+                          {t.open}
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => removeRunningFrame(idx)}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    )) : (
+                      <div className="text-xs text-muted-foreground">{t.noFrames}</div>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </CardContent>
+      </Card>
     </div>
   )
 }
