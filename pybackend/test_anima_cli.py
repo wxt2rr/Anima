@@ -95,6 +95,7 @@ class TestAnimaCli(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(payload.get("ok"))
         self.assertIn("chat", payload.get("groups", {}))
+        self.assertIn("status_center", payload.get("groups", {}))
 
     def test_chat_stream_project_set_and_get(self) -> None:
         code1, out1 = self._run(["chat", "set", "stream", "on", "--json"])
@@ -148,6 +149,23 @@ class TestAnimaCli(unittest.TestCase):
         code2, out2 = self._run(["coder", "set", "command", "codex", "--yes", "--json"])
         self.assertEqual(code2, 0)
         self.assertTrue(out2.get("ok"))
+
+    def test_status_center_set_get_tray_enabled(self) -> None:
+        code1, out1 = self._run(["status_center", "set", "tray_enabled", "on", "--json"])
+        self.assertEqual(code1, 0)
+        self.assertTrue(out1.get("ok"))
+        code2, out2 = self._run(["status_center", "get", "tray_enabled", "--json"])
+        self.assertEqual(code2, 0)
+        self.assertEqual(out2.get("value"), True)
+
+    def test_status_center_set_get_running_frames(self) -> None:
+        value = '["/tmp/frame1.png","/tmp/frame2.png"]'
+        code1, out1 = self._run(["status_center", "set", "running_frames", value, "--json"])
+        self.assertEqual(code1, 0)
+        self.assertTrue(out1.get("ok"))
+        code2, out2 = self._run(["status_center", "get", "running_frames", "--json"])
+        self.assertEqual(code2, 0)
+        self.assertEqual(out2.get("value"), ["/tmp/frame1.png", "/tmp/frame2.png"])
 
 
 if __name__ == "__main__":
