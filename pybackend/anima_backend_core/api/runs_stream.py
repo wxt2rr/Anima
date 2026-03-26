@@ -16,7 +16,7 @@ from ..llm.adapter import call_chat_completion, call_chat_completion_stream, cre
 from ..tools.executor import execute_tool, make_tool_message, select_tools
 from ..runtime.graph import inject_system_message
 from ..runtime.sanitize import sanitize_history_messages
-from .runs_compression import apply_persistent_compression, apply_thinking_level
+from .runs_compression import apply_persistent_compression, apply_thinking_level, build_usage_state, normalize_or_estimate_usage
 from .runs_request import prepare_messages_for_run, resolve_runtime_options
 
 _DANGEROUS_APPROVAL_PREFIX = "ANIMA_DANGEROUS_COMMAND_APPROVAL:"
@@ -490,12 +490,23 @@ def handle_post_runs_non_stream_via_stream_executor(body: Dict[str, Any]) -> Tup
                 "approval": approval,
             }
 
+        usage_final, usage_source = normalize_or_estimate_usage(
+            usage=out.get("usage"),
+            settings_obj=settings_obj,
+            composer=composer,
+            messages=out.get("messages") if isinstance(out.get("messages"), list) else prepared,
+        )
+        try:
+            merge_chat_meta(thread_id, {"usageState": build_usage_state(usage_final, usage_source)})
+        except Exception:
+            pass
+
         update_run(
             run_id,
             "succeeded",
             {
                 "content": out.get("final_content") or "",
-                "usage": out.get("usage"),
+                "usage": usage_final,
                 "traces": out.get("traces"),
                 "artifacts": out.get("artifacts"),
                 "reasoning": out.get("reasoning") or "",
@@ -509,7 +520,7 @@ def handle_post_runs_non_stream_via_stream_executor(body: Dict[str, Any]) -> Tup
             "runId": run_id,
             "threadId": thread_id,
             "content": str(out.get("final_content") or ""),
-            "usage": out.get("usage"),
+            "usage": usage_final,
             "traces": out.get("traces"),
             "artifacts": out.get("artifacts"),
             "reasoning": str(out.get("reasoning") or ""),
@@ -677,12 +688,23 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
                 return
             return
 
+        usage_final, usage_source = normalize_or_estimate_usage(
+            usage=out.get("usage"),
+            settings_obj=settings_obj,
+            composer=composer,
+            messages=out.get("messages") if isinstance(out.get("messages"), list) else prepared,
+        )
+        try:
+            merge_chat_meta(thread_id, {"usageState": build_usage_state(usage_final, usage_source)})
+        except Exception:
+            pass
+
         update_run(
             run_id,
             "succeeded",
             {
                 "content": out.get("final_content") or "",
-                "usage": out.get("usage"),
+                "usage": usage_final,
                 "traces": out.get("traces"),
                 "artifacts": out.get("artifacts"),
                 "reasoning": out.get("reasoning") or "",
@@ -694,7 +716,7 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
             emit_event(
                 {
                     "type": "run_done",
-                    "usage": out.get("usage"),
+                    "usage": usage_final,
                     "reasoning": out.get("reasoning") or "",
                     "traces": out.get("traces"),
                     "artifacts": out.get("artifacts"),

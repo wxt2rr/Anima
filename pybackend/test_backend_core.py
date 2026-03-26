@@ -773,7 +773,10 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                     with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
                         with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
                             with patch("anima_backend_core.api.runs_stream.get_chat", return_value={"messages": history}):
-                                with patch("anima_backend_core.api.runs_stream.get_chat_meta", return_value={}):
+                                with patch(
+                                    "anima_backend_core.api.runs_stream.get_chat_meta",
+                                    return_value={"usageState": {"currentTotalTokens": 99999, "source": "provider", "updatedAt": 1}},
+                                ):
                                     with patch("anima_backend_core.api.runs_stream.merge_chat_meta", side_effect=_fake_merge_chat_meta):
                                         handle_post_runs_stream(h, body)
 
@@ -828,7 +831,10 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                     with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
                         with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
                             with patch("anima_backend_core.api.runs_stream.get_chat", return_value={"messages": history}):
-                                with patch("anima_backend_core.api.runs_stream.get_chat_meta", return_value={}):
+                                with patch(
+                                    "anima_backend_core.api.runs_stream.get_chat_meta",
+                                    return_value={"usageState": {"currentTotalTokens": 99999, "source": "provider", "updatedAt": 1}},
+                                ):
                                     with patch("anima_backend_core.api.runs_stream.merge_chat_meta", side_effect=_fake_merge_chat_meta):
                                         handle_post_runs_stream(h, body)
 

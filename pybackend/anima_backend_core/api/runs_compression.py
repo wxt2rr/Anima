@@ -14,6 +14,77 @@ from .runs_common import estimate_message_tokens
 from .runs_common import estimate_tokens_text
 
 
+def _to_int(value: Any) -> Optional[int]:
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except Exception:
+        return None
+
+
+def estimate_context_usage_total(
+    *,
+    settings_obj: Dict[str, Any],
+    composer: Dict[str, Any],
+    messages: List[Dict[str, Any]],
+) -> int:
+    usable = [m for m in messages if isinstance(m, dict) and str(m.get("role") or "") not in ("system", "tool")]
+    user_msg = ""
+    for m in reversed(usable):
+        if str(m.get("role") or "") == "user" and isinstance(m.get("content"), str) and str(m.get("content") or "").strip():
+            user_msg = str(m.get("content") or "").strip()
+            break
+    sys_text = build_system_prompt_text(settings_obj, composer, user_msg)
+    sys_tokens = estimate_tokens_text(sys_text)
+    msg_tokens = sum(estimate_message_tokens(m) for m in usable)
+    return max(0, int(sys_tokens + msg_tokens))
+
+
+def normalize_or_estimate_usage(
+    *,
+    usage: Any,
+    settings_obj: Dict[str, Any],
+    composer: Dict[str, Any],
+    messages: List[Dict[str, Any]],
+) -> Tuple[Dict[str, int], str]:
+    out_usage = usage if isinstance(usage, dict) else {}
+    prompt = _to_int(out_usage.get("prompt_tokens")) if isinstance(out_usage, dict) else None
+    completion = _to_int(out_usage.get("completion_tokens")) if isinstance(out_usage, dict) else None
+    total = _to_int(out_usage.get("total_tokens")) if isinstance(out_usage, dict) else None
+
+    if total is None and prompt is not None and completion is not None:
+        total = int(prompt + completion)
+
+    source = "provider"
+    if total is None:
+        total = estimate_context_usage_total(settings_obj=settings_obj, composer=composer, messages=messages)
+        prompt = int(total)
+        completion = 0
+        source = "estimated"
+
+    if prompt is None:
+        prompt = max(0, int(total))
+    if completion is None:
+        completion = max(0, int(total - prompt))
+
+    normalized = {
+        "prompt_tokens": max(0, int(prompt)),
+        "completion_tokens": max(0, int(completion)),
+        "total_tokens": max(0, int(total)),
+    }
+    return normalized, source
+
+
+def build_usage_state(usage: Dict[str, int], source: str) -> Dict[str, Any]:
+    total = max(0, int(usage.get("total_tokens") or 0))
+    return {
+        "currentTotalTokens": total,
+        "source": str(source or "provider"),
+        "updatedAt": now_ms(),
+    }
+
+
 def apply_thinking_level(
     provider: Any, composer: Dict[str, Any], extra_body: Optional[Dict[str, Any]], max_tokens: int
 ) -> tuple[Optional[Dict[str, Any]], int]:
@@ -248,29 +319,20 @@ def apply_persistent_compression(
     else:
         working_composer.pop("historySummary", None)
 
-    user_msg = ""
-    for m in reversed(window_msgs):
-        if str(m.get("role") or "") == "user" and isinstance(m.get("content"), str) and str(m.get("content") or "").strip():
-            user_msg = str(m.get("content") or "").strip()
-            break
-    sys_text = build_system_prompt_text(settings_obj, working_composer, user_msg)
-    sys_tokens = estimate_tokens_text(sys_text)
-    msg_tokens = sum(estimate_message_tokens(m) for m in window_msgs)
-    total = sys_tokens + msg_tokens
+    usage_state = chat_meta.get("usageState") if isinstance(chat_meta.get("usageState"), dict) else {}
+    current_total = _to_int(usage_state.get("currentTotalTokens"))
+    if current_total is None and isinstance(compression.get("usageState"), dict):
+        current_total = _to_int((compression.get("usageState") or {}).get("currentTotalTokens"))
 
-    if total <= target_tokens and not is_manual:
+    if current_total is None and not is_manual:
+        return window_msgs, working_composer, None
+    if current_total is not None and current_total <= target_tokens and not is_manual:
         return window_msgs, working_composer, None
     if len(window_msgs) <= keep_recent:
         return window_msgs, working_composer, None
 
-    dropped: List[Dict[str, Any]] = []
-    remaining = list(window_msgs)
-    while remaining and len(remaining) > keep_recent:
-        if sys_tokens + sum(estimate_message_tokens(m) for m in remaining) <= target_tokens and not is_manual:
-            break
-        dropped.append(remaining.pop(0))
-        if is_manual and len(remaining) <= keep_recent:
-            break
+    dropped: List[Dict[str, Any]] = list(window_msgs[:-keep_recent]) if len(window_msgs) > keep_recent else []
+    remaining: List[Dict[str, Any]] = list(window_msgs[-keep_recent:]) if len(window_msgs) > keep_recent else list(window_msgs)
     if not dropped:
         return remaining, working_composer, None
 

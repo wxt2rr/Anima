@@ -1,5 +1,5 @@
 import { Fragment, useState, useRef, useEffect, useMemo, useCallback, type ReactNode, type DragEvent, type ClipboardEvent } from 'react'
-import { Send, StopCircle, Paperclip, PanelLeftOpen, MessageSquarePlus, Wrench, Sparkles, X, ChevronDown, Mic, Folder, Brain, Eye, Check, GitBranch } from 'lucide-react'
+import { Send, StopCircle, Paperclip, PanelLeftOpen, MessageSquarePlus, Wrench, Sparkles, X, ChevronDown, Mic, Folder, Brain, Eye, Check, GitBranch, Copy } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -343,6 +343,7 @@ function AppLoaded(): JSX.Element {
   const [traceDetailOpenByKey, setTraceDetailOpenByKey] = useState<Record<string, boolean>>({})
   const [reasoningOpenByMsgId, setReasoningOpenByMsgId] = useState<Record<string, boolean>>({})
   const [collapsedTurnOpenById, setCollapsedTurnOpenById] = useState<Record<string, boolean>>({})
+  const [copiedMessageId, setCopiedMessageId] = useState('')
   const audioContextRef = useRef<AudioContext | null>(null)
   const lastSoundAtRef = useRef(0)
   const abortControllerRef = useRef<AbortController | null>(null)
@@ -391,9 +392,32 @@ function AppLoaded(): JSX.Element {
   const turnStabilizeRafByIdRef = useRef<Map<string, number>>(new Map())
   const highlightUserMsgTimerRef = useRef<number | null>(null)
   const dangerousApprovalThreadsRef = useRef<Set<string>>(new Set())
+  const copiedMessageTimerRef = useRef<number | null>(null)
   const [highlightUserMsgId, setHighlightUserMsgId] = useState('')
   const [userNavItems, setUserNavItems] = useState<Array<{ id: string; topRatio: number; widthPx: number; content: string }>>([])
   const [navHover, setNavHover] = useState<{ id: string; topRatio: number; content: string } | null>(null)
+
+  const handleCopyMessage = useCallback(async (messageId: string, text: string) => {
+    const content = String(text || '')
+    if (!content.trim()) return
+    try {
+      await navigator.clipboard.writeText(content)
+      setCopiedMessageId(messageId)
+      if (copiedMessageTimerRef.current != null) window.clearTimeout(copiedMessageTimerRef.current)
+      copiedMessageTimerRef.current = window.setTimeout(() => setCopiedMessageId(''), 1200)
+    } catch {
+      return
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (copiedMessageTimerRef.current != null) {
+        window.clearTimeout(copiedMessageTimerRef.current)
+        copiedMessageTimerRef.current = null
+      }
+    }
+  }, [])
   
   const { 
     messages, 
@@ -3900,7 +3924,7 @@ function AppLoaded(): JSX.Element {
                       ) : null}
                       {(() => {
                         const body = msg.role === 'user' ? (
-                        <div className={`py-3 flex justify-end ${msg.id === lastUserMessageId ? 'sticky top-2 z-20' : ''}`}>
+                        <div className={`group py-3 flex justify-end ${msg.id === lastUserMessageId ? 'sticky top-2 z-20' : ''}`}>
                            <div className="flex flex-col items-end gap-2">
                               <div
                                 ref={(el) => {
@@ -3941,10 +3965,20 @@ function AppLoaded(): JSX.Element {
                                   </div>
                                 )
                               })()}
+                              <button
+                                type="button"
+                                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/20 transition-all ${
+                                  copiedMessageId === String(msg.id || '') ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                                }`}
+                                onClick={() => void handleCopyMessage(String(msg.id || ''), String(msg.content || ''))}
+                                title={copiedMessageId === String(msg.id || '') ? '已复制' : '复制'}
+                              >
+                                {copiedMessageId === String(msg.id || '') ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                              </button>
                            </div>
                         </div>
                       ) : msg.role === 'tool' ? (
-                        <div className="py-0.5">
+                        <div className="py-0.5 group">
                             <AnimatePresence initial={false}>
                               {!shouldHideProcess && Array.isArray(msg.meta?.toolTraces) && msg.meta?.toolTraces.length > 0 ? (
                                 <motion.div
@@ -4535,7 +4569,7 @@ function AppLoaded(): JSX.Element {
                             </AnimatePresence>
                         </div>
                       ) : (
-                        <div className="py-0.5">
+                        <div className="py-0.5 group">
                           <div className="space-y-0.5">
                             {(() => {
                               if (shouldHideProcess) return null
@@ -4801,6 +4835,16 @@ function AppLoaded(): JSX.Element {
                                 {msg.meta.totalTokens}
                               </div>
                             )}
+                            <button
+                              type="button"
+                              className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/20 transition-all ${
+                                copiedMessageId === String(msg.id || '') ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                              }`}
+                              onClick={() => void handleCopyMessage(String(msg.id || ''), String(msg.content || ''))}
+                              title={copiedMessageId === String(msg.id || '') ? '已复制' : '复制'}
+                            >
+                              {copiedMessageId === String(msg.id || '') ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                            </button>
 
                           </div>
                         </div>
@@ -4964,7 +5008,7 @@ function AppLoaded(): JSX.Element {
                             )}
                             <button
                               type="button"
-                              className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-background border border-black/6 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                              className="absolute top-1 right-1 h-5 w-5 rounded-full bg-background/95 border border-black/10 shadow-sm opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex items-center justify-center"
                               onClick={() => updateComposer({ attachments: composer.attachments.filter((x) => x.id !== a.id) })}
                             >
                               <X className="h-3 w-3" />

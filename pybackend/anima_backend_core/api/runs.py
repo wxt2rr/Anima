@@ -6,7 +6,7 @@ from http import HTTPStatus
 from typing import Any, Dict, List, Optional, Tuple
 
 from anima_backend_shared.chat import apply_attachments_inline
-from anima_backend_shared.database import create_run, get_chat, get_run, update_run
+from anima_backend_shared.database import create_run, get_chat, get_run, merge_chat_meta, update_run
 from anima_backend_shared.http import json_response, read_body_json
 from anima_backend_shared.settings import load_settings
 from anima_backend_shared.util import now_ms, preview_json
@@ -14,7 +14,7 @@ from anima_backend_shared.util import now_ms, preview_json
 from ..llm.adapter import create_provider
 from ..runtime.graph import inject_system_message
 from ..tools.executor import execute_tool, make_tool_message, select_tools
-from .runs_compression import apply_persistent_compression, apply_thinking_level
+from .runs_compression import apply_persistent_compression, apply_thinking_level, build_usage_state, normalize_or_estimate_usage
 from .runs_request import resolve_runtime_options
 from .runs_stream import _run_tool_loop, handle_post_runs_non_stream_via_stream_executor
 
@@ -288,11 +288,20 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
                     )
                     return
 
+                output_messages = out.get("messages")
                 content = str(out.get("final_content") or "")
-                usage = out.get("usage")
+                usage, usage_source = normalize_or_estimate_usage(
+                    usage=out.get("usage"),
+                    settings_obj=settings_obj,
+                    composer=composer,
+                    messages=output_messages if isinstance(output_messages, list) else resumed_messages,
+                )
                 reasoning = str(out.get("reasoning") or "")
                 rate_limit = out.get("rate_limit")
-                output_messages = out.get("messages")
+                try:
+                    merge_chat_meta(str(thread_id or run_id), {"usageState": build_usage_state(usage, usage_source)})
+                except Exception:
+                    pass
 
                 update_run(
                     run_id,
@@ -479,13 +488,22 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
             )
             return
 
+        output_messages = out.get("messages")
         content = str(out.get("final_content") or "")
-        usage = out.get("usage")
+        usage, usage_source = normalize_or_estimate_usage(
+            usage=out.get("usage"),
+            settings_obj=settings_obj,
+            composer=composer,
+            messages=output_messages if isinstance(output_messages, list) else prepared,
+        )
         traces = out.get("traces")
         artifacts = out.get("artifacts")
         reasoning = str(out.get("reasoning") or "")
         rate_limit = out.get("rate_limit")
-        output_messages = out.get("messages")
+        try:
+            merge_chat_meta(str(thread_id or run_id), {"usageState": build_usage_state(usage, usage_source)})
+        except Exception:
+            pass
 
         update_run(
             run_id,

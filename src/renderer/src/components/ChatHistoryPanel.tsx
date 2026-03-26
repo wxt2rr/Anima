@@ -482,10 +482,10 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
                                 <div
                                   key={chat.id}
                                   onClick={() => void setActiveChat(chat.id)}
-                                  className={`group relative flex items-center gap-2 px-2.5 py-1 rounded-md cursor-pointer transition-all duration-200 ${
+                                  className={`group relative flex items-center gap-2 px-2.5 py-1 cursor-pointer transition-all duration-200 ${
                                     active
-                                      ? 'bg-black/5 text-foreground'
-                                      : 'text-muted-foreground hover:bg-black/5 hover:text-foreground'
+                                      ? 'rounded-xl bg-black/5 text-foreground'
+                                      : 'rounded-md text-muted-foreground hover:bg-black/5 hover:text-foreground'
                                   }`}
                                 >
                                   {/* 占位与项目图标同宽，保证对话标题与项目标题左对齐 */}
