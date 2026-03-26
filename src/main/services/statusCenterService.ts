@@ -177,14 +177,25 @@ export function createStatusCenterService(getMainWindow: () => BrowserWindow | n
     return path
   }
 
+  const resolveFirstFramePath = (state: RunStateKind) => {
+    const frames = settings.tray.icons[state]?.frames || []
+    for (const item of frames) {
+      const pick = safeText(item)
+      if (pick && existsSync(pick)) return pick
+    }
+    return ''
+  }
+
   const getPreferredIconPathForState = (state: RunStateKind): string => {
+    const firstFrame = resolveFirstFramePath(state)
+    if (firstFrame) return firstFrame
     return resolveIconPath(state, '22')
   }
 
   const resolveFramePath = (state: RunStateKind, idx: number) => {
-    const frames = settings.tray.icons[state]?.frames || []
+    const frames = (settings.tray.icons[state]?.frames || []).map((x) => safeText(x)).filter((x) => x && existsSync(x))
     if (!frames.length) return ''
-    const pick = safeText(frames[idx % frames.length])
+    const pick = frames[idx % frames.length]
     if (!pick || !existsSync(pick)) return ''
     return pick
   }
@@ -192,8 +203,8 @@ export function createStatusCenterService(getMainWindow: () => BrowserWindow | n
   const imageForCurrent = () => {
     const display: '22' = '22'
     const renderSize = 18
-    if (runState.state === 'running' && settings.tray.animated) {
-      const framePath = resolveFramePath('running', frameIndex)
+    if (settings.tray.animated) {
+      const framePath = resolveFramePath(runState.state, frameIndex)
       if (framePath) {
         const img = nativeImage.createFromPath(framePath)
         if (!img.isEmpty()) {
@@ -201,7 +212,7 @@ export function createStatusCenterService(getMainWindow: () => BrowserWindow | n
         }
       }
     }
-    const iconPath = resolveIconPath(runState.state, display)
+    const iconPath = getPreferredIconPathForState(runState.state) || resolveIconPath(runState.state, display)
     if (iconPath) {
       const img = nativeImage.createFromPath(iconPath)
       if (!img.isEmpty()) {
@@ -251,8 +262,8 @@ export function createStatusCenterService(getMainWindow: () => BrowserWindow | n
   const restartAnimation = () => {
     clearAnimation()
     if (!tray) return
-    if (runState.state !== 'running' || !settings.tray.animated) return
-    const frames = settings.tray.icons.running?.frames || []
+    if (!settings.tray.animated) return
+    const frames = (settings.tray.icons[runState.state]?.frames || []).map((x) => safeText(x)).filter((x) => x && existsSync(x))
     if (frames.length <= 1) return
     const interval = clampInt(settings.tray.frameIntervalMs, 120, 1200)
     timer = setInterval(() => {

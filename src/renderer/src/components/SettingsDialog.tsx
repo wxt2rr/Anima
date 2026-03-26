@@ -2391,71 +2391,77 @@ function StatusCenterSettings() {
   const settings = useStore((s) => s.settings)
   const updateSettings = useStore((s) => s.updateSettings)
   const [busyKey, setBusyKey] = useState('')
+  const [backendBaseUrl, setBackendBaseUrl] = useState('')
   const language = (settings?.language || 'en') as 'en' | 'zh' | 'ja'
+
+  useEffect(() => {
+    let canceled = false
+    void resolveBackendBaseUrl()
+      .then((url) => {
+        if (!canceled) setBackendBaseUrl(String(url || '').trim())
+      })
+      .catch(() => {
+        if (!canceled) setBackendBaseUrl('')
+      })
+    return () => {
+      canceled = true
+    }
+  }, [])
   const t = useMemo(() => {
     const dict = {
       en: {
         title: 'Status Center',
         desc: 'Configure menu bar tray icons and runtime state display.',
         trayEnabled: 'Enable Menu Bar Icon',
-        trayAnimated: 'Enable Running Animation',
+        trayAnimated: 'Enable State Animation',
         frameInterval: 'Animation Interval (ms)',
-        fallback: 'Fallback To Built-in Icon',
         states: 'State Icons',
         test: 'Test State',
         upload: 'Upload',
-        icon22: '22px',
         idle: 'Idle',
         running: 'Running',
         waiting: 'Waiting User',
         done: 'Done',
         error: 'Error',
-        open: 'Open',
-        clear: 'Clear',
-        frames: 'Running Frames',
-        noFrames: 'No frames uploaded'
+        frames: 'Image Slots (max 5)',
+        firstAsIcon: 'The first image is used as the icon',
+        iconBadge: 'Icon'
       },
       zh: {
         title: '状态中心',
         desc: '配置菜单栏图标与运行状态显示。',
         trayEnabled: '启用菜单栏图标',
-        trayAnimated: '启用运行中动画',
+        trayAnimated: '启用状态动画',
         frameInterval: '动画间隔 (ms)',
-        fallback: '图标失败时回退内置图标',
         states: '状态图标',
         test: '测试状态',
         upload: '上传',
-        icon22: '22px',
         idle: '空闲',
         running: '运行中',
         waiting: '等待用户',
         done: '完成',
         error: '错误',
-        open: '打开',
-        clear: '清空',
-        frames: '运行中动画帧',
-        noFrames: '未上传动画帧'
+        frames: '图片槽位（最多 5 张）',
+        firstAsIcon: '第 1 张默认作为图标',
+        iconBadge: '图标'
       },
       ja: {
         title: 'ステータスセンター',
         desc: 'メニューバーアイコンと実行状態表示を設定します。',
         trayEnabled: 'メニューバーアイコンを有効化',
-        trayAnimated: '実行中アニメーションを有効化',
+        trayAnimated: '状態アニメーションを有効化',
         frameInterval: 'アニメ間隔 (ms)',
-        fallback: '失敗時は内蔵アイコンへフォールバック',
         states: '状態アイコン',
         test: '状態テスト',
         upload: 'アップロード',
-        icon22: '22px',
         idle: '待機',
         running: '実行中',
         waiting: 'ユーザー待ち',
         done: '完了',
         error: 'エラー',
-        open: '開く',
-        clear: 'クリア',
-        frames: '実行中フレーム',
-        noFrames: 'フレーム未設定'
+        frames: '画像スロット（最大5枚）',
+        firstAsIcon: '1枚目をアイコンとして使用',
+        iconBadge: 'アイコン'
       }
     } as const
     return dict[language] || dict.en
@@ -2471,7 +2477,7 @@ function StatusCenterSettings() {
           '18': String(sizesRaw['18'] || '').trim(),
           '22': String(sizesRaw['22'] || '').trim()
         },
-        frames: Array.isArray(entry?.frames) ? entry.frames.map((x: any) => String(x || '').trim()).filter(Boolean) : []
+        frames: Array.isArray(entry?.frames) ? entry.frames.slice(0, 5).map((x: any) => String(x || '').trim()) : []
       }
     }
     return {
@@ -2479,7 +2485,7 @@ function StatusCenterSettings() {
         enabled: trayRaw.enabled !== false,
         animated: trayRaw.animated !== false,
         frameIntervalMs: Number(trayRaw.frameIntervalMs || 260),
-        fallbackToBuiltin: trayRaw.fallbackToBuiltin !== false,
+        fallbackToBuiltin: true,
         icons: {
           idle: icon(trayRaw.icons?.idle),
           running: icon(trayRaw.icons?.running),
@@ -2507,69 +2513,44 @@ function StatusCenterSettings() {
     saveStatusCenter(next)
   }, [normalize, saveStatusCenter, statusCenter])
 
-  const uploadIcon = useCallback(async (stateKey: 'idle' | 'running' | 'waiting_user' | 'done' | 'error') => {
-    const picker = await window.anima?.window?.pickFiles?.()
-    if (!picker?.ok || picker.canceled || !picker.paths?.length) return
-    const sourcePath = String(picker.paths[0] || '').trim()
-    if (!sourcePath) return
-    setBusyKey(stateKey)
-    try {
-      const saved = await window.anima?.statusCenter?.uploadTrayIcon?.({ state: stateKey, size: 22, sourcePath })
-      if (!saved?.ok || !saved.path) return
-      const next = normalize(statusCenter)
-      next.tray.icons[stateKey].sizes['22'] = String(saved.path)
-      saveStatusCenter(next)
-      void window.anima?.statusCenter?.reloadIcons?.()
-    } finally {
-      setBusyKey('')
-    }
-  }, [normalize, saveStatusCenter, statusCenter])
+  const readStateFrames = useCallback((stateKey: 'idle' | 'running' | 'waiting_user' | 'done' | 'error') => {
+    const raw = Array.isArray(statusCenter.tray.icons[stateKey].frames) ? statusCenter.tray.icons[stateKey].frames : []
+    const list = raw.slice(0, 5).map((x: any) => String(x || '').trim())
+    while (list.length < 5) list.push('')
+    return list
+  }, [statusCenter])
 
-  const clearIcon = useCallback((stateKey: 'idle' | 'running' | 'waiting_user' | 'done' | 'error') => {
+  const saveStateFrames = useCallback((stateKey: 'idle' | 'running' | 'waiting_user' | 'done' | 'error', frames: string[]) => {
     const next = normalize(statusCenter)
+    next.tray.icons[stateKey].frames = frames.slice(0, 5).map((x: any) => String(x || '').trim())
     next.tray.icons[stateKey].sizes['22'] = ''
     saveStatusCenter(next)
     void window.anima?.statusCenter?.reloadIcons?.()
   }, [normalize, saveStatusCenter, statusCenter])
 
-  const uploadRunningFrames = useCallback(async () => {
+  const uploadFrameAt = useCallback(async (stateKey: 'idle' | 'running' | 'waiting_user' | 'done' | 'error', idx: number) => {
     const picker = await window.anima?.window?.pickFiles?.()
     if (!picker?.ok || picker.canceled || !picker.paths?.length) return
-    setBusyKey('running:frames')
+    const sourcePath = String(picker.paths[0] || '').trim()
+    if (!sourcePath) return
+    const busyTag = `${stateKey}:slot:${idx}`
+    setBusyKey(busyTag)
     try {
-      const savedPaths: string[] = []
-      for (const p of picker.paths) {
-        const sourcePath = String(p || '').trim()
-        if (!sourcePath) continue
-        const saved = await window.anima?.statusCenter?.uploadTrayFrame?.({ state: 'running', sourcePath })
-        if (saved?.ok && saved.path) savedPaths.push(String(saved.path))
-      }
-      if (!savedPaths.length) return
-      const next = normalize(statusCenter)
-      const existing = Array.isArray(next.tray.icons.running.frames) ? next.tray.icons.running.frames : []
-      const merged = [...existing, ...savedPaths].map((x: any) => String(x || '').trim()).filter(Boolean)
-      next.tray.icons.running.frames = Array.from(new Set(merged))
-      saveStatusCenter(next)
-      void window.anima?.statusCenter?.reloadIcons?.()
+      const saved = await window.anima?.statusCenter?.uploadTrayFrame?.({ state: stateKey, sourcePath })
+      if (!saved?.ok || !saved.path) return
+      const slots = readStateFrames(stateKey)
+      slots[idx] = String(saved.path)
+      saveStateFrames(stateKey, slots)
     } finally {
       setBusyKey('')
     }
-  }, [normalize, saveStatusCenter, statusCenter])
+  }, [readStateFrames, saveStateFrames])
 
-  const removeRunningFrame = useCallback((idx: number) => {
-    const next = normalize(statusCenter)
-    const frames = Array.isArray(next.tray.icons.running.frames) ? next.tray.icons.running.frames : []
-    next.tray.icons.running.frames = frames.filter((_: any, i: number) => i !== idx)
-    saveStatusCenter(next)
-    void window.anima?.statusCenter?.reloadIcons?.()
-  }, [normalize, saveStatusCenter, statusCenter])
-
-  const clearRunningFrames = useCallback(() => {
-    const next = normalize(statusCenter)
-    next.tray.icons.running.frames = []
-    saveStatusCenter(next)
-    void window.anima?.statusCenter?.reloadIcons?.()
-  }, [normalize, saveStatusCenter, statusCenter])
+  const removeFrameAt = useCallback((stateKey: 'idle' | 'running' | 'waiting_user' | 'done' | 'error', idx: number) => {
+    const slots = readStateFrames(stateKey)
+    slots[idx] = ''
+    saveStateFrames(stateKey, slots)
+  }, [readStateFrames, saveStateFrames])
 
   const testState = useCallback((state: 'idle' | 'running' | 'waiting_user' | 'done' | 'error') => {
     const titleByState: Record<'idle' | 'running' | 'waiting_user' | 'done' | 'error', string> = {
@@ -2582,17 +2563,27 @@ function StatusCenterSettings() {
     void window.anima?.statusCenter?.setState?.({ state, title: titleByState[state] || state })
   }, [t])
 
-  const stateRows: Array<{ key: 'idle' | 'running' | 'waiting_user' | 'done' | 'error'; label: string }> = [
-    { key: 'idle', label: t.idle },
+  const stateRows: Array<{ key: 'running' | 'waiting_user' | 'done' | 'error'; label: string }> = [
     { key: 'running', label: t.running },
     { key: 'waiting_user', label: t.waiting },
     { key: 'done', label: t.done },
     { key: 'error', label: t.error }
   ]
 
-  const iconPath = (stateKey: 'idle' | 'running' | 'waiting_user' | 'done' | 'error') =>
-    String(statusCenter.tray.icons[stateKey].sizes['22'] || '').trim()
-  const runningFrames = Array.isArray(statusCenter.tray.icons.running.frames) ? statusCenter.tray.icons.running.frames : []
+  const stateFrames = (stateKey: 'idle' | 'running' | 'waiting_user' | 'done' | 'error') => readStateFrames(stateKey)
+  const frameName = (path: string) => {
+    const text = String(path || '').trim()
+    if (!text) return ''
+    const parts = text.split(/[\\/]/)
+    return parts[parts.length - 1] || text
+  }
+  const frameSrc = (path: string) => {
+    const text = String(path || '').trim()
+    if (!text) return ''
+    if (/^(https?:|data:|blob:)/i.test(text)) return text
+    if (backendBaseUrl) return `${backendBaseUrl}/api/attachments/file?path=${encodeURIComponent(text)}`
+    return ''
+  }
 
   return (
     <div className="p-7 space-y-5">
@@ -2618,14 +2609,9 @@ function StatusCenterSettings() {
                 onChange={(e) => updateTray({ frameIntervalMs: Number(e.target.value || 260) })}
               />
             </div>
-            <div className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2">
-              <Label>{t.fallback}</Label>
-              <Switch checked={Boolean(statusCenter.tray.fallbackToBuiltin)} onCheckedChange={(v) => updateTray({ fallbackToBuiltin: Boolean(v) })} />
-            </div>
           </div>
           <div className="flex items-center gap-2">
             <Label>{t.test}</Label>
-            <Button size="sm" variant="outline" onClick={() => testState('idle')}>{t.idle}</Button>
             <Button size="sm" variant="outline" onClick={() => testState('running')}>{t.running}</Button>
             <Button size="sm" variant="outline" onClick={() => testState('waiting_user')}>{t.waiting}</Button>
             <Button size="sm" variant="outline" onClick={() => testState('done')}>{t.done}</Button>
@@ -2637,66 +2623,51 @@ function StatusCenterSettings() {
       <Card>
         <CardContent className="pt-5 space-y-4">
           <h3 className="text-[13px] font-semibold">{t.states}</h3>
+          <div className="text-[11px] text-muted-foreground">{t.firstAsIcon}</div>
           {stateRows.map((row) => (
             <div key={row.key} className="rounded-md border border-border bg-background p-3 space-y-2">
               <div className="font-medium">{row.label}</div>
-              <div className="grid grid-cols-1 gap-2">
-                <div className="rounded-md border border-border px-2 py-2 space-y-1">
-                  <div className="text-xs text-muted-foreground">{t.icon22}</div>
-                  <div className="text-xs truncate text-muted-foreground">{iconPath(row.key) || '-'}</div>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={busyKey === row.key}
-                      onClick={() => void uploadIcon(row.key)}
+              <div className="rounded-md border border-border px-2 py-2 space-y-2">
+                <div className="text-xs text-muted-foreground">{t.frames}</div>
+                <div className="flex flex-wrap gap-2">
+                  {stateFrames(row.key).map((p: string, idx: number) => (
+                    <div
+                      key={`${row.key}-slot-${idx}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => void uploadFrameAt(row.key, idx)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          void uploadFrameAt(row.key, idx)
+                        }
+                      }}
+                      className={`group relative h-16 w-16 rounded-md border ${p ? 'border-border bg-muted/40' : 'border-dashed border-border bg-background'} p-2 cursor-pointer overflow-hidden`}
                     >
-                      {t.upload}
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => clearIcon(row.key)}>
-                      {t.clear}
-                    </Button>
-                    {iconPath(row.key) ? (
-                      <Button size="sm" variant="ghost" onClick={() => void window.anima?.shell?.openPath?.(iconPath(row.key))}>
-                        {t.open}
-                      </Button>
-                    ) : null}
-                  </div>
+                      {p ? (
+                        <>
+                          <img src={frameSrc(p)} alt={frameName(p)} className="h-full w-full rounded object-cover" />
+                          <button
+                            type="button"
+                            className="absolute top-1 right-1 h-5 w-5 rounded-full bg-background/95 border border-black/10 shadow-sm opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                            disabled={busyKey === `${row.key}:slot:${idx}`}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              removeFrameAt(row.key, idx)
+                            }}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </>
+                      ) : (
+                        <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
+                          <Plus className="h-4 w-4" />
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
-              {row.key === 'running' ? (
-                <div className="rounded-md border border-border px-2 py-2 space-y-2">
-                  <div className="text-xs text-muted-foreground">{t.frames}</div>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={busyKey === 'running:frames'}
-                      onClick={() => void uploadRunningFrames()}
-                    >
-                      {t.upload}
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={clearRunningFrames}>
-                      {t.clear}
-                    </Button>
-                  </div>
-                  <div className="space-y-1">
-                    {runningFrames.length ? runningFrames.map((p: string, idx: number) => (
-                      <div key={`${p}-${idx}`} className="flex items-center gap-1">
-                        <div className="text-xs truncate text-muted-foreground flex-1">{p}</div>
-                        <Button size="sm" variant="ghost" onClick={() => void window.anima?.shell?.openPath?.(p)}>
-                          {t.open}
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => removeRunningFrame(idx)}>
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
-                    )) : (
-                      <div className="text-xs text-muted-foreground">{t.noFrames}</div>
-                    )}
-                  </div>
-                </div>
-              ) : null}
             </div>
           ))}
         </CardContent>
