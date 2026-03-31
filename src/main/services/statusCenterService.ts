@@ -142,8 +142,8 @@ function imageFromSvg(svg: string, size: number) {
 
 function fallbackPng(size: number) {
   const candidates = app.isPackaged
-    ? [join(process.resourcesPath, 'images', 'logo.png')]
-    : [join(process.cwd(), 'images', 'logo.png')]
+    ? [join(process.resourcesPath, 'images', 'logo_padded.png')]
+    : [join(process.cwd(), 'images', 'logo_padded.png')]
   for (const p of candidates) {
     if (!existsSync(p)) continue
     const img = nativeImage.createFromPath(p)
@@ -172,12 +172,14 @@ export function createStatusCenterService(getMainWindow: () => BrowserWindow | n
   }
 
   const resolveIconPath = (state: RunStateKind, sizeKey: '16' | '18' | '22') => {
+    if (state === 'idle') return ''
     const path = safeText(settings.tray.icons[state]?.sizes?.[sizeKey])
     if (!path || !existsSync(path)) return ''
     return path
   }
 
   const resolveFirstFramePath = (state: RunStateKind) => {
+    if (state === 'idle') return ''
     const frames = settings.tray.icons[state]?.frames || []
     for (const item of frames) {
       const pick = safeText(item)
@@ -187,6 +189,7 @@ export function createStatusCenterService(getMainWindow: () => BrowserWindow | n
   }
 
   const getPreferredIconPathForState = (state: RunStateKind): string => {
+    if (state === 'idle') return ''
     const firstFrame = resolveFirstFramePath(state)
     if (firstFrame) return firstFrame
     return resolveIconPath(state, '22')
@@ -203,6 +206,9 @@ export function createStatusCenterService(getMainWindow: () => BrowserWindow | n
   const imageForCurrent = () => {
     const display: '22' = '22'
     const renderSize = 18
+    if (runState.state === 'idle') {
+      return fallbackPng(renderSize)
+    }
     if (settings.tray.animated) {
       const framePath = resolveFramePath(runState.state, frameIndex)
       if (framePath) {
@@ -220,8 +226,6 @@ export function createStatusCenterService(getMainWindow: () => BrowserWindow | n
       }
     }
     if (!settings.tray.fallbackToBuiltin) return nativeImage.createEmpty()
-    const builtIn = imageFromSvg(builtinSvg(runState.state, frameIndex), renderSize)
-    if (!builtIn.isEmpty()) return builtIn
     return fallbackPng(renderSize)
   }
 
@@ -322,6 +326,7 @@ export function createStatusCenterService(getMainWindow: () => BrowserWindow | n
 
   const uploadTrayIcon = (params: { state: RunStateKind; size?: number; sourcePath: string }) => {
     const state = ALL_STATES.includes(params.state) ? params.state : 'idle'
+    if (state === 'idle') return { ok: false, error: 'Idle icon is fixed to built-in logo' }
     const src = safeText(params.sourcePath)
     if (!src || !existsSync(src)) return { ok: false, error: 'Source file not found' }
     const size = Number(params.size || 18)

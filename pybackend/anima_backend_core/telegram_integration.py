@@ -929,7 +929,7 @@ def _default_composer_for_telegram(settings_obj: Dict[str, Any]) -> Dict[str, An
     if not isinstance(enabled_skill_ids, list):
         enabled_skill_ids = []
 
-    workspace_dir = str(s.get("workspaceDir") or "").strip()
+    workspace_dir = ""
     project_id = str(tg.get("projectId") or "").strip()
     if project_id:
         projects = s.get("projects")

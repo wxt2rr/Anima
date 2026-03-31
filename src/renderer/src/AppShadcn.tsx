@@ -3688,7 +3688,6 @@ function AppLoaded(): JSX.Element {
                         assistantMeta.reasoningText.trim().length > 0
                       const assistantHasTokens = Boolean(
                         assistantMeta &&
-                        settings.showTokenUsage &&
                         assistantMeta.totalTokens != null
                       )
                       const assistantHasContent = typeof msg.content === 'string' && msg.content.trim().length > 0
@@ -4829,7 +4828,7 @@ function AppLoaded(): JSX.Element {
                                 {renderArtifacts(msg.meta.artifacts, 'md')}
                               </div>
                             )}
-                            {settings.showTokenUsage && !showOnlyFinalAssistantArtifacts && msg.meta?.totalTokens != null && (
+                            {!showOnlyFinalAssistantArtifacts && msg.meta?.totalTokens != null && (
                               <div className="text-[11px] text-muted-foreground">
                                 Tokens: {msg.meta.promptTokens ?? 0} + {msg.meta.completionTokens ?? 0} ={' '}
                                 {msg.meta.totalTokens}

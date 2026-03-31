@@ -1,7 +1,7 @@
 import { 
   Settings, MessageSquare, Database, Globe, 
   Cpu, Search, Plus, Trash2, CheckCircle2, XCircle, RefreshCw,
-  Copy, ChevronDown, ChevronRight, Eye, EyeOff, ExternalLink, Wand2, FolderOpen, Sparkles, Mic, Info, Keyboard, X, ArrowLeft, Bell
+  Copy, ChevronDown, ChevronRight, Eye, EyeOff, ExternalLink, Wand2, FolderOpen, Sparkles, Mic, Info, Keyboard, X, Bell
 } from 'lucide-react'
 import { resolveBackendBaseUrl, useStore, type Provider, type ProviderModel, type VoiceModelEntry } from '../store/useStore'
 import { THEMES, ThemeColor } from '../lib/themes'
@@ -1493,12 +1493,12 @@ export const SettingsDialog = memo(function SettingsDialog() {
               return (
                 <Button
                   key={tab.id}
-                  variant={activeTab === tab.id ? "secondary" : "ghost"}
+                  variant="ghost"
                   onClick={() => setActiveTab(tab.id)}
-                  className={`w-full justify-start gap-3 px-3 py-2.5 h-auto font-medium ${
-                    activeTab === tab.id 
-                      ? '' 
-                      : 'text-muted-foreground'
+                  className={`w-full justify-start gap-3 px-3 py-2.5 h-auto font-medium transition-all duration-200 ${
+                    activeTab === tab.id
+                      ? 'rounded-xl bg-black/5 text-foreground'
+                      : 'rounded-md text-muted-foreground hover:bg-black/5 hover:text-foreground'
                   }`}
                 >
                   <Icon className="w-4 h-4" />
@@ -1753,11 +1753,10 @@ export const SettingsWindow = memo(function SettingsWindow() {
           >
             <button
               type="button"
-              className="inline-flex items-center gap-1 rounded-[var(--app-left-pane-header-btn-radius)] px-1 text-[13px] font-medium leading-[14px] text-muted-foreground/90 transition-colors hover:bg-background/55 hover:text-foreground"
+              className="inline-flex min-w-[78px] items-center justify-center rounded-[var(--app-left-pane-header-btn-radius)] px-3 text-[13px] font-medium leading-[14px] text-muted-foreground/90 transition-colors hover:bg-background/55 hover:text-foreground"
               style={{ height: 'var(--app-left-pane-traffic-row-height)' }}
               onClick={onClose}
             >
-              <ArrowLeft className="h-3 w-3 shrink-0" />
               <span className="block leading-[14px]">{t.backToApp}</span>
             </button>
           </div>
@@ -1769,12 +1768,12 @@ export const SettingsWindow = memo(function SettingsWindow() {
             return (
               <Button
                 key={tab.id}
-                variant={activeTab === tab.id ? "secondary" : "ghost"}
+                variant="ghost"
                 onClick={() => setActiveTab(tab.id)}
-                className={`w-full justify-start gap-3 px-3 py-2.5 h-auto font-medium ${
-                  activeTab === tab.id 
-                    ? '' 
-                    : 'text-muted-foreground'
+                className={`w-full justify-start gap-3 px-3 py-2.5 h-auto font-medium transition-all duration-200 ${
+                  activeTab === tab.id
+                    ? 'rounded-xl bg-black/5 text-foreground'
+                    : 'rounded-md text-muted-foreground hover:bg-black/5 hover:text-foreground'
                 }`}
               >
                 <Icon className="w-4 h-4" />
@@ -4384,8 +4383,6 @@ function ChatSettings() {
         collapseHistoricalProcessHint: 'For all turns except the latest one, hide thinking/tool/skill process and keep final assistant reply only.',
         streamingResponse: 'Enable Streaming Response',
         streamingResponseHint: 'Show response in real-time as it generates.',
-        showTokenUsage: 'Show Token Usage',
-        showTokenUsageHint: 'Display token consumption stats for each chat.',
         markdown: 'Enable Markdown Rendering',
         markdownHint: 'Automatically render Markdown content in responses.',
         singleDollarMath: 'Render Single Dollar Math',
@@ -4474,8 +4471,6 @@ function ChatSettings() {
         collapseHistoricalProcessHint: '除最后一条消息外，默认折叠思考/工具/skill过程，仅保留最终 AI 回复内容。',
         streamingResponse: '启用流式响应',
         streamingResponseHint: '启用后，AI 回复将实时显示，否则等待完整回复后一次性显示',
-        showTokenUsage: '显示令牌使用情况',
-        showTokenUsageHint: '在聊天界面中显示每次对话的令牌消耗统计',
         markdown: '启用 Markdown 渲染',
         markdownHint: '自动渲染回复中的 Markdown 格式内容',
         singleDollarMath: '渲染单美元符号数学公式',
@@ -4564,8 +4559,6 @@ function ChatSettings() {
         collapseHistoricalProcessHint: '最新メッセージ以外では、思考/ツール/スキル過程を折りたたみ、最終のAI応答のみ表示します。',
         streamingResponse: 'ストリーミング応答を有効化',
         streamingResponseHint: '応答を生成しながらリアルタイムで表示します。',
-        showTokenUsage: 'トークン使用量を表示',
-        showTokenUsageHint: 'チャットごとのトークン消費統計を表示します。',
         markdown: 'Markdown レンダリングを有効化',
         markdownHint: '応答内の Markdown コンテンツを自動的にレンダリングします。',
         mediaSettings: 'メディア生成',
@@ -4790,18 +4783,6 @@ function ChatSettings() {
                <div className="grid gap-1.5 leading-none">
                   <label htmlFor="streaming" className="text-[13px] font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">{t.streamingResponse}</label>
                   <p className="text-xs text-muted-foreground">{t.streamingResponseHint}</p>
-               </div>
-            </div>
-
-            <div className="flex items-start gap-3">
-               <Checkbox 
-                  id="tokenUsage"
-                  checked={settings.showTokenUsage}
-                  onCheckedChange={(c) => updateSettings({ showTokenUsage: c as boolean })}
-               />
-               <div className="grid gap-1.5 leading-none">
-                  <label htmlFor="tokenUsage" className="text-[13px] font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">{t.showTokenUsage}</label>
-                  <p className="text-xs text-muted-foreground">{t.showTokenUsageHint}</p>
                </div>
             </div>
 
@@ -5042,14 +5023,13 @@ function ImSettings() {
         pollingIntervalHint: 'Lower is more responsive but uses more requests.',
         telegramProject: 'Project',
         telegramProjectHint: 'Bind Telegram to a project workspace directory.',
-        telegramProjectAll: 'All projects (use default workspace)',
+        telegramProjectAll: 'All projects (no project binding)',
         chatProvider: 'Chat Provider',
         chatProviderHint: 'Optional. Use a specific provider/model for Telegram.',
         chatModel: 'Chat Model',
         chatModelHint: 'Optional. Overrides the provider default model.',
         followDefault: 'Follow desktop default',
         openclaw: 'OpenClaw',
-        enableOpenclaw: 'Enable OpenClaw',
         enableHeartbeat: 'Enable Heartbeat',
         heartbeatChatId: 'Heartbeat Chat ID',
         heartbeatChatIdHint: 'Telegram chat ID to receive heartbeat messages.',
@@ -5071,14 +5051,13 @@ function ImSettings() {
         pollingIntervalHint: '越小越及时，但请求次数更多。',
         telegramProject: '项目',
         telegramProjectHint: '为 Telegram 绑定一个项目的工作目录。',
-        telegramProjectAll: '所有项目（使用默认工作区）',
+        telegramProjectAll: '所有项目（不绑定项目）',
         chatProvider: '聊天提供商',
         chatProviderHint: '可选。为 Telegram 单独指定 provider / model。',
         chatModel: '聊天模型',
         chatModelHint: '可选。覆盖 provider 的默认模型。',
         followDefault: '跟随桌面默认',
         openclaw: 'OpenClaw',
-        enableOpenclaw: '启用 OpenClaw',
         enableHeartbeat: '启用 Heartbeat',
         heartbeatChatId: 'Heartbeat Chat ID',
         heartbeatChatIdHint: '用于接收心跳消息的 Telegram chat id。',
@@ -5100,14 +5079,13 @@ function ImSettings() {
         pollingIntervalHint: '小さいほど応答が速いが、リクエストが増えます。',
         telegramProject: 'プロジェクト',
         telegramProjectHint: 'Telegram 用のプロジェクト作業ディレクトリを設定します。',
-        telegramProjectAll: '全プロジェクト（既定ワークスペースを使用）',
+        telegramProjectAll: '全プロジェクト（プロジェクト未バインド）',
         chatProvider: 'チャットプロバイダー',
         chatProviderHint: '任意。Telegram 用に provider/model を指定できます。',
         chatModel: 'チャットモデル',
         chatModelHint: '任意。プロバイダー既定モデルを上書きします。',
         followDefault: 'デスクトップ既定に従う',
         openclaw: 'OpenClaw',
-        enableOpenclaw: 'OpenClaw を有効化',
         enableHeartbeat: 'Heartbeat を有効化',
         heartbeatChatId: 'Heartbeat Chat ID',
         heartbeatChatIdHint: 'Heartbeat メッセージを受信する Telegram chat id。',
@@ -5151,10 +5129,8 @@ function ImSettings() {
   }, [availableProviders, selectedProvider])
 
   const openclaw = settings.openclaw || {}
-  const openclawEnabled = Boolean(openclaw.enabled)
   const heartbeatEnabled = Boolean(openclaw.heartbeatEnabled)
   const heartbeatTelegramChatId = String(openclaw.heartbeatTelegramChatId || '')
-  const workspaceDir = String(settings.workspaceDir || '')
 
   const allowedText = allowedUserIds.join('\n')
 
@@ -5169,14 +5145,6 @@ function ImSettings() {
 
   const updateOpenclaw = (updates: Partial<NonNullable<typeof settings.openclaw>>) => {
     updateSettings({ openclaw: { ...openclaw, ...updates } })
-  }
-
-  const handlePickWorkspaceDir = async () => {
-    const res = await window.anima?.window?.pickDirectory?.()
-    if (!res?.ok || res.canceled) return
-    const dir = String(res.path || '').trim()
-    if (!dir) return
-    updateSettings({ workspaceDir: dir })
   }
 
   const parseAllowed = (raw: string) => {
@@ -5337,13 +5305,6 @@ function ImSettings() {
         <div className="text-[13px] font-semibold">{t.openclaw}</div>
 
         <div className="flex items-start gap-3">
-          <Switch checked={openclawEnabled} onCheckedChange={(c) => updateOpenclaw({ enabled: c as boolean })} />
-          <div className="grid gap-1.5 leading-none">
-            <div className="text-[13px] font-medium leading-none">{t.enableOpenclaw}</div>
-          </div>
-        </div>
-
-        <div className="flex items-start gap-3">
           <Switch checked={heartbeatEnabled} onCheckedChange={(c) => updateOpenclaw({ heartbeatEnabled: c as boolean })} />
           <div className="grid gap-1.5 leading-none">
             <div className="text-[13px] font-medium leading-none">{t.enableHeartbeat}</div>
@@ -5363,24 +5324,6 @@ function ImSettings() {
         </div>
       </Card>
 
-      <Card className="p-5 space-y-4">
-        <div className="text-[13px] font-semibold">{t.workspaceDir}</div>
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <Input
-              value={workspaceDir}
-              onChange={(e) => updateSettings({ workspaceDir: e.target.value })}
-              placeholder="/path/to/workspace"
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <Button variant="outline" size="sm" onClick={() => void handlePickWorkspaceDir()}>
-              {t.selectFolder}
-            </Button>
-          </div>
-          <div className="text-xs text-muted-foreground">{t.workspaceDirHint}</div>
-        </div>
-      </Card>
     </div>
   )
 }

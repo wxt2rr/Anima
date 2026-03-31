@@ -406,9 +406,7 @@ function trySetDockIcon(): void {
     }
   }
 
-  const preferred = join(process.cwd(), 'images', 'logo_padded.png')
-  const fallback = join(process.cwd(), 'images', 'logo.png')
-  const p = existsSync(preferred) ? preferred : fallback
+  const p = join(process.cwd(), 'images', 'logo_padded.png')
   if (!existsSync(p)) return
   const img = nativeImage.createFromPath(p)
   if (img.isEmpty()) return
@@ -416,9 +414,7 @@ function trySetDockIcon(): void {
 }
 
 function getDevIconPath(): string | undefined {
-  const preferred = join(process.cwd(), 'images', 'logo_padded.png')
-  const fallback = join(process.cwd(), 'images', 'logo.png')
-  const p = existsSync(preferred) ? preferred : fallback
+  const p = join(process.cwd(), 'images', 'logo_padded.png')
   return is.dev && existsSync(p) ? p : undefined
 }
 

@@ -513,11 +513,12 @@ def reconcile_openclaw_from_settings(settings_obj: Dict[str, Any]) -> None:
     s = settings_obj.get("settings")
     if not isinstance(s, dict):
         return
+    mode = str(s.get("systemPromptMode") or "").strip()
+    if mode != "openclaw":
+        return
     openclaw = s.get("openclaw")
     if not isinstance(openclaw, dict):
         openclaw = {}
-    if not bool(openclaw.get("enabled")):
-        return
     if openclaw.get("bootstrap") is False:
         return
     ws_dir = _get_workspace_dir(settings_obj, {})
@@ -533,8 +534,7 @@ def _openclaw_workspace_prompt(settings_obj: Dict[str, Any], composer: Dict[str,
     if not isinstance(openclaw, dict):
         openclaw = {}
     mode = str(s.get("systemPromptMode") or "").strip()
-    enabled = bool(openclaw.get("enabled")) or mode == "openclaw"
-    if not enabled:
+    if mode != "openclaw":
         return ""
 
     ws_dir = _get_workspace_dir(settings_obj, composer)

@@ -27,7 +27,6 @@ def _base_settings(workspace_dir: str) -> dict:
             "themeColor": "zinc",
             "density": "comfortable",
             "enableStreamingResponse": False,
-            "showTokenUsage": False,
             "enableMarkdown": True,
             "collapseHistoricalProcess": True,
             "temperature": 0.7,

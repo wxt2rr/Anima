@@ -42,7 +42,6 @@ KEYS: List[ConfigKeySpec] = [
     ConfigKeySpec("general", "workspace_dir", "settings.workspaceDir", "string", "默认工作区", "设置 -> 通用 -> 工作区", risk="medium"),
     ConfigKeySpec("chat", "stream", "settings.enableStreamingResponse", "bool", "是否开启流式返回", "设置 -> 聊天 -> 流式返回"),
     ConfigKeySpec("chat", "stream_timeout_ms", "settings.streamingNoProgressTimeoutMs", "int", "流式超时阈值", "设置 -> 聊天 -> 流式超时"),
-    ConfigKeySpec("chat", "token_usage", "settings.showTokenUsage", "bool", "显示 token 用量", "设置 -> 聊天 -> Token 用量"),
     ConfigKeySpec("chat", "markdown", "settings.enableMarkdown", "bool", "启用 Markdown 渲染", "设置 -> 聊天 -> Markdown"),
     ConfigKeySpec("chat", "collapse_historical_process", "settings.collapseHistoricalProcess", "bool", "默认折叠历史过程", "设置 -> 聊天 -> 折叠历史过程"),
     ConfigKeySpec("chat", "render_single_dollar_math", "settings.renderSingleDollarMath", "bool", "渲染单美元数学公式", "设置 -> 聊天 -> 数学公式"),

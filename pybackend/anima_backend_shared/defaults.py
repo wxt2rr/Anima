@@ -23,7 +23,6 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "maxTokens": 2048,
     "enableStreamingResponse": True,
     "streamingNoProgressTimeoutMs": 30000,
-    "showTokenUsage": False,
     "enableMarkdown": True,
     "collapseHistoricalProcess": False,
     "renderSingleDollarMath": False,
@@ -58,7 +57,6 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "memoryToolModelId": "",
     "memoryEmbeddingModelId": "",
     "openclaw": {
-        "enabled": False,
         "heartbeatEnabled": True,
         "heartbeatTelegramChatId": "",
     },

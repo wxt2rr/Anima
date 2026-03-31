@@ -262,7 +262,6 @@ export interface Settings {
 
   enableStreamingResponse: boolean
   streamingNoProgressTimeoutMs?: number
-  showTokenUsage: boolean
   enableMarkdown: boolean
   collapseHistoricalProcess: boolean
   renderSingleDollarMath: boolean
@@ -297,7 +296,6 @@ export interface Settings {
   memoryEmbeddingModelId: string
 
   openclaw?: {
-    enabled?: boolean
     heartbeatEnabled?: boolean
     heartbeatTelegramChatId?: string
   }

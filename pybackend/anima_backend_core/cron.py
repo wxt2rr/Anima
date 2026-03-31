@@ -635,7 +635,7 @@ def _reconcile_openclaw_heartbeat_job(settings_obj: Dict[str, Any]) -> None:
     openclaw = s.get("openclaw")
     if not isinstance(openclaw, dict):
         openclaw = {}
-    enabled = bool(openclaw.get("enabled")) and bool(openclaw.get("heartbeatEnabled"))
+    enabled = bool(openclaw.get("heartbeatEnabled"))
 
     interval_ms = int(openclaw.get("heartbeatEveryMs") or 1_800_000)
     interval_ms = max(60_000, min(24 * 60 * 60 * 1000, interval_ms))
@@ -694,7 +694,7 @@ def reconcile_cron_from_settings(settings_obj: Dict[str, Any]) -> None:
         s = settings_obj.get("settings")
         if isinstance(s, dict):
             openclaw = s.get("openclaw")
-            if isinstance(openclaw, dict) and bool(openclaw.get("enabled")) and bool(openclaw.get("heartbeatEnabled")):
+            if isinstance(openclaw, dict) and bool(openclaw.get("heartbeatEnabled")):
                 patched = json.loads(json.dumps(settings_obj))
                 ps = patched.get("settings")
                 if isinstance(ps, dict):
