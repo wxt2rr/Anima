@@ -16,6 +16,7 @@ from .paths import config_root_by_platform
 
 _CONFIG_ROOT: Optional[Path] = None
 _CONFIG_ROOT_LOCK = threading.Lock()
+DEFAULT_MODEL_CONTEXT_WINDOW = 128000
 
 
 def config_root() -> Path:
@@ -119,6 +120,90 @@ def _migrate_codex_provider(existing: Dict[str, Any]) -> bool:
     return changed
 
 
+def _normalize_provider_models(existing: Dict[str, Any]) -> bool:
+    providers = existing.get("providers")
+    if not isinstance(providers, list):
+        existing["providers"] = []
+        return True
+
+    changed = False
+    normalized: List[Dict[str, Any]] = []
+    for p in providers:
+        if not isinstance(p, dict):
+            normalized.append(p)
+            continue
+        cfg = p.get("config")
+        if not isinstance(cfg, dict):
+            cfg = {}
+            p["config"] = cfg
+            changed = True
+        models = cfg.get("models")
+        if not isinstance(models, list):
+            normalized.append(p)
+            continue
+
+        next_models: List[Dict[str, Any]] = []
+        models_changed = False
+        for m in models:
+            if isinstance(m, str):
+                mid = str(m).strip()
+                if not mid:
+                    continue
+                next_models.append(
+                    {
+                        "id": mid,
+                        "isEnabled": True,
+                        "config": {"id": mid, "contextWindow": DEFAULT_MODEL_CONTEXT_WINDOW},
+                    }
+                )
+                models_changed = True
+                continue
+
+            if not isinstance(m, dict):
+                models_changed = True
+                continue
+
+            mid = str(m.get("id") or "").strip()
+            if not mid:
+                models_changed = True
+                continue
+            is_enabled = bool(m.get("isEnabled", True))
+            mc = m.get("config")
+            if not isinstance(mc, dict):
+                mc = {}
+                models_changed = True
+            next_mc = dict(mc)
+            if str(next_mc.get("id") or "").strip() != mid:
+                next_mc["id"] = mid
+                models_changed = True
+            try:
+                cw = int(next_mc.get("contextWindow") or 0)
+            except Exception:
+                cw = 0
+            if cw <= 0:
+                next_mc["contextWindow"] = DEFAULT_MODEL_CONTEXT_WINDOW
+                models_changed = True
+
+            next_m = {"id": mid, "isEnabled": is_enabled, "config": next_mc}
+            if next_m != m:
+                models_changed = True
+            next_models.append(next_m)
+
+        if models_changed or next_models != models:
+            next_cfg = dict(cfg)
+            next_cfg["models"] = next_models
+            next_p = dict(p)
+            next_p["config"] = next_cfg
+            normalized.append(next_p)
+            changed = True
+        else:
+            normalized.append(p)
+
+    if changed:
+        existing["providers"] = normalized
+    return changed
+
+
 def migrate_settings() -> Dict[str, Any]:
     existing = get_app_settings()
     changed = False
@@ -129,6 +214,7 @@ def migrate_settings() -> Dict[str, Any]:
         raise RuntimeError("Failed to load settings from database")
 
     changed = _migrate_codex_provider(existing) or changed
+    changed = _normalize_provider_models(existing) or changed
     if changed:
         set_app_settings(existing)
     return existing
@@ -143,6 +229,9 @@ def load_settings() -> Dict[str, Any]:
         raise RuntimeError("Failed to load settings from database")
     if not isinstance(existing.get("providers"), list):
         existing["providers"] = []
+    changed = _normalize_provider_models(existing)
+    if changed:
+        set_app_settings(existing)
     return existing
 
 
@@ -157,6 +246,7 @@ def deep_merge(dst: Any, src: Any) -> Any:
 def save_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
     current = migrate_settings()
     merged = deep_merge(current, patch)
+    _normalize_provider_models(merged)
     set_app_settings(merged)
     return merged
 

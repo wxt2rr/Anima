@@ -227,8 +227,8 @@ def handle_post_provider_auth_start(handler: Any) -> None:
 def _apply_qwen_config_patch(resource_url: Optional[str], profile_id: str, provider_record_id: str) -> Dict[str, Any]:
     base_url = normalize_qwen_resource_url(resource_url) or "https://portal.qwen.ai/v1"
     models = [
-        {"id": "coder-model", "isEnabled": True, "config": {"id": "coder-model"}},
-        {"id": "vision-model", "isEnabled": True, "config": {"id": "vision-model"}},
+        {"id": "coder-model", "isEnabled": True, "config": {"id": "coder-model", "contextWindow": 128000}},
+        {"id": "vision-model", "isEnabled": True, "config": {"id": "vision-model", "contextWindow": 128000}},
     ]
     settings_obj = load_settings()
     providers = settings_obj.get("providers")
@@ -285,11 +285,11 @@ def _apply_qwen_config_patch(resource_url: Optional[str], profile_id: str, provi
 def _apply_openai_codex_config_patch(profile_id: str, provider_record_id: str) -> Dict[str, Any]:
     base_url = "https://chatgpt.com/backend-api"
     models = [
-        {"id": "gpt-5.2-codex", "isEnabled": True, "config": {"id": "gpt-5.2-codex"}},
-        {"id": "gpt-5.2-codex-low", "isEnabled": True, "config": {"id": "gpt-5.2-codex-low"}},
-        {"id": "gpt-5.2-codex-medium", "isEnabled": True, "config": {"id": "gpt-5.2-codex-medium"}},
-        {"id": "gpt-5.2-codex-high", "isEnabled": True, "config": {"id": "gpt-5.2-codex-high"}},
-        {"id": "gpt-5.2-codex-xhigh", "isEnabled": True, "config": {"id": "gpt-5.2-codex-xhigh"}},
+        {"id": "gpt-5.2-codex", "isEnabled": True, "config": {"id": "gpt-5.2-codex", "contextWindow": 128000}},
+        {"id": "gpt-5.2-codex-low", "isEnabled": True, "config": {"id": "gpt-5.2-codex-low", "contextWindow": 128000}},
+        {"id": "gpt-5.2-codex-medium", "isEnabled": True, "config": {"id": "gpt-5.2-codex-medium", "contextWindow": 128000}},
+        {"id": "gpt-5.2-codex-high", "isEnabled": True, "config": {"id": "gpt-5.2-codex-high", "contextWindow": 128000}},
+        {"id": "gpt-5.2-codex-xhigh", "isEnabled": True, "config": {"id": "gpt-5.2-codex-xhigh", "contextWindow": 128000}},
     ]
     settings_obj = load_settings()
     providers = settings_obj.get("providers")

@@ -5,6 +5,8 @@ from typing import Any, Dict, List
 
 from .constants import SCHEMA_VERSION
 
+DEFAULT_MODEL_CONTEXT_WINDOW = 128000
+
 
 DEFAULT_SYSTEM_PROMPT = (
     "你是 Anima。请先给出可执行结论，再给依据；"
@@ -191,7 +193,7 @@ DEFAULT_PROVIDERS: List[Dict[str, Any]] = [
         "type": "acp",
         "isEnabled": False,
         "config": {
-            "models": [{"id": "qwen-acp", "isEnabled": True, "config": {"id": "qwen-acp"}}],
+            "models": [{"id": "qwen-acp", "isEnabled": True, "config": {"id": "qwen-acp", "contextWindow": DEFAULT_MODEL_CONTEXT_WINDOW}}],
             "selectedModel": "qwen-acp",
             "acp": {
                 "kind": "native_acp",
@@ -209,7 +211,7 @@ DEFAULT_PROVIDERS: List[Dict[str, Any]] = [
         "type": "acp",
         "isEnabled": False,
         "config": {
-            "models": [{"id": "codex-acp", "isEnabled": True, "config": {"id": "codex-acp"}}],
+            "models": [{"id": "codex-acp", "isEnabled": True, "config": {"id": "codex-acp", "contextWindow": DEFAULT_MODEL_CONTEXT_WINDOW}}],
             "selectedModel": "codex-acp",
             "acp": {
                 "kind": "native_acp",
@@ -232,11 +234,11 @@ DEFAULT_PROVIDERS: List[Dict[str, Any]] = [
             "apiFormat": "responses",
             "modelsFetched": True,
             "models": [
-                {"id": "gpt-5.2-codex", "isEnabled": True, "config": {"id": "gpt-5.2-codex"}},
-                {"id": "gpt-5.2-codex-low", "isEnabled": True, "config": {"id": "gpt-5.2-codex-low"}},
-                {"id": "gpt-5.2-codex-medium", "isEnabled": True, "config": {"id": "gpt-5.2-codex-medium"}},
-                {"id": "gpt-5.2-codex-high", "isEnabled": True, "config": {"id": "gpt-5.2-codex-high"}},
-                {"id": "gpt-5.2-codex-xhigh", "isEnabled": True, "config": {"id": "gpt-5.2-codex-xhigh"}},
+                {"id": "gpt-5.2-codex", "isEnabled": True, "config": {"id": "gpt-5.2-codex", "contextWindow": DEFAULT_MODEL_CONTEXT_WINDOW}},
+                {"id": "gpt-5.2-codex-low", "isEnabled": True, "config": {"id": "gpt-5.2-codex-low", "contextWindow": DEFAULT_MODEL_CONTEXT_WINDOW}},
+                {"id": "gpt-5.2-codex-medium", "isEnabled": True, "config": {"id": "gpt-5.2-codex-medium", "contextWindow": DEFAULT_MODEL_CONTEXT_WINDOW}},
+                {"id": "gpt-5.2-codex-high", "isEnabled": True, "config": {"id": "gpt-5.2-codex-high", "contextWindow": DEFAULT_MODEL_CONTEXT_WINDOW}},
+                {"id": "gpt-5.2-codex-xhigh", "isEnabled": True, "config": {"id": "gpt-5.2-codex-xhigh", "contextWindow": DEFAULT_MODEL_CONTEXT_WINDOW}},
             ],
             "selectedModel": "gpt-5.2-codex",
             "apiKey": "",

@@ -296,7 +296,7 @@ def apply_persistent_compression(
     except Exception:
         context_window = 0
     if context_window <= 0:
-        context_window = 8192
+        context_window = 128000
     context_window = max(1024, min(context_window, 400000))
     target_tokens = int(context_window * (threshold_pct / 100.0))
     target_tokens = max(512, min(target_tokens, context_window))

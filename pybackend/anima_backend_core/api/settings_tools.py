@@ -11,6 +11,36 @@ from anima_backend_shared.http import json_response, read_body_json
 from anima_backend_shared.settings import get_skills_content, list_skills, load_settings, open_folder, skills_dir
 from anima_backend_shared.tools import builtin_tools, mcp_tools
 
+DEFAULT_MODEL_CONTEXT_WINDOW = 128000
+
+
+def _normalize_fetched_models(raw_models: Any) -> List[Dict[str, Any]]:
+    items = raw_models if isinstance(raw_models, list) else []
+    out: List[Dict[str, Any]] = []
+    for m in items:
+        if isinstance(m, str):
+            mid = str(m).strip()
+            if not mid:
+                continue
+            out.append({"id": mid, "isEnabled": True, "config": {"id": mid, "contextWindow": DEFAULT_MODEL_CONTEXT_WINDOW}})
+            continue
+        if not isinstance(m, dict):
+            continue
+        mid = str(m.get("id") or "").strip()
+        if not mid:
+            continue
+        mc = m.get("config") if isinstance(m.get("config"), dict) else {}
+        try:
+            cw = int(mc.get("contextWindow") or 0)
+        except Exception:
+            cw = 0
+        next_mc = dict(mc)
+        next_mc["id"] = mid
+        if cw <= 0:
+            next_mc["contextWindow"] = DEFAULT_MODEL_CONTEXT_WINDOW
+        out.append({"id": mid, "isEnabled": bool(m.get("isEnabled", True)), "config": next_mc})
+    return out
+
 
 def handle_get_settings(handler: Any) -> None:
     try:
@@ -479,6 +509,6 @@ def handle_post_providers_fetch_models(handler: Any) -> None:
         else:
             api_key = body.get("apiKey")
             models = fetch_provider_models(base_url, api_key or "")
-        json_response(handler, HTTPStatus.OK, {"ok": True, "models": models})
+        json_response(handler, HTTPStatus.OK, {"ok": True, "models": _normalize_fetched_models(models)})
     except Exception as e:
         json_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(e)})

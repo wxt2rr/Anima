@@ -2216,6 +2216,91 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                 self.assertEqual(int(out.get("exitCode")) if out.get("exitCode") is not None else -1, 0)
                 self.assertTrue(p_run.called)
 
+    def test_builtin_tools_replace_write_edit_with_apply_patch(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        tools = shared_tools.builtin_tools()
+        names = [str(((t.get("function") or {}) if isinstance(t, dict) else {}).get("name") or "") for t in tools]
+        self.assertIn("apply_patch", names)
+        self.assertNotIn("write_file", names)
+        self.assertNotIn("edit_file", names)
+
+    def test_apply_patch_update_and_move_file(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        with tempfile.TemporaryDirectory() as td:
+            src = os.path.join(td, "src.txt")
+            with open(src, "w", encoding="utf-8") as f:
+                f.write("hello\nworld")
+
+            patch_text = "\n".join(
+                [
+                    "*** Begin Patch",
+                    "*** Update File: src.txt",
+                    "*** Move to: dst.txt",
+                    "@@",
+                    "-hello",
+                    "+hi",
+                    " world",
+                    "*** End Patch",
+                ]
+            )
+            out = json.loads(shared_tools.execute_builtin_tool("apply_patch", {"patch": patch_text}, workspace_dir=td))
+            self.assertTrue(bool(out.get("ok")))
+            self.assertTrue(bool(out.get("changed")))
+            self.assertTrue(os.path.isfile(os.path.join(td, "dst.txt")))
+            self.assertFalse(os.path.exists(os.path.join(td, "src.txt")))
+            with open(os.path.join(td, "dst.txt"), "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), "hi\nworld")
+
+    def test_apply_patch_conflict_keeps_files_unchanged(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        with tempfile.TemporaryDirectory() as td:
+            a = os.path.join(td, "a.txt")
+            with open(a, "w", encoding="utf-8") as f:
+                f.write("one")
+
+            patch_text = "\n".join(
+                [
+                    "*** Begin Patch",
+                    "*** Update File: a.txt",
+                    "@@",
+                    "-one",
+                    "+ONE",
+                    "*** Update File: missing.txt",
+                    "@@",
+                    "-x",
+                    "+y",
+                    "*** End Patch",
+                ]
+            )
+            with self.assertRaises(RuntimeError) as ex:
+                shared_tools.execute_builtin_tool("apply_patch", {"patch": patch_text}, workspace_dir=td)
+            self.assertIn("CONFLICT", str(ex.exception))
+            with open(a, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), "one")
+
+    def test_apply_patch_accepts_common_marker_variants(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        with tempfile.TemporaryDirectory() as td:
+            patch_text = "\n".join(
+                [
+                    "*** Begin Patch ***",
+                    "Add File: poem.txt",
+                    "+line 1",
+                    "+line 2",
+                    "*** End Patch ***",
+                ]
+            )
+            out = json.loads(shared_tools.execute_builtin_tool("apply_patch", {"patch": patch_text}, workspace_dir=td))
+            self.assertTrue(bool(out.get("ok")))
+            fp = os.path.join(td, "poem.txt")
+            self.assertTrue(os.path.isfile(fp))
+            with open(fp, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), "line 1\nline 2")
+
     def test_bash_default_mode_requires_approval_for_blacklist(self) -> None:
         import anima_backend_shared.tools as shared_tools
 

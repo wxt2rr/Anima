@@ -3056,7 +3056,12 @@ function ProvidersSettings() {
         const newModels = res.models.map((m: any) => {
           const id = typeof m === 'string' ? m : m.id
           const existing = existingModels.find(em => em.id === id)
-          return existing || { id, isEnabled: true, config: { id } }
+          if (existing) return existing
+          if (m && typeof m === 'object') {
+            const cfg = m.config && typeof m.config === 'object' ? m.config : {}
+            return { id, isEnabled: m.isEnabled !== false, config: { id, ...cfg } }
+          }
+          return { id, isEnabled: true, config: { id } }
         })
         const enabledModels = newModels.filter((m: any) => m && m.isEnabled)
         const currentSelected = String(activeProvider.config.selectedModel || '').trim()

@@ -301,6 +301,281 @@ def _ddg_extract_results(html_text: str, limit: int) -> List[Dict[str, Any]]:
     return out[:limit]
 
 
+def _parse_freeform_patch(raw_patch: str) -> List[Dict[str, Any]]:
+    text = str(raw_patch or "")
+    lines = [str(x).rstrip("\r") for x in text.splitlines()]
+    if not lines:
+        raise RuntimeError("PARSE_ERROR: empty patch")
+
+    def _normalize_marker(line: str) -> str:
+        s = str(line or "").strip()
+        if re.fullmatch(r"\*{3}\s*Begin Patch(?:\s*\*{3})?", s):
+            return "*** Begin Patch"
+        if re.fullmatch(r"\*{3}\s*End Patch(?:\s*\*{3})?", s):
+            return "*** End Patch"
+        return line
+
+    def _normalize_hunk_header(line: str) -> str:
+        s = str(line or "").strip()
+        for prefix in ("Add File:", "Delete File:", "Update File:", "Move to:"):
+            if s.startswith(prefix):
+                return f"*** {s}"
+        return line
+
+    lines = [_normalize_hunk_header(_normalize_marker(x)) for x in lines]
+
+    if lines[0].strip() != "*** Begin Patch":
+        raise RuntimeError("PARSE_ERROR: missing *** Begin Patch (exact line)")
+    if lines[-1].strip() != "*** End Patch":
+        raise RuntimeError("PARSE_ERROR: missing *** End Patch (exact line)")
+
+    def _is_hunk_start(line: str) -> bool:
+        return line.startswith("*** Add File: ") or line.startswith("*** Delete File: ") or line.startswith("*** Update File: ")
+
+    i = 1
+    end = len(lines) - 1
+    ops: List[Dict[str, Any]] = []
+    while i < end:
+        line = lines[i]
+        if not line.strip():
+            i += 1
+            continue
+
+        if line.startswith("*** Add File: "):
+            path = line[len("*** Add File: ") :].strip()
+            if not path:
+                raise RuntimeError("PARSE_ERROR: Add File path is required")
+            i += 1
+            payload: List[str] = []
+            while i < end and not _is_hunk_start(lines[i]):
+                cur = lines[i]
+                if not cur.startswith("+"):
+                    raise RuntimeError("PARSE_ERROR: Add File only accepts '+' lines (prefix each content line with '+')")
+                payload.append(cur[1:])
+                i += 1
+            if not payload:
+                raise RuntimeError("PARSE_ERROR: Add File requires at least one '+' line")
+            ops.append({"type": "add", "path": path, "content": "\n".join(payload)})
+            continue
+
+        if line.startswith("*** Delete File: "):
+            path = line[len("*** Delete File: ") :].strip()
+            if not path:
+                raise RuntimeError("PARSE_ERROR: Delete File path is required")
+            ops.append({"type": "delete", "path": path})
+            i += 1
+            continue
+
+        if line.startswith("*** Update File: "):
+            path = line[len("*** Update File: ") :].strip()
+            if not path:
+                raise RuntimeError("PARSE_ERROR: Update File path is required")
+            i += 1
+
+            move_to = None
+            if i < end and lines[i].startswith("*** Move to: "):
+                move_to = lines[i][len("*** Move to: ") :].strip()
+                if not move_to:
+                    raise RuntimeError("PARSE_ERROR: Move to path is required")
+                i += 1
+
+            change_lines: List[str] = []
+            while i < end and not _is_hunk_start(lines[i]):
+                cur = lines[i]
+                if not (cur.startswith("@@") or cur.startswith(" ") or cur.startswith("+") or cur.startswith("-")):
+                    raise RuntimeError("PARSE_ERROR: Update File only accepts '@@'/' '/'+'/'-' lines")
+                change_lines.append(cur)
+                i += 1
+
+            if not change_lines and not move_to:
+                raise RuntimeError("PARSE_ERROR: Update File requires changes or Move to")
+
+            src_lines: List[str] = []
+            dst_lines: List[str] = []
+            saw_change = False
+            for cur in change_lines:
+                if cur.startswith("@@"):
+                    continue
+                if cur.startswith(" "):
+                    part = cur[1:]
+                    src_lines.append(part)
+                    dst_lines.append(part)
+                    continue
+                if cur.startswith("-"):
+                    saw_change = True
+                    src_lines.append(cur[1:])
+                    continue
+                if cur.startswith("+"):
+                    saw_change = True
+                    dst_lines.append(cur[1:])
+                    continue
+
+            ops.append(
+                {
+                    "type": "update",
+                    "path": path,
+                    "moveTo": move_to,
+                    "sourceText": "\n".join(src_lines),
+                    "targetText": "\n".join(dst_lines),
+                    "hasContentChange": bool(saw_change),
+                }
+            )
+            continue
+
+        raise RuntimeError("PARSE_ERROR: unknown hunk header")
+
+    if not ops:
+        raise RuntimeError("PARSE_ERROR: no hunks")
+    return ops
+
+
+def _execute_freeform_patch(raw_patch: str, workspace_dir: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    if not workspace_dir:
+        raise RuntimeError("No workspace directory selected")
+    ops = _parse_freeform_patch(raw_patch)
+
+    state: Dict[str, Optional[str]] = {}
+    initial: Dict[str, Optional[str]] = {}
+    touched_order: List[str] = []
+
+    def _to_abs_path(rel_path: str) -> str:
+        target = norm_abs(str(Path(workspace_dir) / rel_path))
+        if not _is_path_allowed(target, workspace_dir, args):
+            raise RuntimeError("PATH_ERROR: path outside workspace")
+        return target
+
+    def _load(path_abs: str) -> Optional[str]:
+        if path_abs in state:
+            return state[path_abs]
+        p = Path(path_abs)
+        if p.exists():
+            if not p.is_file():
+                raise RuntimeError("PATH_ERROR: target is not a file")
+            content, meta = read_text_file(path_abs, max_bytes=MAX_FILE_BYTES_TOOL)
+            if meta.get("truncated"):
+                raise RuntimeError("IO_ERROR: file too large")
+            initial[path_abs] = content
+            state[path_abs] = content
+            touched_order.append(path_abs)
+            return content
+        initial[path_abs] = None
+        state[path_abs] = None
+        touched_order.append(path_abs)
+        return None
+
+    def _set(path_abs: str, value: Optional[str]) -> None:
+        if path_abs not in state:
+            _load(path_abs)
+        state[path_abs] = value
+
+    for op in ops:
+        tp = str(op.get("type") or "")
+        rel_path = str(op.get("path") or "").strip()
+        if not rel_path:
+            raise RuntimeError("PARSE_ERROR: path is required")
+        abs_path = _to_abs_path(rel_path)
+
+        if tp == "add":
+            cur = _load(abs_path)
+            if cur is not None:
+                raise RuntimeError("CONFLICT: add target already exists")
+            _set(abs_path, str(op.get("content") or ""))
+            continue
+
+        if tp == "delete":
+            cur = _load(abs_path)
+            if cur is None:
+                raise RuntimeError("CONFLICT: delete target does not exist")
+            _set(abs_path, None)
+            continue
+
+        if tp == "update":
+            cur = _load(abs_path)
+            if cur is None:
+                raise RuntimeError("CONFLICT: update target does not exist")
+
+            next_content = cur
+            if bool(op.get("hasContentChange")):
+                source_text = str(op.get("sourceText") or "")
+                target_text = str(op.get("targetText") or "")
+                if not source_text:
+                    raise RuntimeError("CONFLICT: update source block is empty")
+                found = cur.count(source_text)
+                if found != 1:
+                    raise RuntimeError(f"CONFLICT: source block occurrences {found} != 1")
+                next_content = cur.replace(source_text, target_text, 1)
+            _set(abs_path, next_content)
+
+            move_to = str(op.get("moveTo") or "").strip()
+            if move_to:
+                abs_move_to = _to_abs_path(move_to)
+                if abs_move_to != abs_path:
+                    target_cur = _load(abs_move_to)
+                    if target_cur is not None:
+                        raise RuntimeError("CONFLICT: move target already exists")
+                    _set(abs_move_to, next_content)
+                    _set(abs_path, None)
+            continue
+
+        raise RuntimeError("PARSE_ERROR: unsupported op type")
+
+    changed_files: List[str] = []
+    diffs: List[Dict[str, Any]] = []
+    actions: List[Tuple[str, Optional[str], Optional[str]]] = []
+    for path_abs in touched_order:
+        before = initial.get(path_abs)
+        after = state.get(path_abs)
+        if before == after:
+            continue
+        changed_files.append(str(Path(path_abs).resolve().relative_to(Path(workspace_dir).resolve())))
+        diffs.append(
+            {
+                "path": str(Path(path_abs).resolve().relative_to(Path(workspace_dir).resolve())),
+                "oldContent": before if before is not None else "",
+                "newContent": after if after is not None else "",
+            }
+        )
+        actions.append((path_abs, before, after))
+
+    if not actions:
+        return {"ok": True, "changed": False, "applied_hunks": len(ops), "changed_files": [], "diffs": []}
+
+    applied: List[Tuple[str, Optional[str], Optional[str]]] = []
+    try:
+        for path_abs, _before, after in actions:
+            p = Path(path_abs)
+            if after is None:
+                if p.exists():
+                    p.unlink()
+            else:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                with open(path_abs, "w", encoding="utf-8") as f:
+                    f.write(after)
+            applied.append((path_abs, _before, after))
+    except Exception as e:
+        for path_abs, before, _after in reversed(applied):
+            p = Path(path_abs)
+            try:
+                if before is None:
+                    if p.exists():
+                        p.unlink()
+                else:
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    with open(path_abs, "w", encoding="utf-8") as f:
+                        f.write(before)
+            except Exception:
+                pass
+        raise RuntimeError(f"IO_ERROR: {e}")
+
+    return {
+        "ok": True,
+        "changed": True,
+        "applied_hunks": len(ops),
+        "changed_files": changed_files,
+        "diffs": diffs,
+    }
+
+
 def builtin_tools() -> List[Dict[str, Any]]:
     return [
         {
@@ -413,38 +688,17 @@ def builtin_tools() -> List[Dict[str, Any]]:
         {
             "type": "function",
             "function": {
-                "name": "edit_file",
-                "description": "Edit an existing workspace text file using literal search/replace edits. Preferred for modifying files. Returns a diff.",
+                "name": "apply_patch",
+                "description": "Apply FREEFORM patch text to workspace files. Required format: '*** Begin Patch' ... hunk headers '*** Add File|Delete File|Update File' (optional '*** Move to' under Update), and final '*** End Patch'. Add File content lines must start with '+'.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string"},
-                        "edits": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "search": {"type": "string"},
-                                    "replace": {"type": "string"},
-                                    "expectedCount": {"type": "integer"},
-                                },
-                                "required": ["search", "replace"],
-                            },
-                        },
+                        "patch": {
+                            "type": "string",
+                            "description": "Examples:\\nAdd File:\\n*** Begin Patch\\n*** Add File: a.txt\\n+hello\\n*** End Patch\\n\\nDelete File:\\n*** Begin Patch\\n*** Delete File: a.txt\\n*** End Patch\\n\\nUpdate File:\\n*** Begin Patch\\n*** Update File: a.txt\\n@@\\n-old line\\n+new line\\n*** End Patch",
+                        }
                     },
-                    "required": ["path", "edits"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "write_file",
-                "description": "Write full content to a workspace file (overwrites existing). Use edit_file for targeted modifications. Returns a diff.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
-                    "required": ["path", "content"],
+                    "required": ["patch"],
                 },
             },
         },
@@ -1008,78 +1262,12 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         text, meta = read_text_file(target, max_bytes=max_bytes)
         return json.dumps({"meta": meta, "text": text}, ensure_ascii=False)
 
-    if name == "edit_file":
-        if not workspace_dir:
-            raise RuntimeError("No workspace directory selected")
-        path = str(args.get("path") or "").strip()
-        edits = args.get("edits")
-        if not isinstance(edits, list) or not edits:
-            raise RuntimeError("edits is required")
-        target = norm_abs(str(Path(workspace_dir) / path))
-        if not _is_path_allowed(target, workspace_dir, args):
-            raise RuntimeError("Path outside workspace")
-
-        old_content, meta = read_text_file(target, max_bytes=MAX_FILE_BYTES_TOOL)
-        if meta.get("truncated"):
-            raise RuntimeError("File too large to edit with edit_file")
-
-        new_content = old_content
-        applied: List[Dict[str, Any]] = []
-        for i, e in enumerate(edits):
-            if not isinstance(e, dict):
-                raise RuntimeError(f"edits[{i}] must be an object")
-            search = str(e.get("search") or "")
-            replace = str(e.get("replace") or "")
-            if not search:
-                raise RuntimeError(f"edits[{i}].search is required")
-            expected = e.get("expectedCount")
-            try:
-                expected_n = int(expected) if expected is not None else 1
-            except Exception:
-                expected_n = 1
-            if expected_n < 1:
-                raise RuntimeError(f"edits[{i}].expectedCount must be >= 1")
-            found = new_content.count(search)
-            if found != expected_n:
-                raise RuntimeError(f"edits[{i}] search occurrences {found} != expected {expected_n}")
-            new_content = new_content.replace(search, replace)
-            applied.append({"index": i, "replacements": found})
-
-        if new_content != old_content:
-            with open(target, "w", encoding="utf-8") as f:
-                f.write(new_content)
-
-        return json.dumps(
-            {
-                "ok": True,
-                "changed": new_content != old_content,
-                "applied": applied,
-                "diffs": [{"path": path, "oldContent": old_content, "newContent": new_content}],
-            },
-            ensure_ascii=False,
-        )
-
-    if name == "write_file":
-        if not workspace_dir:
-            raise RuntimeError("No workspace directory selected")
-        path = str(args.get("path") or "").strip()
-        content = str(args.get("content") or "")
-        target = norm_abs(str(Path(workspace_dir) / path))
-        if not _is_path_allowed(target, workspace_dir, args):
-            raise RuntimeError("Path outside workspace")
-
-        old_content = ""
-        try:
-            if Path(target).exists() and Path(target).is_file():
-                old_content, _ = read_text_file(target, max_bytes=MAX_FILE_BYTES_TOOL)
-        except Exception:
-            pass
-
-        Path(target).parent.mkdir(parents=True, exist_ok=True)
-        with open(target, "w", encoding="utf-8") as f:
-            f.write(content)
-
-        return json.dumps({"ok": True, "diffs": [{"path": path, "oldContent": old_content, "newContent": content}]}, ensure_ascii=False)
+    if name == "apply_patch":
+        patch_text = str(args.get("patch") or "")
+        if not patch_text.strip():
+            raise RuntimeError("patch is required")
+        out = _execute_freeform_patch(patch_text, workspace_dir, args)
+        return json.dumps(out, ensure_ascii=False)
 
     if name == "rg_search":
         if not workspace_dir:

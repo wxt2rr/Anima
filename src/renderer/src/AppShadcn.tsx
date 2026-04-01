@@ -1518,8 +1518,7 @@ function AppLoaded(): JSX.Element {
 
   const usageStats = useMemo(() => {
     const used = tokenStatus.used || 0
-    let total = tokenStatus.limit || 0
-    const defaultTotal = 128_000
+    let total = 0
     
     // Try to get total from model config if not in metadata
     if (!total && effectiveProvider?.config?.models) {
@@ -1532,16 +1531,13 @@ function AppLoaded(): JSX.Element {
       }
     }
 
-    // Fallback to remaining + used
-    if (!total && tokenStatus.remaining && used) {
-      total = used + tokenStatus.remaining
+    if (!total) {
+      total = Number(composer.contextWindowOverride || 0)
     }
-
-    if (!total) total = defaultTotal
     
     const percentage = total > 0 ? Math.min(100, (used / total) * 100) : 0
     return { used, total, percentage }
-  }, [tokenStatus, effectiveProvider, effectiveModel])
+  }, [tokenStatus, effectiveProvider, effectiveModel, composer.contextWindowOverride])
 
   const thinkingLevel = composer.thinkingLevel && composer.thinkingLevel !== 'default' ? composer.thinkingLevel : 'medium'
   const shouldShowAnalysis = effectiveProvider?.type === 'deepseek' && (
@@ -4155,7 +4151,7 @@ function AppLoaded(): JSX.Element {
                                         ? 'search'
                                         : tr.name === 'read_file'
                                           ? 'read'
-                                          : tr.name === 'write_file' || tr.name === 'replace_file' || tr.name === 'edit_file'
+                                          : tr.name === 'apply_patch'
                                             ? 'edit'
                                             : tr.name === 'WebFetch'
                                               ? 'browse'
@@ -4196,7 +4192,7 @@ function AppLoaded(): JSX.Element {
                                       if (argsObj.path) entity += ` in ${normalizeValue(argsObj.path)}`
                                     } else if (tr.name === 'read_file') {
                                       entity = normalizeValue(argsObj.path)
-                                    } else if (tr.name === 'write_file' || tr.name === 'replace_file' || tr.name === 'edit_file') {
+                                    } else if (tr.name === 'apply_patch') {
                                       entity = normalizeValue(argsObj.path)
                                     } else if (tr.name === 'WebSearch') {
                                       entity = normalizeValue(argsObj.query)
@@ -4211,10 +4207,7 @@ function AppLoaded(): JSX.Element {
                                     }
 
                                     const canOpenEntityInFiles =
-                                      (tr.name === 'read_file' ||
-                                        tr.name === 'write_file' ||
-                                        tr.name === 'replace_file' ||
-                                        tr.name === 'edit_file') &&
+                                      (tr.name === 'read_file' || tr.name === 'apply_patch') &&
                                       Boolean(entity)
                                     const normalizeCommand = (raw: unknown) => String(raw || '').replace(/\s+/g, ' ').trim()
                                     const bashCommandNormalized = tr.name === 'bash' ? normalizeCommand(argsObj.command) : ''
@@ -4230,7 +4223,7 @@ function AppLoaded(): JSX.Element {
                                           : matchedApproval?.status === 'rejected'
                                             ? t.dangerousApprovalStatusRejected
                                             : ''
-                                    const isEditTrace = tr.name === 'write_file' || tr.name === 'replace_file' || tr.name === 'edit_file'
+                                    const isEditTrace = tr.name === 'apply_patch'
                                     const runningStatusText =
                                       tr.name === 'load_skill' && !isRunning && !isFailed
                                         ? traceLang === 'zh'
@@ -4345,12 +4338,7 @@ function AppLoaded(): JSX.Element {
                                         })
                                         .filter(Boolean)
                                         .join('\n')
-                                    } else if (
-                                      Array.isArray(resultObj?.diffs) &&
-                                      tr.name !== 'write_file' &&
-                                      tr.name !== 'replace_file' &&
-                                      tr.name !== 'edit_file'
-                                    ) {
+                                    } else if (Array.isArray(resultObj?.diffs) && tr.name !== 'apply_patch') {
                                       detailMarkdown = resultObj.diffs
                                         .map((d: any) => String(d?.path || ''))
                                         .filter(Boolean)
@@ -4828,22 +4816,20 @@ function AppLoaded(): JSX.Element {
                                 {renderArtifacts(msg.meta.artifacts, 'md')}
                               </div>
                             )}
-                            {!showOnlyFinalAssistantArtifacts && msg.meta?.totalTokens != null && (
-                              <div className="text-[11px] text-muted-foreground">
-                                Tokens: {msg.meta.promptTokens ?? 0} + {msg.meta.completionTokens ?? 0} ={' '}
-                                {msg.meta.totalTokens}
-                              </div>
-                            )}
-                            <button
-                              type="button"
-                              className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/20 transition-all ${
-                                copiedMessageId === String(msg.id || '') ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                              }`}
-                              onClick={() => void handleCopyMessage(String(msg.id || ''), String(msg.content || ''))}
-                              title={copiedMessageId === String(msg.id || '') ? '已复制' : '复制'}
-                            >
-                              {copiedMessageId === String(msg.id || '') ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                            </button>
+                            {String(msg.content || '').trim() ? (
+                              <button
+                                type="button"
+                                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-all ${
+                                  copiedMessageId === String(msg.id || '')
+                                    ? 'opacity-100'
+                                    : 'opacity-0 group-hover:opacity-100'
+                                }`}
+                                onClick={() => void handleCopyMessage(String(msg.id || ''), String(msg.content || ''))}
+                                title={copiedMessageId === String(msg.id || '') ? '已复制' : '复制'}
+                              >
+                                {copiedMessageId === String(msg.id || '') ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                              </button>
+                            ) : null}
 
                           </div>
                         </div>
