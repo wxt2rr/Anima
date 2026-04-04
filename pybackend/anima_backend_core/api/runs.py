@@ -16,7 +16,23 @@ from ..runtime.graph import inject_system_message
 from ..tools.executor import execute_tool, make_tool_message, select_tools
 from .runs_compression import apply_persistent_compression, apply_thinking_level, build_usage_state, normalize_or_estimate_usage
 from .runs_request import resolve_runtime_options
-from .runs_stream import _run_tool_loop, handle_post_runs_non_stream_via_stream_executor
+from .runs_stream import _run_coordinator_workers, _run_tool_loop, handle_post_runs_non_stream_via_stream_executor
+
+
+def _isolate_worker_messages(messages: List[Dict[str, Any]], composer: Dict[str, Any]) -> List[Dict[str, Any]]:
+    role = str((composer or {}).get("agentRole") or "").strip().lower()
+    if role != "worker":
+        return messages
+    if not isinstance(messages, list) or not messages:
+        return []
+    last_user = None
+    for m in reversed(messages):
+        if isinstance(m, dict) and str(m.get("role") or "") == "user":
+            last_user = m
+            break
+    if isinstance(last_user, dict):
+        return [last_user]
+    return [messages[-1]] if isinstance(messages[-1], dict) else []
 
 
 def _apply_persistent_compression(
@@ -196,6 +212,18 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
                 traces_all = list(paused_traces)
                 artifacts_all = list(paused_artifacts)
                 resumed_messages = list(paused_messages)
+                worker_ctx = _run_coordinator_workers(
+                    provider=provider,
+                    settings_obj=settings_obj,
+                    composer=composer,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    extra_body=extra_body,
+                    emit_event=emit_event,
+                )
+                worker_reports_text = str(worker_ctx.get("reportsText") or "").strip()
+                if worker_reports_text:
+                    resumed_messages.append({"role": "assistant", "content": "Worker reports:\n" + worker_reports_text})
 
                 if decision == "reject":
                     tool_content = json.dumps({"ok": False, "error": "User rejected dangerous command approval"}, ensure_ascii=False)
@@ -272,6 +300,8 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
                             "reasoning": out.get("reasoning") or "",
                             "messages": out.get("messages"),
                             "pauseContext": out.get("pause_context"),
+                            "stopReason": out.get("stop_reason") or "blocked_by_approval",
+                            "verification": out.get("verification"),
                         },
                     )
                     approval_next = out.get("approval") if isinstance(out.get("approval"), dict) else {}
@@ -296,6 +326,22 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
                     composer=composer,
                     messages=output_messages if isinstance(output_messages, list) else resumed_messages,
                 )
+                worker_traces = [x for x in (worker_ctx.get("traces") or []) if isinstance(x, dict)]
+                worker_artifacts = [x for x in (worker_ctx.get("artifacts") or []) if isinstance(x, dict)]
+                orchestration = worker_ctx.get("orchestration") if isinstance(worker_ctx.get("orchestration"), dict) else {"workers": 0, "failedWorkers": 0, "totalRetries": 0, "failureReasons": {}}
+                traces_out = traces_out + worker_traces
+                artifacts_out = artifacts_out + worker_artifacts
+                worker_ver = worker_ctx.get("verification") if isinstance(worker_ctx.get("verification"), dict) else {"status": "passed", "evidence": []}
+                final_ver = out.get("verification") if isinstance(out.get("verification"), dict) else {"status": "unverified", "evidence": []}
+                final_ver_status = str(final_ver.get("status") or "").strip() or "unverified"
+                worker_ver_status = str(worker_ver.get("status") or "").strip() or "unverified"
+                if worker_ver_status != "passed" and final_ver_status == "passed":
+                    final_ver_status = "failed"
+                final_ver["status"] = final_ver_status
+                final_ver["evidence"] = [x for x in (worker_ver.get("evidence") or []) if isinstance(x, dict)] + [x for x in (final_ver.get("evidence") or []) if isinstance(x, dict)]
+                out_stop_reason = str(out.get("stop_reason") or "completed").strip() or "completed"
+                if worker_ver_status != "passed" and out_stop_reason == "completed":
+                    out_stop_reason = "verification_failed"
                 reasoning = str(out.get("reasoning") or "")
                 rate_limit = out.get("rate_limit")
                 try:
@@ -313,6 +359,9 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
                         "artifacts": artifacts_out,
                         "reasoning": reasoning,
                         "messages": output_messages,
+                        "stopReason": out_stop_reason,
+                        "verification": final_ver,
+                        "orchestration": orchestration,
                     },
                 )
 
@@ -324,6 +373,9 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
                         "traces": traces_out,
                         "artifacts": artifacts_out,
                         "backendImpl": "stream-executor",
+                        "stopReason": out_stop_reason,
+                        "verification": final_ver,
+                        "orchestration": orchestration,
                     }
                     if isinstance(rate_limit, dict) and rate_limit:
                         done_payload["rateLimit"] = rate_limit
@@ -343,6 +395,9 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
                     "artifacts": artifacts_out,
                     "reasoning": reasoning,
                     "backendImpl": "stream-executor",
+                    "stopReason": out_stop_reason,
+                    "verification": final_ver,
+                    "orchestration": orchestration,
                 }
                 if isinstance(rate_limit, dict) and rate_limit:
                     payload["rateLimit"] = rate_limit
@@ -390,12 +445,32 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
         extra_body, max_tokens = _apply_thinking_level(provider, composer, extra_body, max_tokens)
 
         has_system = any(isinstance(m, dict) and m.get("role") == "system" for m in messages)
+        worker_ctx = {
+            "reportsText": "",
+            "traces": [],
+            "artifacts": [],
+            "verification": {"status": "passed", "evidence": []},
+            "orchestration": {"workers": 0, "failedWorkers": 0, "totalRetries": 0, "failureReasons": {}},
+        }
         if not has_system:
             compression_evt = None
             if thread_id:
                 messages, composer, compression_evt = _apply_persistent_compression(
                     chat_id=thread_id, messages=messages, settings_obj=settings_obj, provider=provider, composer=composer, extra_body=extra_body
                 )
+            worker_ctx = _run_coordinator_workers(
+                provider=provider,
+                settings_obj=settings_obj,
+                composer=composer,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                extra_body=extra_body,
+                emit_event=emit_event if 'emit_event' in locals() else None,
+            )
+            worker_reports_text = str(worker_ctx.get("reportsText") or "").strip()
+            if worker_reports_text:
+                messages = list(messages) + [{"role": "assistant", "content": "Worker reports:\n" + worker_reports_text}]
+            messages = _isolate_worker_messages(messages, composer)
             messages = inject_system_message(messages, settings_obj, composer)
         prepared = apply_attachments_inline(messages, composer)
 
@@ -473,6 +548,8 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
                     "reasoning": out.get("reasoning") or "",
                     "messages": out.get("messages"),
                     "pauseContext": pause_context,
+                    "stopReason": out.get("stop_reason") or "blocked_by_approval",
+                    "verification": out.get("verification"),
                 },
             )
             if stream and callable(emit):
@@ -496,8 +573,22 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
             composer=composer,
             messages=output_messages if isinstance(output_messages, list) else prepared,
         )
-        traces = out.get("traces")
-        artifacts = out.get("artifacts")
+        worker_traces = [x for x in (worker_ctx.get("traces") or []) if isinstance(x, dict)]
+        worker_artifacts = [x for x in (worker_ctx.get("artifacts") or []) if isinstance(x, dict)]
+        traces = worker_traces + [x for x in (out.get("traces") or []) if isinstance(x, dict)]
+        artifacts = worker_artifacts + [x for x in (out.get("artifacts") or []) if isinstance(x, dict)]
+        orchestration = worker_ctx.get("orchestration") if isinstance(worker_ctx.get("orchestration"), dict) else {"workers": 0, "failedWorkers": 0, "totalRetries": 0, "failureReasons": {}}
+        worker_ver = worker_ctx.get("verification") if isinstance(worker_ctx.get("verification"), dict) else {"status": "passed", "evidence": []}
+        final_ver = out.get("verification") if isinstance(out.get("verification"), dict) else {"status": "unverified", "evidence": []}
+        final_ver_status = str(final_ver.get("status") or "").strip() or "unverified"
+        worker_ver_status = str(worker_ver.get("status") or "").strip() or "unverified"
+        if worker_ver_status != "passed" and final_ver_status == "passed":
+            final_ver_status = "failed"
+        final_ver["status"] = final_ver_status
+        final_ver["evidence"] = [x for x in (worker_ver.get("evidence") or []) if isinstance(x, dict)] + [x for x in (final_ver.get("evidence") or []) if isinstance(x, dict)]
+        out_stop_reason = str(out.get("stop_reason") or "completed").strip() or "completed"
+        if worker_ver_status != "passed" and out_stop_reason == "completed":
+            out_stop_reason = "verification_failed"
         reasoning = str(out.get("reasoning") or "")
         rate_limit = out.get("rate_limit")
         try:
@@ -515,6 +606,9 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
                 "artifacts": artifacts,
                 "reasoning": reasoning,
                 "messages": output_messages,
+                "stopReason": out_stop_reason,
+                "verification": final_ver,
+                "orchestration": orchestration,
             },
         )
 
@@ -525,6 +619,9 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
                 "reasoning": reasoning,
                 "traces": traces,
                 "backendImpl": "stream-executor",
+                "stopReason": out_stop_reason,
+                "verification": final_ver,
+                "orchestration": orchestration,
             }
             if isinstance(artifacts, list) and artifacts:
                 done_payload["artifacts"] = artifacts
@@ -546,6 +643,9 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
             "artifacts": artifacts,
             "reasoning": reasoning,
             "backendImpl": "stream-executor",
+            "stopReason": out_stop_reason,
+            "verification": final_ver,
+            "orchestration": orchestration,
         }
         if isinstance(rate_limit, dict) and rate_limit:
             payload["rateLimit"] = rate_limit

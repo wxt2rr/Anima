@@ -194,7 +194,26 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         self.assertIn("Coder命令模板:", prompt)
         self.assertIn("status: codex status", prompt)
 
-    def test_system_prompt_injects_workspace_user_memory_file(self) -> None:
+    def test_system_prompt_control_plane_layer_priority(self) -> None:
+        from anima_backend_core.runtime.graph import build_system_prompt_text
+
+        settings_obj = {
+            "settings": {
+                "systemHardRules": ["[HARD] 安全规则"],
+                "systemProjectRules": ["[PROJECT] 项目规则"],
+            }
+        }
+        prompt = build_system_prompt_text(
+            settings_obj,
+            {"sessionRules": ["[SESSION] 会话规则"]},
+            "请帮我分析",
+        )
+        hard_idx = prompt.find("[HARD] 安全规则")
+        project_idx = prompt.find("[PROJECT] 项目规则")
+        session_idx = prompt.find("[SESSION] 会话规则")
+        self.assertTrue(hard_idx >= 0 and project_idx > hard_idx and session_idx > project_idx)
+
+    def test_system_prompt_no_longer_injects_workspace_user_memory_file(self) -> None:
         from anima_backend_core.runtime.graph import build_system_prompt_text
 
         with tempfile.TemporaryDirectory() as td:
@@ -205,9 +224,87 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                 f.write("喜欢咖啡\n讨厌早起")
             settings_obj = {"settings": {"defaultToolMode": "all"}}
             prompt = build_system_prompt_text(settings_obj, {"workspaceDir": td}, "今天聊啥")
-            self.assertIn("用户记忆（来自", prompt)
-            self.assertIn("喜欢咖啡", prompt)
-            self.assertIn("讨厌早起", prompt)
+            self.assertNotIn("用户记忆（来自", prompt)
+            self.assertNotIn("喜欢咖啡", prompt)
+            self.assertNotIn("讨厌早起", prompt)
+
+    def test_system_prompt_injects_runtime_memory_retrieval_block(self) -> None:
+        from anima_backend_core.runtime.graph import build_system_prompt_text
+
+        with tempfile.TemporaryDirectory() as td:
+            from anima_backend_shared.memory_store import add_memory_item
+
+            add_memory_item(
+                workspace_dir=td,
+                content="用户喜欢黑咖啡，不加糖",
+                memory_type="semantic",
+                importance=0.9,
+                confidence=0.9,
+                source="test",
+                run_id="r1",
+                user_id="u1",
+                evidence=["用户明确说明"],
+            )
+            settings_obj = {
+                "settings": {
+                    "memoryEnabled": True,
+                    "memoryRetrievalEnabled": True,
+                    "memoryAutoQueryEnabled": True,
+                    "memoryMaxRetrieveCount": 5,
+                    "memorySimilarityThreshold": 0.0,
+                }
+            }
+            prompt = build_system_prompt_text(settings_obj, {"workspaceDir": td}, "咖啡怎么准备")
+            self.assertIn("Runtime memory retrieval", prompt)
+            self.assertIn("用户喜欢黑咖啡，不加糖", prompt)
+
+    def test_system_prompt_injects_runtime_memory_graph_related_block(self) -> None:
+        from anima_backend_core.runtime.graph import build_system_prompt_text
+        from anima_backend_shared.memory_store import add_memory_item, link_memory_items
+
+        with tempfile.TemporaryDirectory() as td:
+            a = add_memory_item(
+                workspace_dir=td,
+                content="用户喜欢咖啡",
+                memory_type="semantic",
+                importance=0.9,
+                confidence=0.9,
+                source="test",
+                run_id="r1",
+                user_id="u1",
+                evidence=["用户说明"],
+            )
+            b = add_memory_item(
+                workspace_dir=td,
+                content="用户常去静安寺附近咖啡店",
+                memory_type="episodic",
+                importance=0.9,
+                confidence=0.9,
+                source="test",
+                run_id="r1",
+                user_id="u1",
+                evidence=["会话记录"],
+            )
+            link_memory_items(
+                workspace_dir=td,
+                from_id=str(a.get("id") or ""),
+                to_id=str(b.get("id") or ""),
+                relation="related_to",
+            )
+            settings_obj = {
+                "settings": {
+                    "memoryEnabled": True,
+                    "memoryRetrievalEnabled": True,
+                    "memoryAutoQueryEnabled": True,
+                    "memoryGraphEnabled": True,
+                    "memoryGraphDefaultHops": 1,
+                    "memoryMaxRetrieveCount": 5,
+                    "memorySimilarityThreshold": 0.1,
+                }
+            }
+            prompt = build_system_prompt_text(settings_obj, {"workspaceDir": td}, "喜欢")
+            self.assertIn("Runtime memory graph related:", prompt)
+            self.assertIn("静安寺附近咖啡店", prompt)
 
     def test_openclaw_prompt_injects_workspace_files_and_bootstraps(self) -> None:
         from anima_backend_core.runtime.graph import build_system_prompt_text
@@ -479,6 +576,8 @@ class BackendCoreIntegrationTests(unittest.TestCase):
             handle_post_run_resume(h, run_id)
         out = h.wfile.buf.decode("utf-8")
         self.assertIn('"type": "done"', out)
+        self.assertIn('"stopReason": "completed"', out)
+        self.assertIn('"verification"', out)
 
     def test_runs_stream_dangerous_command_emits_approval_and_pauses_run(self) -> None:
         from anima_backend_core.api.runs_stream import handle_post_runs_stream
@@ -636,15 +735,26 @@ class BackendCoreIntegrationTests(unittest.TestCase):
             "reasoning": "",
             "messages": [{"role": "assistant", "content": "done"}],
             "rate_limit": None,
+            "stop_reason": "completed",
+            "verification": {"status": "passed", "evidence": [{"type": "tool_receipt", "tool": "bash", "summary": "ok"}]},
+        }
+        worker_ctx = {
+            "reportsText": "",
+            "traces": [],
+            "artifacts": [],
+            "verification": {"status": "passed", "evidence": [{"type": "worker_report", "summary": "workers=1 failed=0"}]},
+            "orchestration": {"workers": 1, "failedWorkers": 0, "totalRetries": 0, "failureReasons": {}},
         }
 
         with patch("anima_backend_core.api.runs.create_provider", return_value=MockProvider()):
             with patch("anima_backend_core.api.runs.execute_tool", return_value=(json.dumps({"ok": True}, ensure_ascii=False), trace)):
-                with patch("anima_backend_core.api.runs._run_tool_loop", return_value=out_payload):
-                    handle_post_run_resume(h, run_id)
+                with patch("anima_backend_core.api.runs._run_coordinator_workers", return_value=worker_ctx):
+                    with patch("anima_backend_core.api.runs._run_tool_loop", return_value=out_payload):
+                        handle_post_run_resume(h, run_id)
 
         out = h.wfile.buf.decode("utf-8")
         self.assertIn('"type": "done"', out)
+        self.assertIn('"orchestration"', out)
         run = get_run(run_id)
         self.assertTrue(isinstance(run, dict))
         self.assertEqual(str((run or {}).get("status") or ""), "succeeded")
@@ -730,6 +840,481 @@ class BackendCoreIntegrationTests(unittest.TestCase):
             None,
         )
         self.assertTrue(isinstance(tr_evt, dict))
+
+    def test_runs_stream_done_contains_verification_and_stop_reason(self) -> None:
+        from anima_backend_core.api.runs_stream import handle_post_runs_stream
+
+        class _FakeProvider:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def chat_completion(self, _messages, **_kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return {
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "",
+                                    "tool_calls": [
+                                        {
+                                            "id": "tc1",
+                                            "type": "function",
+                                            "function": {"name": "bash", "arguments": '{"command":"echo ok"}'},
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                return {"choices": [{"message": {"role": "assistant", "content": "done"}}]}
+
+        def _fake_execute_tool(*_args, **_kwargs):
+            return (
+                json.dumps({"ok": True, "stdout": "ok\n"}, ensure_ascii=False),
+                {
+                    "id": "tr1",
+                    "toolCallId": "tc1",
+                    "name": "bash",
+                    "status": "succeeded",
+                    "startedAt": 1,
+                    "endedAt": 2,
+                    "durationMs": 1,
+                    "resultPreview": {"kind": "text", "text": "ok", "truncated": False},
+                },
+            )
+
+        h = self._make_handler()
+        body = {"messages": [{"role": "user", "content": "run"}], "composer": {"workspaceDir": "/tmp", "verificationRequired": True}}
+        with patch("anima_backend_core.api.runs_stream.load_settings", return_value={"settings": {}}):
+            with patch("anima_backend_core.api.runs_stream.create_provider", return_value=_FakeProvider()):
+                with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
+                    with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
+                        with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
+                            with patch("anima_backend_core.api.runs_stream.execute_tool", side_effect=_fake_execute_tool):
+                                handle_post_runs_stream(h, body)
+
+        raw = h.wfile.buf.decode("utf-8")
+        events = []
+        for chunk in raw.split("\n\n"):
+            for line in chunk.split("\n"):
+                if line.startswith("data: "):
+                    events.append(json.loads(line[len("data: ") :]))
+        done = next((e for e in events if e.get("type") == "done"), None)
+        self.assertTrue(isinstance(done, dict))
+        self.assertEqual(str((done or {}).get("stopReason") or ""), "completed")
+        self.assertTrue(isinstance((done or {}).get("verification"), dict))
+        self.assertEqual(str(((done or {}).get("verification") or {}).get("status") or ""), "passed")
+
+    def test_runs_stream_verification_required_without_evidence_stops_as_failed(self) -> None:
+        from anima_backend_core.api.runs_stream import handle_post_runs_stream
+
+        h = self._make_handler()
+        body = {
+            "messages": [{"role": "user", "content": "直接回答"}],
+            "composer": {"workspaceDir": "/tmp", "verificationRequired": True},
+        }
+        with patch("anima_backend_core.api.runs_stream.load_settings", return_value={"settings": {}}):
+            with patch("anima_backend_core.api.runs_stream.create_provider", return_value=MockProvider()):
+                with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
+                    with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
+                        with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
+                            handle_post_runs_stream(h, body)
+
+        raw = h.wfile.buf.decode("utf-8")
+        events = []
+        for chunk in raw.split("\n\n"):
+            for line in chunk.split("\n"):
+                if line.startswith("data: "):
+                    events.append(json.loads(line[len("data: ") :]))
+        done = next((e for e in events if e.get("type") == "done"), None)
+        self.assertTrue(isinstance(done, dict))
+        self.assertEqual(str((done or {}).get("stopReason") or ""), "verification_failed")
+        self.assertEqual(str(((done or {}).get("verification") or {}).get("status") or ""), "unverified")
+
+    def test_runs_stream_stream_fallback_emits_recovery_trace(self) -> None:
+        from anima_backend_core.api.runs_stream import handle_post_runs_stream
+
+        class _FakeProvider:
+            def __init__(self) -> None:
+                self.last_rate_limit = None
+
+            def chat_completion_stream(self, _messages, **_kwargs):
+                raise RuntimeError("stream channel broken")
+
+            def chat_completion(self, _messages, **_kwargs):
+                return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+        h = self._make_handler()
+        body = {"messages": [{"role": "user", "content": "hi"}], "composer": {"workspaceDir": "/tmp"}}
+        with patch("anima_backend_core.api.runs_stream.load_settings", return_value={"settings": {}}):
+            with patch("anima_backend_core.api.runs_stream.create_provider", return_value=_FakeProvider()):
+                with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
+                    with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
+                        with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
+                            handle_post_runs_stream(h, body)
+
+        raw = h.wfile.buf.decode("utf-8")
+        events = []
+        for chunk in raw.split("\n\n"):
+            for line in chunk.split("\n"):
+                if line.startswith("data: "):
+                    events.append(json.loads(line[len("data: ") :]))
+        recovery = next(
+            (
+                e
+                for e in events
+                if e.get("type") == "trace"
+                and isinstance(e.get("trace"), dict)
+                and str((e.get("trace") or {}).get("name") or "") == "recovery/model_fallback"
+            ),
+            None,
+        )
+        self.assertTrue(isinstance(recovery, dict))
+
+    def test_runs_stream_worker_role_isolates_history_context(self) -> None:
+        from anima_backend_core.api.runs_stream import handle_post_runs_stream
+
+        class _FakeProvider:
+            def __init__(self) -> None:
+                self.seen_messages = []
+
+            def chat_completion(self, messages, **_kwargs):
+                self.seen_messages.append(messages)
+                return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+        h = self._make_handler()
+        body = {
+            "threadId": "worker_t1",
+            "useThreadMessages": True,
+            "messages": [{"role": "user", "content": "latest user task"}],
+            "composer": {"workspaceDir": "/tmp", "agentRole": "worker"},
+        }
+        history = [
+            {"role": "user", "content": "old user 1"},
+            {"role": "assistant", "content": "old assistant 1"},
+            {"role": "user", "content": "old user 2"},
+        ]
+
+        p = _FakeProvider()
+        with patch("anima_backend_core.api.runs_stream.load_settings", return_value={"settings": {"enableAutoCompression": False}}):
+            with patch("anima_backend_core.api.runs_stream.create_provider", return_value=p):
+                with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
+                    with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
+                        with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
+                            with patch("anima_backend_core.api.runs_stream.get_chat", return_value={"messages": history}):
+                                handle_post_runs_stream(h, body)
+
+        self.assertTrue(len(p.seen_messages) >= 1)
+        first = p.seen_messages[0]
+        user_contents = [str(m.get("content") or "") for m in first if isinstance(m, dict) and str(m.get("role") or "") == "user"]
+        self.assertEqual(user_contents, ["latest user task"])
+
+    def test_runs_stream_coordinator_merges_worker_outputs(self) -> None:
+        from anima_backend_core.api.runs_stream import handle_post_runs_stream
+
+        class _FakeProvider:
+            def __init__(self) -> None:
+                self.last_rate_limit = None
+
+            def chat_completion(self, _messages, **_kwargs):
+                return {"choices": [{"message": {"role": "assistant", "content": "main ok"}}]}
+
+        worker_out = {
+            "paused": False,
+            "final_content": "worker ok",
+            "usage": None,
+            "traces": [
+                {
+                    "id": "wtr1",
+                    "toolCallId": "wtc1",
+                    "name": "bash",
+                    "status": "succeeded",
+                    "resultPreview": {"kind": "text", "text": "worker done", "truncated": False},
+                }
+            ],
+            "artifacts": [],
+            "reasoning": "",
+            "messages": [{"role": "assistant", "content": "worker ok"}],
+            "rate_limit": None,
+            "stop_reason": "completed",
+            "verification": {"status": "passed", "evidence": [{"type": "tool_receipt", "tool": "bash", "summary": "worker done"}]},
+        }
+        main_out = {
+            "paused": False,
+            "final_content": "main ok",
+            "usage": None,
+            "traces": [],
+            "artifacts": [],
+            "reasoning": "",
+            "messages": [{"role": "assistant", "content": "main ok"}],
+            "rate_limit": None,
+            "stop_reason": "completed",
+            "verification": {"status": "passed", "evidence": [{"type": "skipped", "summary": "verification not required"}]},
+        }
+
+        h = self._make_handler()
+        body = {
+            "messages": [{"role": "user", "content": "coordinator task"}],
+            "composer": {"workspaceDir": "/tmp", "agentRole": "coordinator", "workerTasks": ["sub task 1"]},
+        }
+        with patch("anima_backend_core.api.runs_stream.load_settings", return_value={"settings": {}}):
+            with patch("anima_backend_core.api.runs_stream.create_provider", return_value=_FakeProvider()):
+                with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
+                    with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
+                        with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
+                            with patch("anima_backend_core.api.runs_stream._run_tool_loop", side_effect=[worker_out, main_out]):
+                                handle_post_runs_stream(h, body)
+
+        raw = h.wfile.buf.decode("utf-8")
+        events = []
+        for chunk in raw.split("\n\n"):
+            for line in chunk.split("\n"):
+                if line.startswith("data: "):
+                    events.append(json.loads(line[len("data: ") :]))
+        done = next((e for e in events if e.get("type") == "done"), None)
+        self.assertTrue(isinstance(done, dict))
+        traces = (done or {}).get("traces")
+        self.assertTrue(isinstance(traces, list))
+        self.assertTrue(any(isinstance(t, dict) and str(t.get("name") or "") == "bash" for t in (traces or [])))
+        verification = (done or {}).get("verification")
+        self.assertTrue(isinstance(verification, dict))
+        self.assertEqual(str((verification or {}).get("status") or ""), "passed")
+        ev = (verification or {}).get("evidence")
+        self.assertTrue(isinstance(ev, list) and any(isinstance(x, dict) and str(x.get("type") or "") == "worker_report" for x in ev))
+        orchestration = (done or {}).get("orchestration")
+        self.assertTrue(isinstance(orchestration, dict))
+        self.assertEqual(int((orchestration or {}).get("workers") or 0), 1)
+
+    def test_runs_stream_coordinator_worker_retry_records_stats(self) -> None:
+        from anima_backend_core.api.runs_stream import handle_post_runs_stream
+
+        class _FakeProvider:
+            def __init__(self) -> None:
+                self.last_rate_limit = None
+
+            def chat_completion(self, _messages, **_kwargs):
+                return {"choices": [{"message": {"role": "assistant", "content": "main ok"}}]}
+
+        worker_fail = {
+            "paused": False,
+            "final_content": "worker failed",
+            "usage": None,
+            "traces": [],
+            "artifacts": [],
+            "reasoning": "",
+            "messages": [{"role": "assistant", "content": "worker failed"}],
+            "rate_limit": None,
+            "stop_reason": "verification_failed",
+            "verification": {"status": "failed", "evidence": [{"type": "tool_failure", "tool": "bash", "summary": "x"}]},
+        }
+        worker_pass = {
+            "paused": False,
+            "final_content": "worker ok",
+            "usage": None,
+            "traces": [],
+            "artifacts": [],
+            "reasoning": "",
+            "messages": [{"role": "assistant", "content": "worker ok"}],
+            "rate_limit": None,
+            "stop_reason": "completed",
+            "verification": {"status": "passed", "evidence": [{"type": "tool_receipt", "tool": "bash", "summary": "ok"}]},
+        }
+        main_out = {
+            "paused": False,
+            "final_content": "main ok",
+            "usage": None,
+            "traces": [],
+            "artifacts": [],
+            "reasoning": "",
+            "messages": [{"role": "assistant", "content": "main ok"}],
+            "rate_limit": None,
+            "stop_reason": "completed",
+            "verification": {"status": "passed", "evidence": [{"type": "skipped", "summary": "verification not required"}]},
+        }
+
+        h = self._make_handler()
+        body = {
+            "messages": [{"role": "user", "content": "coordinator task"}],
+            "composer": {
+                "workspaceDir": "/tmp",
+                "agentRole": "coordinator",
+                "workerTasks": ["sub task retry"],
+                "workerRetryMax": 1,
+            },
+        }
+        with patch("anima_backend_core.api.runs_stream.load_settings", return_value={"settings": {}}):
+            with patch("anima_backend_core.api.runs_stream.create_provider", return_value=_FakeProvider()):
+                with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
+                    with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
+                        with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
+                            with patch("anima_backend_core.api.runs_stream._run_tool_loop", side_effect=[worker_fail, worker_pass, main_out]):
+                                handle_post_runs_stream(h, body)
+
+        raw = h.wfile.buf.decode("utf-8")
+        events = []
+        for chunk in raw.split("\n\n"):
+            for line in chunk.split("\n"):
+                if line.startswith("data: "):
+                    events.append(json.loads(line[len("data: ") :]))
+        done = next((e for e in events if e.get("type") == "done"), None)
+        self.assertTrue(isinstance(done, dict))
+        orchestration = (done or {}).get("orchestration")
+        self.assertTrue(isinstance(orchestration, dict))
+        self.assertEqual(int((orchestration or {}).get("totalRetries") or 0), 1)
+        reasons = (orchestration or {}).get("failureReasons")
+        self.assertTrue(isinstance(reasons, dict))
+        self.assertEqual(int((reasons or {}).get("verification_failed") or 0), 1)
+
+    def test_runs_stream_coordinator_worker_timeout_records_reason(self) -> None:
+        from anima_backend_core.api.runs_stream import handle_post_runs_stream
+
+        class _FakeProvider:
+            def __init__(self) -> None:
+                self.last_rate_limit = None
+
+            def chat_completion(self, _messages, **_kwargs):
+                return {"choices": [{"message": {"role": "assistant", "content": "main ok"}}]}
+
+        def _fake_run_tool_loop(*_args, **kwargs):
+            composer = kwargs.get("composer") if isinstance(kwargs, dict) else None
+            role = str((composer or {}).get("agentRole") or "")
+            if role == "worker":
+                time.sleep(0.05)
+                return {
+                    "paused": False,
+                    "final_content": "worker late",
+                    "usage": None,
+                    "traces": [],
+                    "artifacts": [],
+                    "reasoning": "",
+                    "messages": [{"role": "assistant", "content": "late"}],
+                    "rate_limit": None,
+                    "stop_reason": "completed",
+                    "verification": {"status": "passed", "evidence": []},
+                }
+            return {
+                "paused": False,
+                "final_content": "main ok",
+                "usage": None,
+                "traces": [],
+                "artifacts": [],
+                "reasoning": "",
+                "messages": [{"role": "assistant", "content": "main ok"}],
+                "rate_limit": None,
+                "stop_reason": "completed",
+                "verification": {"status": "passed", "evidence": []},
+            }
+
+        h = self._make_handler()
+        body = {
+            "messages": [{"role": "user", "content": "coordinator timeout task"}],
+            "composer": {
+                "workspaceDir": "/tmp",
+                "agentRole": "coordinator",
+                "workerTasks": ["sub timeout"],
+                "workerTimeoutMs": 5,
+                "workerRetryMax": 0,
+            },
+        }
+        with patch("anima_backend_core.api.runs_stream.load_settings", return_value={"settings": {}}):
+            with patch("anima_backend_core.api.runs_stream.create_provider", return_value=_FakeProvider()):
+                with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
+                    with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
+                        with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
+                            with patch("anima_backend_core.api.runs_stream._run_tool_loop", side_effect=_fake_run_tool_loop):
+                                handle_post_runs_stream(h, body)
+
+        raw = h.wfile.buf.decode("utf-8")
+        events = []
+        for chunk in raw.split("\n\n"):
+            for line in chunk.split("\n"):
+                if line.startswith("data: "):
+                    events.append(json.loads(line[len("data: ") :]))
+        done = next((e for e in events if e.get("type") == "done"), None)
+        self.assertTrue(isinstance(done, dict))
+        self.assertEqual(str((done or {}).get("stopReason") or ""), "verification_failed")
+        orchestration = (done or {}).get("orchestration")
+        self.assertTrue(isinstance(orchestration, dict))
+        self.assertEqual(int((orchestration or {}).get("failedWorkers") or 0), 1)
+        reasons = (orchestration or {}).get("failureReasons")
+        self.assertTrue(isinstance(reasons, dict))
+        self.assertTrue(int((reasons or {}).get("timeout") or 0) >= 1)
+
+    def test_runs_stream_worker_task_model_override(self) -> None:
+        from anima_backend_core.api.runs_stream import handle_post_runs_stream
+
+        class _FakeProvider:
+            def __init__(self) -> None:
+                self.last_rate_limit = None
+
+            def chat_completion(self, _messages, **_kwargs):
+                return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+        seen_model_overrides = []
+
+        def _fake_create_provider(_settings_obj, composer):
+            seen_model_overrides.append(str((composer or {}).get("modelOverride") or ""))
+            return _FakeProvider()
+
+        worker_out = {
+            "paused": False,
+            "final_content": "worker ok",
+            "usage": None,
+            "traces": [],
+            "artifacts": [],
+            "reasoning": "",
+            "messages": [{"role": "assistant", "content": "worker ok"}],
+            "rate_limit": None,
+            "stop_reason": "completed",
+            "verification": {"status": "passed", "evidence": []},
+        }
+        main_out = {
+            "paused": False,
+            "final_content": "main ok",
+            "usage": None,
+            "traces": [],
+            "artifacts": [],
+            "reasoning": "",
+            "messages": [{"role": "assistant", "content": "main ok"}],
+            "rate_limit": None,
+            "stop_reason": "completed",
+            "verification": {"status": "passed", "evidence": []},
+        }
+
+        h = self._make_handler()
+        body = {
+            "messages": [{"role": "user", "content": "coordinator model override"}],
+            "composer": {
+                "workspaceDir": "/tmp",
+                "agentRole": "coordinator",
+                "workerTasks": [{"prompt": "sub model task", "modelOverride": "worker-model-x"}],
+            },
+        }
+        with patch("anima_backend_core.api.runs_stream.load_settings", return_value={"settings": {}}):
+            with patch("anima_backend_core.api.runs_stream.create_provider", side_effect=_fake_create_provider):
+                with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
+                    with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
+                        with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
+                            with patch("anima_backend_core.api.runs_stream._run_tool_loop", side_effect=[worker_out, main_out]):
+                                handle_post_runs_stream(h, body)
+
+        self.assertTrue(any(x == "worker-model-x" for x in seen_model_overrides))
+
+    def test_runs_stream_returns_json_error_when_provider_not_configured(self) -> None:
+        from anima_backend_core.api.runs_stream import handle_post_runs_stream
+
+        body = {"messages": [{"role": "user", "content": "hi"}], "composer": {"workspaceDir": "/tmp"}}
+        h = self._make_handler(body)
+        with patch("anima_backend_core.api.runs_stream.load_settings", return_value={"settings": {}}):
+            with patch("anima_backend_core.api.runs_stream.create_provider", side_effect=RuntimeError("No provider configured. Please configure a provider in Settings.")):
+                handle_post_runs_stream(h, body)
+
+        self.assertEqual(getattr(h, "_code", 0), 400)
+        out = self._json_out(h)
+        self.assertFalse(bool(out.get("ok")))
+        self.assertEqual(str(out.get("code") or ""), "provider_not_configured")
 
     def test_runs_stream_emits_compression_delta_and_end(self) -> None:
         from anima_backend_core.api.runs_stream import handle_post_runs_stream
@@ -847,6 +1432,7 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                 events.append(json.loads(line[len("data: ") :]))
         end = next((e for e in events if e.get("type") == "compression_end"), None)
         self.assertTrue(isinstance(end, dict) and end.get("ok") is False and "0 events" in str(end.get("error") or ""))
+        self.assertEqual(str(((end or {}).get("recovery") or {}).get("reason") or ""), "empty_stream")
 
     def test_artifacts_file_serves_bytes(self) -> None:
         from anima_backend_core.api.settings_tools import handle_get_artifact_file
@@ -1179,6 +1765,103 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                         out = self._json_out(h)
                         self.assertTrue(bool(out.get("ok")))
                         self.assertTrue(isinstance(out.get("models"), list))
+
+    def test_dispatch_fetch_models_ollama_local_fallback_tags(self) -> None:
+        from anima_backend_core.api import dispatch
+        from anima_backend_shared.database import init_db, set_app_settings
+
+        td, env, db, _settings = self._with_temp_config_root()
+        with td:
+            with patch.dict(os.environ, env):
+                with patch.object(db, "_CONFIG_ROOT", None):
+                    with patch.object(db, "_DB_INITIALIZED", False):
+                        init_db()
+                        set_app_settings({"settings": {}, "providers": []})
+                        h = self._make_handler({"providerId": "ollama_local", "baseUrl": "", "apiKey": ""})
+                        with patch("anima_backend_shared.providers.fetch_provider_models", side_effect=RuntimeError("boom")):
+                            with patch("anima_backend_core.api.settings_tools._fetch_ollama_models_by_tags", return_value=[{"id": "qwen3:8b"}]):
+                                self.assertTrue(dispatch(h, "POST", "/api/providers/fetch_models"))
+                        out = self._json_out(h)
+                        self.assertTrue(bool(out.get("ok")))
+                        models = out.get("models") or []
+                        self.assertTrue(isinstance(models, list) and len(models) == 1)
+                        self.assertEqual(str((models[0] or {}).get("id") or ""), "qwen3:8b")
+
+    def test_dispatch_tts_preview_macos_say(self) -> None:
+        from anima_backend_core.api import dispatch
+
+        h = self._make_handler({"provider": "macos_say", "model": "Samantha", "speed": 1.2, "text": "你好"})
+        with patch("anima_backend_core.api.settings_tools.subprocess.Popen") as popen_mock:
+            self.assertTrue(dispatch(h, "POST", "/api/tts/preview"))
+        out = self._json_out(h)
+        self.assertTrue(bool(out.get("ok")))
+        self.assertTrue(popen_mock.called)
+
+    def test_dispatch_tts_preview_reject_custom_http_without_endpoint(self) -> None:
+        from anima_backend_core.api import dispatch
+
+        h = self._make_handler({"provider": "custom_http", "model": "x", "text": "你好"})
+        self.assertTrue(dispatch(h, "POST", "/api/tts/preview"))
+        out = self._json_out(h)
+        self.assertFalse(bool(out.get("ok")))
+        self.assertIn("endpoint", str(out.get("error") or ""))
+
+    def test_dispatch_tts_preview_custom_http(self) -> None:
+        from anima_backend_core.api import dispatch
+
+        h = self._make_handler({"provider": "custom_http", "endpoint": "http://127.0.0.1:18080/tts", "model": "m1", "text": "你好"})
+        with patch("anima_backend_core.api.settings_tools._tts_preview_via_http") as preview_http:
+            self.assertTrue(dispatch(h, "POST", "/api/tts/preview"))
+        out = self._json_out(h)
+        self.assertTrue(bool(out.get("ok")))
+        self.assertTrue(preview_http.called)
+
+    def test_dispatch_tts_preview_qwen_tts_requires_api_key(self) -> None:
+        from anima_backend_core.api import dispatch
+
+        h = self._make_handler({"provider": "qwen_tts", "model": "Cherry", "text": "你好"})
+        self.assertTrue(dispatch(h, "POST", "/api/tts/preview"))
+        out = self._json_out(h)
+        self.assertFalse(bool(out.get("ok")))
+        self.assertIn("apiKey", str(out.get("error") or ""))
+
+    def test_dispatch_tts_preview_qwen_tts_local_endpoint_no_api_key(self) -> None:
+        from anima_backend_core.api import dispatch
+
+        h = self._make_handler(
+            {
+                "provider": "qwen_tts",
+                "model": "Cherry",
+                "qwenModel": "qwen3-tts-flash",
+                "qwenLanguageType": "Auto",
+                "endpoint": "http://127.0.0.1:8000/tts",
+                "text": "你好",
+            }
+        )
+        with patch("anima_backend_core.api.settings_tools._tts_preview_qwen") as preview_qwen:
+            self.assertTrue(dispatch(h, "POST", "/api/tts/preview"))
+        out = self._json_out(h)
+        self.assertTrue(bool(out.get("ok")))
+        self.assertTrue(preview_qwen.called)
+
+    def test_dispatch_tts_preview_qwen_tts_ok(self) -> None:
+        from anima_backend_core.api import dispatch
+
+        h = self._make_handler(
+            {
+                "provider": "qwen_tts",
+                "model": "Cherry",
+                "qwenModel": "qwen3-tts-flash",
+                "qwenLanguageType": "Auto",
+                "apiKey": "k",
+                "text": "你好",
+            }
+        )
+        with patch("anima_backend_core.api.settings_tools._tts_preview_qwen") as preview_qwen:
+            self.assertTrue(dispatch(h, "POST", "/api/tts/preview"))
+        out = self._json_out(h)
+        self.assertTrue(bool(out.get("ok")))
+        self.assertTrue(preview_qwen.called)
 
     def test_dispatch_cron_jobs_upsert_and_list(self) -> None:
         from anima_backend_core.api import dispatch
@@ -2222,8 +2905,429 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         tools = shared_tools.builtin_tools()
         names = [str(((t.get("function") or {}) if isinstance(t, dict) else {}).get("name") or "") for t in tools]
         self.assertIn("apply_patch", names)
+        self.assertIn("memory_add", names)
+        self.assertIn("memory_query", names)
+        self.assertIn("memory_link", names)
+        self.assertIn("memory_graph_query", names)
         self.assertNotIn("write_file", names)
         self.assertNotIn("edit_file", names)
+
+    def test_memory_add_blocked_without_evidence_when_policy_enabled(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+        import anima_backend_shared.settings as settings
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(
+                settings,
+                "load_settings",
+                return_value={
+                    "settings": {
+                        "memoryWriteRequireEvidence": True,
+                        "memoryWriteMinImportance": 0.5,
+                        "memoryWriteMinConfidence": 0.6,
+                    }
+                },
+            ):
+                out = json.loads(
+                    shared_tools.execute_builtin_tool(
+                        "memory_add",
+                        {
+                            "content": "用户喜欢长跑",
+                            "type": "semantic",
+                            "importance": 0.9,
+                            "confidence": 0.9,
+                        },
+                        workspace_dir=td,
+                    )
+                )
+        self.assertFalse(bool(out.get("ok")))
+        self.assertTrue(bool(out.get("blocked")))
+        self.assertEqual(str(out.get("reason") or ""), "evidence_required")
+
+    def test_memory_add_and_query_roundtrip(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+        import anima_backend_shared.settings as settings
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(
+                settings,
+                "load_settings",
+                return_value={
+                    "settings": {
+                        "memoryWriteRequireEvidence": True,
+                        "memoryWriteMinImportance": 0.5,
+                        "memoryWriteMinConfidence": 0.6,
+                        "memoryMaxRetrieveCount": 8,
+                        "memorySimilarityThreshold": 0.0,
+                    }
+                },
+            ):
+                add_out = json.loads(
+                    shared_tools.execute_builtin_tool(
+                        "memory_add",
+                        {
+                            "content": "用户偏好中文回复",
+                            "type": "semantic",
+                            "importance": 0.8,
+                            "confidence": 0.9,
+                            "evidence": ["用户在本会话中明确提出"],
+                            "source": "agent",
+                            "runId": "r100",
+                            "userId": "u100",
+                        },
+                        workspace_dir=td,
+                    )
+                )
+                self.assertTrue(bool(add_out.get("ok")))
+                query_out = json.loads(
+                    shared_tools.execute_builtin_tool(
+                        "memory_query",
+                        {"query": "请用中文回答", "topK": 3, "threshold": 0.0},
+                        workspace_dir=td,
+                    )
+                )
+        self.assertTrue(bool(query_out.get("ok")))
+        items = query_out.get("items") if isinstance(query_out.get("items"), list) else []
+        self.assertTrue(any("用户偏好中文回复" in str(x.get("content") or "") for x in items if isinstance(x, dict)))
+
+    def test_memory_consolidate_promotes_high_value_memory(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+        import anima_backend_shared.settings as settings
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(
+                settings,
+                "load_settings",
+                return_value={
+                    "settings": {
+                        "memoryWriteRequireEvidence": False,
+                        "memoryConsolidateMinImportance": 0.75,
+                        "memoryConsolidateMinConfidence": 0.75,
+                        "memoryMaxRetrieveCount": 8,
+                        "memorySimilarityThreshold": 0.0,
+                    }
+                },
+            ):
+                shared_tools.execute_builtin_tool(
+                    "memory_add",
+                    {
+                        "content": "用户每周日晨跑",
+                        "type": "episodic",
+                        "importance": 0.9,
+                        "confidence": 0.9,
+                    },
+                    workspace_dir=td,
+                )
+                c_out = json.loads(shared_tools.execute_builtin_tool("memory_consolidate", {}, workspace_dir=td))
+                self.assertTrue(bool(c_out.get("ok")))
+                q_out = json.loads(shared_tools.execute_builtin_tool("memory_query", {"query": "晨跑", "threshold": 0.0}, workspace_dir=td))
+        items = q_out.get("items") if isinstance(q_out.get("items"), list) else []
+        self.assertTrue(any(str(x.get("type") or "") == "semantic" for x in items if isinstance(x, dict)))
+
+    def test_memory_forget_hides_items_from_query(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+        import anima_backend_shared.settings as settings
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(
+                settings,
+                "load_settings",
+                return_value={
+                    "settings": {
+                        "memoryWriteRequireEvidence": False,
+                        "memoryMaxRetrieveCount": 8,
+                        "memorySimilarityThreshold": 0.0,
+                    }
+                },
+            ):
+                add_out = json.loads(
+                    shared_tools.execute_builtin_tool(
+                        "memory_add",
+                        {"content": "用户怕冷", "type": "semantic", "importance": 0.8, "confidence": 0.8},
+                        workspace_dir=td,
+                    )
+                )
+                mid = str((((add_out.get("item") or {}) if isinstance(add_out, dict) else {}).get("id") or "")).strip()
+                self.assertTrue(bool(mid))
+                f_out = json.loads(shared_tools.execute_builtin_tool("memory_forget", {"ids": [mid]}, workspace_dir=td))
+                self.assertTrue(bool(f_out.get("ok")))
+                q_out = json.loads(shared_tools.execute_builtin_tool("memory_query", {"query": "怕冷", "threshold": 0.0}, workspace_dir=td))
+        items = q_out.get("items") if isinstance(q_out.get("items"), list) else []
+        self.assertFalse(any(str(x.get("id") or "") == mid for x in items if isinstance(x, dict)))
+
+    def test_memory_link_and_graph_query_roundtrip(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+        import anima_backend_shared.settings as settings
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(
+                settings,
+                "load_settings",
+                return_value={"settings": {"memoryWriteRequireEvidence": False, "memorySimilarityThreshold": 0.0}},
+            ):
+                a = json.loads(
+                    shared_tools.execute_builtin_tool(
+                        "memory_add",
+                        {"content": "用户家在上海", "type": "semantic", "importance": 0.9, "confidence": 0.9},
+                        workspace_dir=td,
+                    )
+                )
+                b = json.loads(
+                    shared_tools.execute_builtin_tool(
+                        "memory_add",
+                        {"content": "用户通勤到浦东", "type": "episodic", "importance": 0.9, "confidence": 0.9},
+                        workspace_dir=td,
+                    )
+                )
+                aid = str((((a.get("item") or {}) if isinstance(a, dict) else {}).get("id") or "")).strip()
+                bid = str((((b.get("item") or {}) if isinstance(b, dict) else {}).get("id") or "")).strip()
+                self.assertTrue(aid and bid)
+                l = json.loads(
+                    shared_tools.execute_builtin_tool(
+                        "memory_link",
+                        {"fromId": aid, "toId": bid, "relation": "related_to", "weight": 0.8},
+                        workspace_dir=td,
+                    )
+                )
+                self.assertTrue(bool(l.get("ok")))
+                g = json.loads(
+                    shared_tools.execute_builtin_tool(
+                        "memory_graph_query",
+                        {"anchorIds": [aid], "hops": 1, "maxNodes": 10},
+                        workspace_dir=td,
+                    )
+                )
+        self.assertTrue(bool(g.get("ok")))
+        result = g.get("result") if isinstance(g.get("result"), dict) else {}
+        nodes = result.get("nodes") if isinstance(result.get("nodes"), list) else []
+        self.assertTrue(any("浦东" in str(n.get("content") or "") for n in nodes if isinstance(n, dict)))
+
+    def test_memory_add_conflict_supersedes_previous_semantic(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+        import anima_backend_shared.settings as settings
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(settings, "load_settings", return_value={"settings": {"memoryWriteRequireEvidence": False}}):
+                a1 = json.loads(
+                    shared_tools.execute_builtin_tool(
+                        "memory_add",
+                        {"content": "用户喜欢咖啡", "type": "semantic", "importance": 0.9, "confidence": 0.9},
+                        workspace_dir=td,
+                    )
+                )
+                a2 = json.loads(
+                    shared_tools.execute_builtin_tool(
+                        "memory_add",
+                        {"content": "用户喜欢咖啡。", "type": "semantic", "importance": 0.9, "confidence": 0.9},
+                        workspace_dir=td,
+                    )
+                )
+                superseded = ((a2.get("item") or {}) if isinstance(a2, dict) else {}).get("supersededIds") or []
+                self.assertTrue(bool(a1.get("ok")))
+                self.assertTrue(bool(a2.get("ok")))
+                self.assertTrue(isinstance(superseded, list) and len(superseded) >= 1)
+
+    def test_memory_metrics_tool_returns_event_summary(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+        import anima_backend_shared.settings as settings
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(
+                settings,
+                "load_settings",
+                return_value={"settings": {"memoryWriteRequireEvidence": False, "memorySimilarityThreshold": 0.0}},
+            ):
+                shared_tools.execute_builtin_tool(
+                    "memory_add",
+                    {"content": "用户习惯晨跑", "type": "semantic", "importance": 0.9, "confidence": 0.9},
+                    workspace_dir=td,
+                )
+                shared_tools.execute_builtin_tool(
+                    "memory_query",
+                    {"query": "晨跑", "threshold": 0.0},
+                    workspace_dir=td,
+                )
+                out = json.loads(shared_tools.execute_builtin_tool("memory_metrics", {"days": 7}, workspace_dir=td))
+        self.assertTrue(bool(out.get("ok")))
+        result = out.get("result") if isinstance(out.get("result"), dict) else {}
+        events = result.get("events") if isinstance(result.get("events"), list) else []
+        names = [str(x.get("event") or "") for x in events if isinstance(x, dict)]
+        self.assertTrue("add" in names and "query" in names)
+
+    def test_memory_add_global_and_query_from_workspace(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+        import anima_backend_shared.settings as settings
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(
+                settings,
+                "load_settings",
+                return_value={
+                    "settings": {
+                        "memoryWriteRequireEvidence": False,
+                        "memorySimilarityThreshold": 0.0,
+                        "memoryMaxRetrieveCount": 8,
+                        "memoryGlobalEnabled": True,
+                        "memoryGlobalWriteEnabled": True,
+                        "memoryGlobalRetrieveCount": 3,
+                    }
+                },
+            ):
+                add_out = json.loads(
+                    shared_tools.execute_builtin_tool(
+                        "memory_add",
+                        {"content": "用户喜欢结构化代码评审", "scope": "global", "type": "semantic", "importance": 0.9, "confidence": 0.9},
+                        workspace_dir="",
+                    )
+                )
+                self.assertTrue(bool(add_out.get("ok")))
+                q_out = json.loads(
+                    shared_tools.execute_builtin_tool(
+                        "memory_query",
+                        {"query": "代码评审偏好", "includeGlobal": True, "threshold": 0.0},
+                        workspace_dir=td,
+                    )
+                )
+        self.assertTrue(bool(q_out.get("ok")))
+        items = q_out.get("items") if isinstance(q_out.get("items"), list) else []
+        self.assertTrue(any(str(x.get("scope") or "") == "global" for x in items if isinstance(x, dict)))
+
+    def test_memory_add_auto_scope_decides_global_for_user_preference(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+        import anima_backend_shared.settings as settings
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(
+                settings,
+                "load_settings",
+                return_value={
+                    "settings": {
+                        "memoryWriteRequireEvidence": False,
+                        "memoryScopeAutoEnabled": True,
+                        "memoryDefaultWriteScope": "workspace",
+                        "memoryGlobalEnabled": True,
+                        "memoryGlobalWriteEnabled": True,
+                    }
+                },
+            ):
+                add_out = json.loads(
+                    shared_tools.execute_builtin_tool(
+                        "memory_add",
+                        {"content": "用户偏好中文回复", "type": "semantic", "importance": 0.9, "confidence": 0.9},
+                        workspace_dir=td,
+                    )
+                )
+        self.assertTrue(bool(add_out.get("ok")))
+        item = add_out.get("item") if isinstance(add_out.get("item"), dict) else {}
+        self.assertEqual(str(item.get("scope") or ""), "global")
+        dec = add_out.get("scopeDecision") if isinstance(add_out.get("scopeDecision"), dict) else {}
+        self.assertEqual(str(dec.get("scope") or ""), "global")
+
+    def test_memory_add_auto_scope_decides_workspace_for_project_context(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+        import anima_backend_shared.settings as settings
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(
+                settings,
+                "load_settings",
+                return_value={
+                    "settings": {
+                        "memoryWriteRequireEvidence": False,
+                        "memoryScopeAutoEnabled": True,
+                        "memoryDefaultWriteScope": "workspace",
+                        "memoryGlobalEnabled": True,
+                        "memoryGlobalWriteEnabled": True,
+                    }
+                },
+            ):
+                add_out = json.loads(
+                    shared_tools.execute_builtin_tool(
+                        "memory_add",
+                        {"content": "当前项目 src/api/user.ts 接口返回要兼容旧字段", "type": "semantic", "importance": 0.9, "confidence": 0.9},
+                        workspace_dir=td,
+                    )
+                )
+        self.assertTrue(bool(add_out.get("ok")))
+        item = add_out.get("item") if isinstance(add_out.get("item"), dict) else {}
+        self.assertEqual(str(item.get("scope") or ""), "workspace")
+
+    def test_memory_query_global_without_workspace_when_enabled(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+        import anima_backend_shared.settings as settings
+
+        with patch.object(
+            settings,
+            "load_settings",
+            return_value={
+                "settings": {
+                    "memoryWriteRequireEvidence": False,
+                    "memorySimilarityThreshold": 0.0,
+                    "memoryMaxRetrieveCount": 8,
+                    "memoryGlobalEnabled": True,
+                    "memoryGlobalWriteEnabled": True,
+                    "memoryGlobalRetrieveCount": 3,
+                }
+            },
+        ):
+            shared_tools.execute_builtin_tool(
+                "memory_add",
+                {"content": "用户要求结论先行", "scope": "global", "type": "semantic", "importance": 0.8, "confidence": 0.8},
+                workspace_dir="",
+            )
+            q_out = json.loads(
+                shared_tools.execute_builtin_tool(
+                    "memory_query",
+                    {"query": "结论先行", "includeGlobal": True, "threshold": 0.0},
+                    workspace_dir="",
+                )
+            )
+        self.assertTrue(bool(q_out.get("ok")))
+        items = q_out.get("items") if isinstance(q_out.get("items"), list) else []
+        self.assertTrue(any("结论先行" in str(x.get("content") or "") for x in items if isinstance(x, dict)))
+
+    def test_memory_query_prefers_workspace_when_conflict_like_duplicate(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+        import anima_backend_shared.settings as settings
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(
+                settings,
+                "load_settings",
+                return_value={
+                    "settings": {
+                        "memoryWriteRequireEvidence": False,
+                        "memorySimilarityThreshold": 0.0,
+                        "memoryMaxRetrieveCount": 8,
+                        "memoryGlobalEnabled": True,
+                        "memoryGlobalWriteEnabled": True,
+                        "memoryGlobalRetrieveCount": 5,
+                    }
+                },
+            ):
+                shared_tools.execute_builtin_tool(
+                    "memory_add",
+                    {"content": "用户喜欢中文回复", "scope": "global", "type": "semantic", "importance": 0.9, "confidence": 0.9},
+                    workspace_dir="",
+                )
+                shared_tools.execute_builtin_tool(
+                    "memory_add",
+                    {"content": "用户偏好中文回复", "scope": "workspace", "type": "semantic", "importance": 0.9, "confidence": 0.9},
+                    workspace_dir=td,
+                )
+                q_out = json.loads(
+                    shared_tools.execute_builtin_tool(
+                        "memory_query",
+                        {"query": "请使用中文回答", "includeGlobal": True, "topK": 5, "threshold": 0.0},
+                        workspace_dir=td,
+                    )
+                )
+        self.assertTrue(bool(q_out.get("ok")))
+        items = q_out.get("items") if isinstance(q_out.get("items"), list) else []
+        workspace_hits = [x for x in items if isinstance(x, dict) and str(x.get("scope") or "") == "workspace"]
+        global_hits = [x for x in items if isinstance(x, dict) and str(x.get("scope") or "") == "global"]
+        self.assertTrue(len(workspace_hits) >= 1)
+        self.assertFalse(any("中文回复" in str(x.get("content") or "") for x in global_hits))
 
     def test_apply_patch_update_and_move_file(self) -> None:
         import anima_backend_shared.tools as shared_tools

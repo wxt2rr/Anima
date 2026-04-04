@@ -668,6 +668,124 @@ def builtin_tools() -> List[Dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "memory_add",
+                "description": "Write a structured memory item into workspace/global memory store with policy guardrails.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string"},
+                        "scope": {"type": "string", "enum": ["workspace", "global"]},
+                        "type": {"type": "string", "enum": ["working", "episodic", "semantic", "perceptual"]},
+                        "importance": {"type": "number"},
+                        "confidence": {"type": "number"},
+                        "source": {"type": "string"},
+                        "runId": {"type": "string"},
+                        "userId": {"type": "string"},
+                        "evidence": {"type": "array", "items": {"type": "string"}},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                        "ttlDays": {"type": "integer"},
+                    },
+                    "required": ["content"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "memory_query",
+                "description": "Query structured memory items from workspace/global memory store.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "includeGlobal": {"type": "boolean"},
+                        "globalTopK": {"type": "integer"},
+                        "topK": {"type": "integer"},
+                        "threshold": {"type": "number"},
+                        "types": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "memory_forget",
+                "description": "Soft-delete memory items by ids/types/time for memory hygiene.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "ids": {"type": "array", "items": {"type": "string"}},
+                        "types": {"type": "array", "items": {"type": "string"}},
+                        "createdBeforeMs": {"type": "integer"},
+                        "maxForget": {"type": "integer"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "memory_consolidate",
+                "description": "Promote high-value working/episodic memory into semantic memory.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "minImportance": {"type": "number"},
+                        "minConfidence": {"type": "number"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "memory_link",
+                "description": "Create a graph relation edge between two memory items.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "fromId": {"type": "string"},
+                        "toId": {"type": "string"},
+                        "relation": {"type": "string"},
+                        "weight": {"type": "number"},
+                        "source": {"type": "string"},
+                    },
+                    "required": ["fromId", "toId", "relation"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "memory_graph_query",
+                "description": "Query one-hop/two-hop related memory nodes and edges from graph store.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "anchorIds": {"type": "array", "items": {"type": "string"}},
+                        "hops": {"type": "integer"},
+                        "maxNodes": {"type": "integer"},
+                    },
+                    "required": ["anchorIds"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "memory_metrics",
+                "description": "Get memory system metrics summary.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"days": {"type": "integer"}},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "rg_search",
                 "description": "Search text in workspace files (ripgrep when available).",
                 "parameters": {
@@ -820,6 +938,236 @@ def mcp_tools(settings_obj: Dict[str, Any], composer: Dict[str, Any]) -> Tuple[L
 
 
 def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) -> str:
+    if name == "memory_metrics":
+        if not workspace_dir:
+            raise RuntimeError("No workspace directory selected")
+        from .memory_store import get_memory_metrics_summary
+
+        out = get_memory_metrics_summary(
+            workspace_dir=workspace_dir,
+            days=int(args.get("days") or 7),
+        )
+        return json.dumps({"ok": True, "result": out}, ensure_ascii=False)
+
+    if name == "memory_graph_query":
+        if not workspace_dir:
+            raise RuntimeError("No workspace directory selected")
+        from .memory_store import query_memory_graph
+
+        anchor_ids = [str(x).strip() for x in (args.get("anchorIds") or []) if str(x).strip()] if isinstance(args.get("anchorIds"), list) else []
+        out = query_memory_graph(
+            workspace_dir=workspace_dir,
+            anchor_ids=anchor_ids,
+            hops=int(args.get("hops") or 1),
+            max_nodes=int(args.get("maxNodes") or 20),
+        )
+        return json.dumps({"ok": True, "result": out}, ensure_ascii=False)
+
+    if name == "memory_link":
+        if not workspace_dir:
+            raise RuntimeError("No workspace directory selected")
+        from .memory_store import link_memory_items
+
+        out = link_memory_items(
+            workspace_dir=workspace_dir,
+            from_id=str(args.get("fromId") or "").strip(),
+            to_id=str(args.get("toId") or "").strip(),
+            relation=str(args.get("relation") or "").strip(),
+            weight=float(args.get("weight") or 1.0),
+            source=str(args.get("source") or "agent").strip(),
+        )
+        return json.dumps({"ok": True, "edge": out}, ensure_ascii=False)
+
+    if name == "memory_forget":
+        if not workspace_dir:
+            raise RuntimeError("No workspace directory selected")
+        from .memory_store import forget_memory_items
+
+        ids = [str(x).strip() for x in (args.get("ids") or []) if str(x).strip()] if isinstance(args.get("ids"), list) else []
+        types = [str(x).strip().lower() for x in (args.get("types") or []) if str(x).strip()] if isinstance(args.get("types"), list) else []
+        out = forget_memory_items(
+            workspace_dir=workspace_dir,
+            ids=ids,
+            memory_types=types,
+            created_before_ms=int(args.get("createdBeforeMs") or 0),
+            max_forget=int(args.get("maxForget") or 200),
+        )
+        return json.dumps({"ok": True, "result": out}, ensure_ascii=False)
+
+    if name == "memory_consolidate":
+        if not workspace_dir:
+            raise RuntimeError("No workspace directory selected")
+        from .memory_store import consolidate_memory_items
+        from .settings import load_settings
+
+        settings_obj = load_settings()
+        s = settings_obj.get("settings") if isinstance(settings_obj, dict) else {}
+        if not isinstance(s, dict):
+            s = {}
+        raw_min_importance = args.get("minImportance")
+        raw_min_confidence = args.get("minConfidence")
+        try:
+            min_importance = float(s.get("memoryConsolidateMinImportance") if raw_min_importance is None else raw_min_importance)
+        except Exception:
+            min_importance = 0.75
+        try:
+            min_confidence = float(s.get("memoryConsolidateMinConfidence") if raw_min_confidence is None else raw_min_confidence)
+        except Exception:
+            min_confidence = 0.75
+        out = consolidate_memory_items(
+            workspace_dir=workspace_dir,
+            min_importance=min_importance,
+            min_confidence=min_confidence,
+        )
+        return json.dumps({"ok": True, "result": out}, ensure_ascii=False)
+
+    if name == "memory_query":
+        from .memory_store import query_memory_items_scoped
+        from .settings import load_settings
+
+        q = str(args.get("query") or "").strip()
+        if not q:
+            raise RuntimeError("query is required")
+        settings_obj = load_settings()
+        s = settings_obj.get("settings") if isinstance(settings_obj, dict) else {}
+        if not isinstance(s, dict):
+            s = {}
+        raw_top_k = args.get("topK")
+        raw_threshold = args.get("threshold")
+        try:
+            top_k = int(s.get("memoryMaxRetrieveCount") if raw_top_k is None else raw_top_k)
+        except Exception:
+            top_k = 8
+        try:
+            threshold = float(s.get("memorySimilarityThreshold") if raw_threshold is None else raw_threshold)
+        except Exception:
+            threshold = 0.6
+        global_enabled_default = bool(s.get("memoryGlobalEnabled", False))
+        include_global = bool(global_enabled_default if args.get("includeGlobal") is None else args.get("includeGlobal"))
+        global_top_k_raw = args.get("globalTopK")
+        try:
+            global_top_k = int(s.get("memoryGlobalRetrieveCount") if global_top_k_raw is None else global_top_k_raw)
+        except Exception:
+            global_top_k = 3
+        raw_types = args.get("types")
+        mem_types = [str(x).strip().lower() for x in raw_types] if isinstance(raw_types, list) else []
+        if not workspace_dir and not include_global:
+            raise RuntimeError("No workspace directory selected")
+        rows = query_memory_items_scoped(
+            workspace_dir=workspace_dir,
+            query=q,
+            top_k=top_k,
+            similarity_threshold=threshold,
+            memory_types=mem_types,
+            include_global=include_global,
+            global_top_k=global_top_k,
+        )
+        scope_stats = {"workspace": 0, "global": 0}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            sc = str(row.get("scope") or "workspace").strip().lower()
+            if sc == "global":
+                scope_stats["global"] += 1
+            else:
+                scope_stats["workspace"] += 1
+        return json.dumps(
+            {"ok": True, "query": q, "includeGlobal": include_global, "scopeStats": scope_stats, "items": rows},
+            ensure_ascii=False,
+        )
+
+    if name == "memory_add":
+        from .memory_store import add_memory_item_scoped
+        from .memory_scope_policy import decide_memory_scope
+        from .settings import load_settings
+
+        content = str(args.get("content") or "").strip()
+        if not content:
+            raise RuntimeError("content is required")
+        settings_obj = load_settings()
+        s = settings_obj.get("settings") if isinstance(settings_obj, dict) else {}
+        if not isinstance(s, dict):
+            s = {}
+        raw_scope = args.get("scope")
+        global_enabled = bool(s.get("memoryGlobalEnabled", False))
+        global_write_enabled = bool(s.get("memoryGlobalWriteEnabled", True))
+        memory_type = str(args.get("type") or "semantic").strip().lower()
+        tags = [str(x).strip() for x in (args.get("tags") or []) if str(x).strip()] if isinstance(args.get("tags"), list) else []
+        scope, scope_reason = decide_memory_scope(
+            requested_scope=raw_scope,
+            content=content,
+            memory_type=memory_type,
+            tags=tags,
+            workspace_dir=workspace_dir,
+            settings_obj=s,
+        )
+        if scope == "global" and (not global_enabled or not global_write_enabled):
+            return json.dumps(
+                {
+                    "ok": False,
+                    "blocked": True,
+                    "reason": "global_memory_disabled",
+                    "message": "memory_add blocked: global memory write is disabled",
+                    "scopeDecision": {"scope": scope, "reason": scope_reason},
+                },
+                ensure_ascii=False,
+            )
+        if scope == "workspace" and not workspace_dir:
+            raise RuntimeError("No workspace directory selected")
+        require_evidence = bool(s.get("memoryWriteRequireEvidence", True))
+        min_importance = float(s.get("memoryWriteMinImportance") or 0.5)
+        min_confidence = float(s.get("memoryWriteMinConfidence") or 0.6)
+        raw_importance = args.get("importance")
+        raw_confidence = args.get("confidence")
+        importance = float(0.5 if raw_importance is None else raw_importance)
+        confidence = float(0.7 if raw_confidence is None else raw_confidence)
+        evidence = [str(x).strip() for x in (args.get("evidence") or []) if str(x).strip()] if isinstance(args.get("evidence"), list) else []
+        if require_evidence and memory_type in ("episodic", "semantic", "perceptual") and not evidence:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "blocked": True,
+                    "reason": "evidence_required",
+                    "message": "memory_add blocked: evidence is required for non-working memory",
+                },
+                ensure_ascii=False,
+            )
+        if importance < min_importance:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "blocked": True,
+                    "reason": "importance_too_low",
+                    "message": f"memory_add blocked: importance<{min_importance}",
+                },
+                ensure_ascii=False,
+            )
+        if confidence < min_confidence:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "blocked": True,
+                    "reason": "confidence_too_low",
+                    "message": f"memory_add blocked: confidence<{min_confidence}",
+                },
+                ensure_ascii=False,
+            )
+        item = add_memory_item_scoped(
+            workspace_dir=workspace_dir,
+            scope=scope,
+            content=content,
+            memory_type=memory_type,
+            importance=importance,
+            confidence=confidence,
+            source=str(args.get("source") or "agent"),
+            run_id=str(args.get("runId") or ""),
+            user_id=str(args.get("userId") or ""),
+            evidence=evidence,
+            tags=tags,
+            ttl_days=int(args.get("ttlDays") or 0),
+        )
+        return json.dumps({"ok": True, "item": item, "scopeDecision": {"scope": scope, "reason": scope_reason}}, ensure_ascii=False)
+
     if name == "load_skill":
         skill_id = str(args.get("id") or "").strip()
         if not skill_id:

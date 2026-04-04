@@ -294,6 +294,12 @@ export interface Settings {
   memoryAutoSummarizeEnabled: boolean
   memoryToolModelId: string
   memoryEmbeddingModelId: string
+  memoryGlobalEnabled?: boolean
+  memoryGlobalWriteEnabled?: boolean
+  memoryGlobalRetrieveCount?: number
+  memoryScopeAutoEnabled?: boolean
+  memoryDefaultWriteScope?: 'workspace' | 'global'
+  memoryEmbeddingLocalModels?: Array<{ id: string; name: string; path: string; updatedAt?: number }>
 
   openclaw?: {
     heartbeatEnabled?: boolean
@@ -306,6 +312,22 @@ export interface Settings {
     language: string
     autoDetect: boolean
     localModels?: Array<{ id: string; name: string; path: string }>
+  }
+
+  tts?: {
+    enabled: boolean
+    provider: 'macos_say' | 'piper' | 'kokoro_onnx' | 'custom_http' | 'qwen_tts'
+    model: string
+    endpoint?: string
+    apiKey?: string
+    qwenModel?: string
+    qwenLanguageType?: string
+    speed: number
+    pitch: number
+    volume: number
+    autoPlay: boolean
+    testText?: string
+    localModels?: Array<{ id: string; name: string; path?: string }>
   }
 
   shortcuts?: {
@@ -766,6 +788,12 @@ const normalizeSettingsPayload = (rawSettings: any): any => {
   if (!Array.isArray(rawSettings.skillsEnabledIds)) rawSettings.skillsEnabledIds = []
   if (!Array.isArray(rawSettings.systemPrompts)) rawSettings.systemPrompts = []
   if (!Array.isArray(rawSettings.memories)) rawSettings.memories = []
+  if (typeof rawSettings.memoryGlobalEnabled !== 'boolean') rawSettings.memoryGlobalEnabled = false
+  if (typeof rawSettings.memoryGlobalWriteEnabled !== 'boolean') rawSettings.memoryGlobalWriteEnabled = true
+  if (!Number.isFinite(Number(rawSettings.memoryGlobalRetrieveCount))) rawSettings.memoryGlobalRetrieveCount = 3
+  if (typeof rawSettings.memoryScopeAutoEnabled !== 'boolean') rawSettings.memoryScopeAutoEnabled = false
+  rawSettings.memoryDefaultWriteScope =
+    String(rawSettings.memoryDefaultWriteScope || '').trim().toLowerCase() === 'global' ? 'global' : 'workspace'
   if (!Array.isArray(rawSettings.plugins)) rawSettings.plugins = []
   if (!Array.isArray(rawSettings.mcpServers)) rawSettings.mcpServers = []
 
@@ -794,6 +822,43 @@ const normalizeSettingsPayload = (rawSettings: any): any => {
       }
       rawSettings.voice.model = legacyMap[v] || v
     }
+  }
+
+  if (!rawSettings.tts || typeof rawSettings.tts !== 'object') {
+    rawSettings.tts = {
+      enabled: false,
+      provider: 'macos_say',
+      model: 'Samantha',
+      endpoint: '',
+      apiKey: '',
+      qwenModel: 'qwen3-tts-flash',
+      qwenLanguageType: 'Auto',
+      speed: 1,
+      pitch: 1,
+      volume: 1,
+      autoPlay: false,
+      testText: '你好，这是一段本地 TTS 试听文本。',
+      localModels: []
+    }
+  } else {
+    const tts = rawSettings.tts
+    const provider = String(tts.provider || '').trim()
+    tts.provider = provider === 'piper' || provider === 'kokoro_onnx' || provider === 'custom_http' || provider === 'qwen_tts' ? provider : 'macos_say'
+    tts.model = String(tts.model || '').trim() || (tts.provider === 'macos_say' ? 'Samantha' : '')
+    tts.endpoint = String(tts.endpoint || '').trim()
+    tts.apiKey = String(tts.apiKey || '').trim()
+    tts.qwenModel = String(tts.qwenModel || '').trim() || 'qwen3-tts-flash'
+    tts.qwenLanguageType = String(tts.qwenLanguageType || '').trim() || 'Auto'
+    tts.enabled = Boolean(tts.enabled)
+    const speed = Number(tts.speed)
+    const pitch = Number(tts.pitch)
+    const volume = Number(tts.volume)
+    tts.speed = Number.isFinite(speed) ? Math.max(0.5, Math.min(2, speed)) : 1
+    tts.pitch = Number.isFinite(pitch) ? Math.max(0.5, Math.min(2, pitch)) : 1
+    tts.volume = Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 1
+    tts.autoPlay = Boolean(tts.autoPlay)
+    tts.testText = String(tts.testText || '').trim() || '你好，这是一段本地 TTS 试听文本。'
+    if (!Array.isArray(tts.localModels)) tts.localModels = []
   }
 
   if (!rawSettings.media) {
@@ -1834,7 +1899,8 @@ export const useStore = create<AppState>()(
         let nextProviders: Provider[] = []
         set((state) => {
           const curProviders = state.providers || []
-          const newProvider = { ...provider, id: nanoid() }
+          const customId = String((provider as any)?.id || '').trim()
+          const newProvider = { ...provider, id: customId || nanoid() }
           nextProviders = [...curProviders, newProvider]
           return { providers: nextProviders }
         })

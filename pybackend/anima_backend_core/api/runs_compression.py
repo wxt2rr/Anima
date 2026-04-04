@@ -387,7 +387,23 @@ def apply_persistent_compression(
     except Exception as e:
         if emit_event is not None:
             try:
-                emit_event({"type": "compression_end", "at": now_ms(), "ok": False, "error": str(e), "mode": "auto"})
+                err_text = str(e)
+                reason = "runtime_error"
+                low = err_text.lower()
+                if "0 events" in low or "no text delta" in low:
+                    reason = "empty_stream"
+                elif "timeout" in low:
+                    reason = "timeout"
+                emit_event(
+                    {
+                        "type": "compression_end",
+                        "at": now_ms(),
+                        "ok": False,
+                        "error": err_text,
+                        "mode": "auto",
+                        "recovery": {"reason": reason, "action": "skip_compression_and_continue"},
+                    }
+                )
             except Exception:
                 pass
             return window_msgs, working_composer, None

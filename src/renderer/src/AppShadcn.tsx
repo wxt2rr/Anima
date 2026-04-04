@@ -195,6 +195,19 @@ async function fetchBackendJson<T>(path: string, init?: RequestInit): Promise<T>
   }
 }
 
+function toTtsSpeakText(input: string): string {
+  const s = String(input || '')
+  if (!s) return ''
+  return s
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '$1')
+    .replace(/[#>*_-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function App(): JSX.Element {
   const { configLoaded, configError, loadRemoteConfig } = useStore()
   const reduceMotion = useReducedMotion()
@@ -396,6 +409,8 @@ function AppLoaded(): JSX.Element {
   const [highlightUserMsgId, setHighlightUserMsgId] = useState('')
   const [userNavItems, setUserNavItems] = useState<Array<{ id: string; topRatio: number; widthPx: number; content: string }>>([])
   const [navHover, setNavHover] = useState<{ id: string; topRatio: number; content: string } | null>(null)
+  const [chatScrollbarVisible, setChatScrollbarVisible] = useState(false)
+  const chatScrollbarHideTimerRef = useRef<number | null>(null)
 
   const handleCopyMessage = useCallback(async (messageId: string, text: string) => {
     const content = String(text || '')
@@ -412,6 +427,10 @@ function AppLoaded(): JSX.Element {
 
   useEffect(() => {
     return () => {
+      if (chatScrollbarHideTimerRef.current != null) {
+        window.clearTimeout(chatScrollbarHideTimerRef.current)
+        chatScrollbarHideTimerRef.current = null
+      }
       if (copiedMessageTimerRef.current != null) {
         window.clearTimeout(copiedMessageTimerRef.current)
         copiedMessageTimerRef.current = null
@@ -2205,6 +2224,17 @@ function AppLoaded(): JSX.Element {
     userScrollIntentUntilRef.current = now + Math.max(80, holdMs)
   }, [])
 
+  const showChatScrollbarTemporarily = useCallback((holdMs = 700) => {
+    setChatScrollbarVisible(true)
+    if (chatScrollbarHideTimerRef.current != null) {
+      window.clearTimeout(chatScrollbarHideTimerRef.current)
+    }
+    chatScrollbarHideTimerRef.current = window.setTimeout(() => {
+      setChatScrollbarVisible(false)
+      chatScrollbarHideTimerRef.current = null
+    }, Math.max(260, holdMs))
+  }, [])
+
   const suppressAutoScrollFor = useCallback((holdMs = 420) => {
     const now = performance.now()
     suppressAutoScrollUntilRef.current = Math.max(suppressAutoScrollUntilRef.current, now + Math.max(120, holdMs))
@@ -2307,6 +2337,7 @@ function AppLoaded(): JSX.Element {
   const handleChatScroll = useCallback(() => {
     const el = chatScrollRef.current
     if (!el) return
+    showChatScrollbarTemporarily()
     const prevTop = lastScrollTopRef.current
     const currTop = el.scrollTop
     lastScrollTopRef.current = currTop
@@ -2345,7 +2376,7 @@ function AppLoaded(): JSX.Element {
     userScrollLockedRef.current = true
     setChatBottomIfChanged(false)
     stopAutoScroll()
-  }, [setChatBottomIfChanged, setScrollToBottomIfChanged, stopAutoScroll])
+  }, [setChatBottomIfChanged, setScrollToBottomIfChanged, showChatScrollbarTemporarily, stopAutoScroll])
 
   const scrollToTop = useCallback(() => {
     const el = chatScrollRef.current
@@ -2611,6 +2642,36 @@ function AppLoaded(): JSX.Element {
 
     const turnId = String(opts?.turnIdOverride || '').trim() || crypto.randomUUID()
     let currentAssistantId = crypto.randomUUID()
+
+    const speakAssistantIfNeeded = async (content: string) => {
+      const curSettings = useStore.getState().settings as any
+      const tts = (curSettings?.tts || {}) as any
+      if (!tts || !tts.enabled || !tts.autoPlay) return
+      const provider = String(tts.provider || 'macos_say').trim()
+      const text = toTtsSpeakText(content)
+      if (!text) return
+      try {
+        await fetchBackendJson<{ ok: boolean }>('/api/tts/preview', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider,
+            model: String(tts.model || ''),
+            endpoint: String(tts.endpoint || ''),
+            apiKey: String(tts.apiKey || ''),
+            qwenModel: String(tts.qwenModel || ''),
+            qwenLanguageType: String(tts.qwenLanguageType || ''),
+            speed: Number(tts.speed || 1),
+            pitch: Number(tts.pitch || 1),
+            volume: Number(tts.volume || 1),
+            text,
+            localModels: Array.isArray(tts.localModels) ? tts.localModels : []
+          })
+        })
+      } catch (e) {
+        console.warn('TTS auto play failed', e)
+      }
+    }
 
     const updateLastMessage = (content: string, meta?: any) => {
       const { updateMessageById, activeChatId } = useStore.getState()
@@ -3210,6 +3271,7 @@ function AppLoaded(): JSX.Element {
         }
         updateLastMessage(fullContent, assistantMeta)
         await persistLastMessage()
+        await speakAssistantIfNeeded(fullContent)
       } else {
         const baseUrl = await resolveBackendBaseUrl()
         const resumeRunId = String(opts?.resumeRunId || '').trim()
@@ -3322,6 +3384,7 @@ function AppLoaded(): JSX.Element {
             : undefined
         updateLastMessage(content, assistantMeta)
         await persistLastMessage()
+        await speakAssistantIfNeeded(content)
       }
       
     } catch (error: any) {
@@ -3632,10 +3695,21 @@ function AppLoaded(): JSX.Element {
             <main
               ref={chatScrollRef as any}
               onScroll={handleChatScroll}
-              onWheel={() => markUserScrollIntent()}
-              onTouchStart={() => markUserScrollIntent(380)}
-              onTouchMove={() => markUserScrollIntent(380)}
-              className="flex-1 overflow-y-auto pt-4 pl-6 pr-6 pb-4 no-drag"
+              onWheel={() => {
+                markUserScrollIntent()
+                showChatScrollbarTemporarily(900)
+              }}
+              onTouchStart={() => {
+                markUserScrollIntent(380)
+                showChatScrollbarTemporarily(900)
+              }}
+              onTouchMove={() => {
+                markUserScrollIntent(380)
+                showChatScrollbarTemporarily(900)
+              }}
+              className={`flex-1 overflow-y-auto pt-4 pl-6 pr-6 pb-4 no-drag chat-scrollbar-auto-hide ${
+                chatScrollbarVisible ? 'chat-scrollbar-visible' : ''
+              }`}
             >
               {displayMessages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-3">

@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from anima_backend_shared.memory_store import query_memory_graph, query_memory_items_scoped
 from anima_backend_shared.util import extract_reasoning_text, is_within, norm_abs, read_text_file
 
 _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
@@ -48,6 +49,11 @@ _DEFAULT_TELEGRAM_TOOL_GUIDANCE = (
     "工具使用规则：当需要在本机执行命令、读写工作区文件、搜索内容或联网获取信息时，必须通过工具完成。"
     "不要只输出命令/脚本代码块并声称已执行；应先调用工具获得结果，再基于结果回复。"
 )
+_DEFAULT_HARD_RULES = [
+    "结论必须有可检查依据；无法确认时明确不确定性。",
+    "涉及代码、文件、命令时必须先执行工具再回答，禁止伪执行。",
+    "未完成验证不得宣称任务完成。",
+]
 
 
 def _load_prompt_text(file_name: str, fallback: str) -> str:
@@ -67,6 +73,59 @@ def _load_prompt_text(file_name: str, fallback: str) -> str:
 def _render_skills_prompt(skills_list_markdown: str) -> str:
     template = _load_prompt_text("skills.md", _DEFAULT_SKILLS_PROMPT_TEMPLATE)
     return template.replace("{{SKILLS_LIST}}", str(skills_list_markdown or "").strip())
+
+
+def _normalize_rules(raw: Any) -> List[str]:
+    if isinstance(raw, str):
+        txt = raw.strip()
+        return [txt] if txt else []
+    if not isinstance(raw, list):
+        return []
+    out: List[str] = []
+    for item in raw:
+        s = str(item or "").strip()
+        if s:
+            out.append(s)
+    return out
+
+
+def _control_plane_block(settings_obj: Dict[str, Any], composer: Dict[str, Any]) -> str:
+    s = settings_obj.get("settings")
+    if not isinstance(s, dict):
+        s = {}
+    hard_rules = _normalize_rules(composer.get("systemHardRules"))
+    if not hard_rules:
+        hard_rules = _normalize_rules(s.get("systemHardRules")) or list(_DEFAULT_HARD_RULES)
+    project_rules = _normalize_rules(composer.get("systemProjectRules")) or _normalize_rules(s.get("systemProjectRules"))
+    session_rules = _normalize_rules(composer.get("sessionRules"))
+    lines: List[str] = ["控制面分层（优先级从高到低）：系统硬规则 > 项目规则 > 会话偏好"]
+    if hard_rules:
+        lines.append("系统硬规则:")
+        lines.extend([f"- {x}" for x in hard_rules])
+    if project_rules:
+        lines.append("项目规则:")
+        lines.extend([f"- {x}" for x in project_rules])
+    if session_rules:
+        lines.append("会话偏好:")
+        lines.extend([f"- {x}" for x in session_rules])
+    return "\n".join(lines)
+
+
+def _agent_role_block(composer: Dict[str, Any]) -> str:
+    role = str(composer.get("agentRole") or "").strip().lower()
+    if role == "coordinator":
+        return (
+            "多代理分工（Coordinator）:\n"
+            "- 仅负责任务拆解、派发与验收，不直接替 worker 编造执行结果。\n"
+            "- 对 worker 输出做验收，失败时回收并重派。"
+        )
+    if role == "worker":
+        return (
+            "多代理分工（Worker）:\n"
+            "- 仅执行分配任务并返回证据，避免修改非分配范围。\n"
+            "- 遇到阻塞先报告证据与阻塞点，不擅自扩展范围。"
+        )
+    return ""
 
 
 def _parse_tool_args(arg_text: Any) -> Dict[str, Any]:
@@ -186,28 +245,6 @@ def _get_workspace_dir(settings_obj: Dict[str, Any], composer: Dict[str, Any]) -
         return ""
     try:
         return norm_abs(d)
-    except Exception:
-        return ""
-
-
-def _workspace_user_memory_block(settings_obj: Dict[str, Any], composer: Dict[str, Any]) -> str:
-    ws = _get_workspace_dir(settings_obj, composer)
-    if not ws:
-        return ""
-    try:
-        root = Path(ws)
-        anima_dir = root if root.name == ".anima" else (root / ".anima")
-        fp = anima_dir / "user_memory.md"
-        if not fp.is_file():
-            return ""
-        raw = fp.read_text(encoding="utf-8").strip()
-        if not raw:
-            return ""
-        max_chars = 6000
-        body = raw[:max_chars]
-        if len(raw) > max_chars:
-            body += "\n\n[注] user_memory.md 内容较长，已按前 6000 字符注入。"
-        return f"用户记忆（来自 {str(fp)}）:\n{body}"
     except Exception:
         return ""
 
@@ -685,12 +722,19 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
     openclaw_block = _openclaw_workspace_prompt(settings_obj, composer)
     if openclaw_block:
         active_system_prompt = openclaw_block
+    control_plane_block = _control_plane_block(settings_obj, composer)
+    agent_role_block = _agent_role_block(composer)
 
     memories = s.get("memories")
     if not isinstance(memories, list):
         memories = []
     memory_enabled = bool(s.get("memoryEnabled"))
     memory_retrieval_enabled = bool(s.get("memoryRetrievalEnabled"))
+    memory_auto_query_enabled = bool(s.get("memoryAutoQueryEnabled", True))
+    memory_graph_enabled = bool(s.get("memoryGraphEnabled", True))
+    memory_graph_hops = max(1, min(int(s.get("memoryGraphDefaultHops") or 1), 2))
+    memory_global_enabled = bool(s.get("memoryGlobalEnabled", False))
+    memory_global_retrieve_count = max(1, int(s.get("memoryGlobalRetrieveCount") or 3))
     mem_max_k = max(0, int(s.get("memoryMaxRetrieveCount") or 0))
     threshold = float(s.get("memorySimilarityThreshold") or 0)
     threshold = 0.0 if threshold < 0 else 1.0 if threshold > 1 else threshold
@@ -714,8 +758,68 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
             picked = [x for x, score in sorted(scored, key=lambda t: t[1], reverse=True) if score >= threshold][:mem_max_k]
             if picked:
                 memory_block = "User memory:\n" + "\n".join([f"- {x}" for x in picked])
-    workspace_user_memory_block = _workspace_user_memory_block(settings_obj, composer)
-
+    runtime_memory_block = ""
+    workspace_dir = str(composer.get("workspaceDir") or "").strip()
+    if (
+        memory_enabled
+        and memory_retrieval_enabled
+        and memory_auto_query_enabled
+        and user_message.strip()
+        and mem_max_k > 0
+        and (workspace_dir or memory_global_enabled)
+    ):
+        try:
+            rows = query_memory_items_scoped(
+                workspace_dir=workspace_dir,
+                query=user_message,
+                top_k=mem_max_k,
+                similarity_threshold=threshold,
+                include_global=memory_global_enabled,
+                global_top_k=memory_global_retrieve_count,
+            )
+            if rows:
+                ws_count = 0
+                gl_count = 0
+                lines = []
+                for row in rows[:mem_max_k]:
+                    content = str(row.get("content") or "").strip()
+                    if not content:
+                        continue
+                    scope = str(row.get("scope") or "workspace").strip().lower()
+                    if scope == "global":
+                        gl_count += 1
+                    else:
+                        ws_count += 1
+                    lines.append(f"- [{str(row.get('type') or 'semantic')}] {content}")
+                if lines:
+                    runtime_memory_block = (
+                        f"Runtime memory retrieval (workspace={ws_count}, global={gl_count}):\n" + "\n".join(lines)
+                    )
+                if memory_graph_enabled and workspace_dir:
+                    anchors = [
+                        str(x.get("id") or "").strip()
+                        for x in rows[: min(3, len(rows))]
+                        if isinstance(x, dict) and str(x.get("scope") or "workspace").strip().lower() == "workspace"
+                    ]
+                    anchors = [x for x in anchors if x]
+                    if anchors:
+                        graph = query_memory_graph(workspace_dir=workspace_dir, anchor_ids=anchors, hops=memory_graph_hops, max_nodes=8)
+                        nodes = graph.get("nodes") if isinstance(graph, dict) else []
+                        if isinstance(nodes, list) and nodes:
+                            related_lines = []
+                            for n in nodes[:5]:
+                                if not isinstance(n, dict):
+                                    continue
+                                cid = str(n.get("id") or "").strip()
+                                if cid in anchors:
+                                    continue
+                                txt = str(n.get("content") or "").strip()
+                                if txt:
+                                    related_lines.append(f"- [{str(n.get('type') or 'semantic')}] {txt[:120]}")
+                            if related_lines:
+                                runtime_memory_block += "\n\nRuntime memory graph related:\n" + "\n".join(related_lines)
+        except Exception:
+            runtime_memory_block = ""
     history_summary = str(composer.get("historySummary") or "").strip()
     history_block = f"对话摘要（自动压缩）:\n{history_summary}" if history_summary else ""
 
@@ -833,10 +937,12 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
         tool_guidance = _load_prompt_text("tool_telegram.md", _DEFAULT_TELEGRAM_TOOL_GUIDANCE)
 
     parts = [
+        control_plane_block,
         active_system_prompt,
+        agent_role_block,
         history_block,
         memory_block,
-        workspace_user_memory_block,
+        runtime_memory_block,
         skills_block,
         plugins_block,
         coder_block,

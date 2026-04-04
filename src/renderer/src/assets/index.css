@@ -171,6 +171,26 @@
 }
 
 @layer utilities {
+  .chat-scrollbar-auto-hide {
+    scrollbar-width: none;
+  }
+
+  .chat-scrollbar-auto-hide::-webkit-scrollbar-thumb {
+    background: transparent;
+  }
+
+  .chat-scrollbar-auto-hide.chat-scrollbar-visible {
+    scrollbar-width: thin;
+  }
+
+  .chat-scrollbar-auto-hide.chat-scrollbar-visible::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.3);
+  }
+
+  .chat-scrollbar-auto-hide.chat-scrollbar-visible::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.45);
+  }
+
   .anima-flow-text {
     background-image: linear-gradient(
       90deg,

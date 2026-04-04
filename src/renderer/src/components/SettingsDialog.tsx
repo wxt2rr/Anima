@@ -830,6 +830,302 @@ function VoiceSettings({ t }: { t: any }) {
   )
 }
 
+function TtsSettings({ t }: { t: any }) {
+  const settings = useStore(s => s.settings)
+  const updateSettings = useStore(s => s.updateSettings)
+  const [isTesting, setIsTesting] = useState(false)
+  const tts = ((settings as any)?.tts || {
+    enabled: false,
+    provider: 'macos_say',
+    model: 'Samantha',
+    endpoint: '',
+    apiKey: '',
+    qwenModel: 'qwen3-tts-flash',
+    qwenLanguageType: 'Auto',
+    speed: 1,
+    pitch: 1,
+    volume: 1,
+    autoPlay: false,
+    testText: '你好，这是一段本地 TTS 试听文本。',
+    localModels: []
+  }) as any
+
+  const lang = String(settings?.language || 'en')
+  const tx = {
+    en: {
+      title: 'TTS',
+      desc: 'Configure local text-to-speech provider and model.',
+      enabled: 'Enable TTS',
+      provider: 'Provider',
+      model: 'Model / Voice',
+      qwenModel: 'Qwen Model',
+      qwenLanguageType: 'Qwen Language',
+      endpoint: 'Endpoint',
+      apiKey: 'API Key (Optional)',
+      speed: 'Speed',
+      pitch: 'Pitch',
+      volume: 'Volume',
+      autoPlay: 'Auto play after response',
+      testText: 'Test text',
+      testPlay: 'Play Test',
+      localModels: 'Local model files',
+      addLocal: 'Add local model path',
+      remove: 'Remove',
+      hint: 'macOS `say` needs no download. Piper/Kokoro require local model files.'
+    },
+    zh: {
+      title: 'TTS',
+      desc: '配置本地文本转语音（TTS）服务商和模型。',
+      enabled: '启用 TTS',
+      provider: '服务商',
+      model: '模型 / 音色',
+      qwenModel: 'Qwen 模型',
+      qwenLanguageType: 'Qwen 语言',
+      endpoint: '服务地址',
+      apiKey: 'API Key（可选）',
+      speed: '语速',
+      pitch: '音高',
+      volume: '音量',
+      autoPlay: '回复后自动播放',
+      testText: '试听文本',
+      testPlay: '试听',
+      localModels: '本地模型文件',
+      addLocal: '添加本地模型路径',
+      remove: '删除',
+      hint: 'macOS `say` 无需下载。Piper/Kokoro 需要本地模型文件。'
+    },
+    ja: {
+      title: 'TTS',
+      desc: 'ローカル TTS のプロバイダーとモデルを設定します。',
+      enabled: 'TTS を有効化',
+      provider: 'プロバイダー',
+      model: 'モデル / 音声',
+      qwenModel: 'Qwen モデル',
+      qwenLanguageType: 'Qwen 言語',
+      endpoint: 'エンドポイント',
+      apiKey: 'API Key（任意）',
+      speed: '速度',
+      pitch: 'ピッチ',
+      volume: '音量',
+      autoPlay: '応答後に自動再生',
+      testText: 'テスト文',
+      testPlay: '試聴',
+      localModels: 'ローカルモデルファイル',
+      addLocal: 'ローカルモデルパスを追加',
+      remove: '削除',
+      hint: 'macOS `say` はダウンロード不要。Piper/Kokoro はローカルモデルが必要です。'
+    }
+  } as const
+  const tt = (tx as any)[lang] || tx.en
+
+  const setTts = (patch: Record<string, any>) => {
+    updateSettings({ tts: { ...tts, ...patch } } as any)
+  }
+  const handleTestTts = async () => {
+    if (!String(tts.testText || '').trim()) return
+    setIsTesting(true)
+    try {
+      await fetchBackendJson<{ ok: boolean }>('/api/tts/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: String(tts.provider || 'macos_say'),
+          model: String(tts.model || ''),
+          endpoint: String(tts.endpoint || ''),
+          apiKey: String(tts.apiKey || ''),
+          qwenModel: String(tts.qwenModel || ''),
+          qwenLanguageType: String(tts.qwenLanguageType || ''),
+          speed: Number(tts.speed || 1),
+          pitch: Number(tts.pitch || 1),
+          volume: Number(tts.volume || 1),
+          text: String(tts.testText || ''),
+          localModels: Array.isArray(tts.localModels) ? tts.localModels : []
+        })
+      })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e || 'TTS preview failed')
+      alert(msg)
+    } finally {
+      setIsTesting(false)
+    }
+  }
+
+  const provider = String(tts.provider || 'macos_say')
+  const localModels = Array.isArray(tts.localModels) ? tts.localModels : []
+  const defaultVoices: Record<string, string[]> = {
+    macos_say: ['Samantha', 'Tingting', 'Alex', 'Victoria'],
+    piper: ['zh_CN-huayan-medium', 'en_US-lessac-medium'],
+    kokoro_onnx: ['Kokoro-82M-en', 'Kokoro-82M-zh'],
+    custom_http: []
+  }
+  const voiceOptions = defaultVoices[provider] || []
+
+  return (
+    <div className="p-6 space-y-5">
+      <Card>
+        <CardContent className="pt-6 space-y-4">
+          <div className="space-y-1">
+            <div className="text-[13px] font-semibold">{tt.title}</div>
+            <div className="text-xs text-muted-foreground">{tt.desc}</div>
+          </div>
+          <div className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2">
+            <Label>{tt.enabled}</Label>
+            <Switch checked={Boolean(tts.enabled)} onCheckedChange={(c) => setTts({ enabled: Boolean(c) })} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label>{tt.provider}</Label>
+              <Select value={provider} onValueChange={(v) => setTts({ provider: v, model: '' })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="macos_say">macOS `say`</SelectItem>
+                  <SelectItem value="piper">Piper</SelectItem>
+                  <SelectItem value="kokoro_onnx">Kokoro ONNX</SelectItem>
+                  <SelectItem value="qwen_tts">Qwen TTS</SelectItem>
+                  <SelectItem value="custom_http">Custom HTTP</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>{tt.model}</Label>
+              {voiceOptions.length ? (
+                <Select value={String(tts.model || '')} onValueChange={(v) => setTts({ model: v })}>
+                  <SelectTrigger><SelectValue placeholder={tt.model} /></SelectTrigger>
+                  <SelectContent>
+                    {voiceOptions.map((m) => (
+                      <SelectItem key={m} value={m}>{m}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input value={String(tts.model || '')} onChange={(e) => setTts({ model: e.target.value })} placeholder={tt.model} />
+              )}
+            </div>
+          </div>
+          {provider === 'qwen_tts' ? (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>{tt.qwenModel}</Label>
+                <Input value={String(tts.qwenModel || '')} onChange={(e) => setTts({ qwenModel: e.target.value })} placeholder="qwen3-tts-flash" />
+              </div>
+              <div className="space-y-1">
+                <Label>{tt.qwenLanguageType}</Label>
+                <Select value={String(tts.qwenLanguageType || 'Auto')} onValueChange={(v) => setTts({ qwenLanguageType: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Auto">Auto</SelectItem>
+                    <SelectItem value="Chinese">Chinese</SelectItem>
+                    <SelectItem value="English">English</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          ) : null}
+          {(provider === 'custom_http' || provider === 'kokoro_onnx') ? (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>{tt.endpoint}</Label>
+                <Input value={String(tts.endpoint || '')} onChange={(e) => setTts({ endpoint: e.target.value })} placeholder="http://127.0.0.1:8000/tts" />
+              </div>
+              <div className="space-y-1">
+                <Label>{tt.apiKey}</Label>
+                <Input value={String(tts.apiKey || '')} onChange={(e) => setTts({ apiKey: e.target.value })} placeholder="optional" />
+              </div>
+            </div>
+          ) : null}
+          {provider === 'qwen_tts' ? (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>{tt.endpoint}</Label>
+                <Input value={String(tts.endpoint || '')} onChange={(e) => setTts({ endpoint: e.target.value })} placeholder="https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation" />
+              </div>
+              <div className="space-y-1">
+                <Label>{tt.apiKey}</Label>
+                <Input value={String(tts.apiKey || '')} onChange={(e) => setTts({ apiKey: e.target.value })} placeholder="DashScope API Key" />
+              </div>
+            </div>
+          ) : null}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-1">
+              <Label>{tt.speed}</Label>
+              <Input type="number" min={0.5} max={2} step={0.1} value={Number(tts.speed || 1)} onChange={(e) => setTts({ speed: Number(e.target.value || 1) || 1 })} />
+            </div>
+            <div className="space-y-1">
+              <Label>{tt.pitch}</Label>
+              <Input type="number" min={0.5} max={2} step={0.1} value={Number(tts.pitch || 1)} onChange={(e) => setTts({ pitch: Number(e.target.value || 1) || 1 })} />
+            </div>
+            <div className="space-y-1">
+              <Label>{tt.volume}</Label>
+              <Input type="number" min={0} max={1} step={0.1} value={Number(tts.volume || 1)} onChange={(e) => setTts({ volume: Number(e.target.value || 1) || 1 })} />
+            </div>
+          </div>
+          <div className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2">
+            <Label>{tt.autoPlay}</Label>
+            <Switch checked={Boolean(tts.autoPlay)} onCheckedChange={(c) => setTts({ autoPlay: Boolean(c) })} />
+          </div>
+          <div className="space-y-1">
+            <Label>{tt.testText}</Label>
+            <Textarea
+              rows={3}
+              value={String(tts.testText || '')}
+              onChange={(e) => setTts({ testText: e.target.value })}
+            />
+            <div className="pt-2">
+              <Button variant="outline" onClick={handleTestTts} disabled={isTesting || !String(tts.testText || '').trim()}>
+                {isTesting ? '...' : tt.testPlay}
+              </Button>
+            </div>
+          </div>
+          {(provider === 'piper' || provider === 'kokoro_onnx') ? (
+            <div className="space-y-2">
+              <Label>{tt.localModels}</Label>
+              <div className="space-y-2">
+                {localModels.map((m: any, i: number) => (
+                  <div key={`${m.id || i}`} className="flex items-center gap-2">
+                    <Input
+                      value={String(m.path || '')}
+                      onChange={(e) => {
+                        const next = [...localModels]
+                        next[i] = { ...(next[i] || {}), id: String(next[i]?.id || `local_${i}`), name: String(next[i]?.name || `local_${i}`), path: e.target.value }
+                        setTts({ localModels: next })
+                      }}
+                      placeholder="/path/to/model.onnx"
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        const next = localModels.filter((_: any, idx: number) => idx !== i)
+                        setTts({ localModels: next })
+                      }}
+                    >
+                      {tt.remove}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <Button
+                variant="outline"
+                onClick={() => setTts({ localModels: [...localModels, { id: `local_${Date.now()}`, name: `local_${localModels.length + 1}`, path: '' }] })}
+              >
+                {tt.addLocal}
+              </Button>
+            </div>
+          ) : null}
+          <div className="text-xs text-muted-foreground">
+            {provider === 'qwen_tts'
+              ? (lang === 'zh'
+                  ? 'Qwen-TTS 本地部署请填写本地 HTTP endpoint（如 http://127.0.0.1:8000/...），本地模式可不填 API Key。'
+                  : lang === 'ja'
+                    ? 'Qwen-TTS をローカルで使う場合はローカル HTTP endpoint（例: http://127.0.0.1:8000/...）を設定してください。ローカルでは API Key は任意です。'
+                    : 'For local Qwen-TTS, set a local HTTP endpoint (e.g. http://127.0.0.1:8000/...). API key is optional for local mode.')
+              : tt.hint}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
 function ShortcutsSettings() {
   const settings = useStore((s) => s.settings)
   const updateSettings = useStore((s) => s.updateSettings)
@@ -1146,6 +1442,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           data: 'Data',
           statusCenter: 'Status Center',
           voice: 'Voice',
+          tts: 'TTS',
           shortcuts: 'Shortcuts',
           about: 'About'
         },
@@ -1251,6 +1548,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           data: '数据',
           statusCenter: '状态中心',
           voice: '语音',
+          tts: 'TTS',
           shortcuts: '快捷键',
           about: '关于'
         },
@@ -1356,6 +1654,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           data: 'データ',
           statusCenter: 'ステータスセンター',
           voice: '音声',
+          tts: 'TTS',
           shortcuts: 'ショートカット',
           about: '情報'
         },
@@ -1460,6 +1759,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
     { id: 'data', label: t.tabs.data, icon: Database },
     { id: 'statusCenter', label: t.tabs.statusCenter, icon: Bell },
     { id: 'voice', label: t.tabs.voice, icon: Mic },
+    { id: 'tts', label: t.tabs.tts, icon: Mic },
     { id: 'shortcuts', label: t.tabs.shortcuts, icon: Keyboard },
     { id: 'about', label: t.tabs.about, icon: Info },
   ]
@@ -1475,6 +1775,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
     if (activeTab === 'data') return <DataSettings />
     if (activeTab === 'statusCenter') return <StatusCenterSettings />
     if (activeTab === 'voice') return <VoiceSettings t={t} />
+    if (activeTab === 'tts') return <TtsSettings t={t} />
     if (activeTab === 'shortcuts') return <ShortcutsSettings />
     if (activeTab === 'about') return <AboutSettings />
     return null
@@ -1571,6 +1872,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           data: 'Data',
           statusCenter: 'Status Center',
           voice: 'Voice',
+          tts: 'TTS',
           shortcuts: 'Shortcuts',
           about: 'About'
         },
@@ -1605,6 +1907,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           data: '数据',
           statusCenter: '状态中心',
           voice: '语音',
+          tts: 'TTS',
           shortcuts: '快捷键',
           about: '关于'
         },
@@ -1639,6 +1942,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           data: 'データ',
           statusCenter: 'ステータスセンター',
           voice: '音声',
+          tts: 'TTS',
           shortcuts: 'ショートカット',
           about: '情報'
         },
@@ -1708,6 +2012,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
     { id: 'data', label: t.tabs.data, icon: Database },
     { id: 'statusCenter', label: t.tabs.statusCenter, icon: Bell },
     { id: 'voice', label: t.tabs.voice, icon: Mic },
+    { id: 'tts', label: t.tabs.tts, icon: Mic },
     { id: 'shortcuts', label: t.tabs.shortcuts, icon: Keyboard },
     { id: 'about', label: t.tabs.about, icon: Info }
   ]
@@ -1724,6 +2029,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
     if (activeTab === 'data') return <DataSettings />
     if (activeTab === 'statusCenter') return <StatusCenterSettings />
     if (activeTab === 'voice') return <VoiceSettings t={t} />
+    if (activeTab === 'tts') return <TtsSettings t={t} />
     if (activeTab === 'shortcuts') return <ShortcutsSettings />
     if (activeTab === 'about') return <AboutSettings />
     return null
@@ -2837,7 +3143,7 @@ function AboutSettings() {
 }
 
 function ProvidersSettings() {
-  const { providers: providers0, toggleProvider, updateProvider, reorderProviders } = useStore()
+  const { providers: providers0, toggleProvider, updateProvider, reorderProviders, addProvider } = useStore()
   const { settings: settings0 } = useStore()
   const loadRemoteConfig = useStore(s => s.loadRemoteConfig)
   const settings = settings0!
@@ -2930,6 +3236,10 @@ function ProvidersSettings() {
         search: 'Search providers...',
         addCustom: 'Add Custom Provider',
         addCustomAcp: 'Add Custom ACP Provider',
+        addLocalOllama: 'Add Ollama (Local)',
+        addLocalLmStudio: 'Add LM Studio (Local)',
+        detectLocalModels: 'Detect Local Models',
+        localProviderHint: 'Local provider does not require API key.',
         active: 'Active',
         inactive: 'Inactive',
         apiKey: 'API Key',
@@ -2959,6 +3269,10 @@ function ProvidersSettings() {
         search: '搜索提供商…',
         addCustom: 'Add Custom Provider',
         addCustomAcp: 'Add Custom ACP Provider',
+        addLocalOllama: '添加 Ollama（本地）',
+        addLocalLmStudio: '添加 LM Studio（本地）',
+        detectLocalModels: '探测本地模型',
+        localProviderHint: '本地 provider 不需要 API Key。',
         active: 'Active',
         inactive: 'Inactive',
         apiKey: 'API Key',
@@ -2993,6 +3307,10 @@ function ProvidersSettings() {
   const activeProviderIdLower = String(activeProvider?.id || '').toLowerCase()
   const activeProviderNameLower = String(activeProvider?.name || '').toLowerCase()
   const isAcp = Boolean(activeProvider && String(activeProvider.type || '').toLowerCase() === 'acp')
+  const isLocalProvider = Boolean(
+    activeProvider &&
+      ['ollama_local', 'lmstudio_local'].includes(String(activeProvider.id || '').toLowerCase())
+  )
   const isQwen = Boolean(
     activeProvider &&
       (
@@ -3034,7 +3352,7 @@ function ProvidersSettings() {
       alert(settings.language === 'zh' ? '请先填写 Base URL' : 'Please enter Base URL first')
       return
     }
-    if (!isOAuthProvider && !activeProvider.config.apiKey) {
+    if (!isOAuthProvider && !isLocalProvider && !activeProvider.config.apiKey) {
       alert(settings.language === 'zh' ? '请先填写 API Key' : 'Please enter API Key first')
       return
     }
@@ -3073,9 +3391,55 @@ function ProvidersSettings() {
       }
     } catch (e) {
       console.error('Failed to fetch models', e)
+      const raw = e instanceof Error ? e.message : String(e || 'Failed to fetch models')
+      if (isLocalProvider) {
+        const hint = settings.language === 'zh'
+          ? '本地模型探测失败。请确认本地服务已启动：Ollama 默认 http://127.0.0.1:11434 ，LM Studio 默认 http://127.0.0.1:1234。'
+          : 'Failed to detect local models. Please ensure local server is running: Ollama http://127.0.0.1:11434 , LM Studio http://127.0.0.1:1234.'
+        alert(`${raw}\n\n${hint}`)
+      } else {
+        alert(raw)
+      }
     } finally {
       setIsFetchingModels(false)
     }
+  }
+
+  const addLocalProvider = (kind: 'ollama' | 'lmstudio') => {
+    const providerId = kind === 'ollama' ? 'ollama_local' : 'lmstudio_local'
+    const existing = providers.find((p) => String(p.id || '').trim().toLowerCase() === providerId)
+    if (existing) {
+      setSelectedProviderId(existing.id)
+      return
+    }
+    const presetModels =
+      kind === 'ollama'
+        ? [
+            { id: 'qwen3:8b', isEnabled: true, config: { id: 'qwen3:8b' } },
+            { id: 'llama3.1:8b', isEnabled: true, config: { id: 'llama3.1:8b' } },
+            { id: 'gemma3:12b', isEnabled: true, config: { id: 'gemma3:12b' } }
+          ]
+        : []
+    addProvider({
+      id: providerId,
+      name: kind === 'ollama' ? 'Ollama (Local)' : 'LM Studio (Local)',
+      type: 'openai_compatible',
+      isEnabled: false,
+      description: kind === 'ollama' ? 'Local inference via Ollama OpenAI-compatible endpoint.' : 'Local inference via LM Studio local server.',
+      config: {
+        apiKey: '',
+        baseUrl: kind === 'ollama' ? 'http://127.0.0.1:11434/v1' : 'http://127.0.0.1:1234/v1',
+        apiFormat: 'chat_completions',
+        modelsFetched: presetModels.length > 0,
+        models: presetModels,
+        selectedModel: String(presetModels[0]?.id || '')
+      }
+    } as any)
+    window.setTimeout(() => {
+      const next = useStore.getState().providers || []
+      const added = next.find((p) => String(p.id || '').trim().toLowerCase() === providerId)
+      if (added?.id) setSelectedProviderId(added.id)
+    }, 60)
   }
 
   const refreshQwenProfiles = useCallback(async () => {
@@ -3391,6 +3755,20 @@ function ProvidersSettings() {
         <div className="px-8 pt-2 pb-3">
           <div className="flex items-center justify-end gap-2">
             <Button
+              variant="outline"
+              className="h-9 rounded-full px-4 bg-card/70"
+              onClick={() => addLocalProvider('ollama')}
+            >
+              {t.addLocalOllama}
+            </Button>
+            <Button
+              variant="outline"
+              className="h-9 rounded-full px-4 bg-card/70"
+              onClick={() => addLocalProvider('lmstudio')}
+            >
+              {t.addLocalLmStudio}
+            </Button>
+            <Button
               className="h-9 rounded-full px-4"
               onClick={() => {
                 setCustomProviderMode('api')
@@ -3416,6 +3794,11 @@ function ProvidersSettings() {
         <div className="flex-1 overflow-y-auto px-8 pb-8 pt-1 custom-scrollbar">
           {activeProvider ? (
             <div className="max-w-[820px] space-y-5 animate-in fade-in duration-300">
+              {isLocalProvider ? (
+                <div className="text-[12px] text-muted-foreground rounded-md border border-border bg-background px-3 py-2">
+                  {t.localProviderHint}
+                </div>
+              ) : null}
               
               {/* Header Card */}
               <Card className="border-border/60 bg-background/40 shadow-none">
@@ -3836,7 +4219,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                          className="gap-2"
                        >
                          {isFetchingModels ? <RefreshCw className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                         Fetch Models
+                         {isLocalProvider ? t.detectLocalModels : 'Fetch Models'}
                        </Button>
                     </div>
 
@@ -5536,11 +5919,32 @@ function joinPath(...parts: string[]) {
 }
 
 function MemorySettings() {
-  const { settings: settings0, updateSettings, addMemory, updateMemory, deleteMemory, providers: providers0 } = useStore()
+  const { settings: settings0, updateSettings, providers: providers0, ui } = useStore()
   const settings = settings0!
   const providers = providers0 ?? EMPTY_PROVIDERS
   const [draft, setDraft] = useState('')
   const [query, setQuery] = useState('')
+  const [memoryItems, setMemoryItems] = useState<Array<{ id: string; content: string; isEnabled: boolean; status: string; scope: 'workspace' | 'global' }>>([])
+  const [memoryLoading, setMemoryLoading] = useState(false)
+  const [memoryError, setMemoryError] = useState('')
+  const [editingContentById, setEditingContentById] = useState<Record<string, string>>({})
+  const [addScope, setAddScope] = useState<'workspace' | 'global' | 'auto'>('workspace')
+  const [listScopeFilter, setListScopeFilter] = useState<'all' | 'workspace' | 'global'>('all')
+  const [embeddingCatalog, setEmbeddingCatalog] = useState<Array<{ id: string; name: string; sizeBytes?: number | null }>>([])
+  const [embeddingInstalledIds, setEmbeddingInstalledIds] = useState<string[]>([])
+  const [embeddingDownloadByModelId, setEmbeddingDownloadByModelId] = useState<
+    Record<
+      string,
+      {
+        taskId: string
+        status: 'starting' | 'running' | 'canceling' | 'done' | 'error' | 'canceled'
+        error?: string
+        downloadedBytes?: number
+        totalBytes?: number
+      }
+    >
+  >({})
+  const embeddingPollTimersRef = useRef<Record<string, number>>({})
 
   const t = (() => {
     const dict = {
@@ -5559,6 +5963,27 @@ function MemorySettings() {
         followChatModel: 'Follow chat model',
         embedding: 'Embedding model',
         embeddingHint: 'Used to convert text to vectors for retrieval.',
+        embeddingSource: 'Embedding source',
+        embeddingProvider: 'Provider model',
+        embeddingLocal: 'Local model',
+        embeddingDownload: 'Download',
+        embeddingCancel: 'Cancel',
+        embeddingInstalled: 'Installed',
+        embeddingDownloading: 'Downloading',
+        embeddingDownloadError: 'Download failed',
+        globalMemory: 'Global memory',
+        enableGlobalMemory: 'Enable global memory',
+        enableGlobalWrite: 'Allow global writes',
+        globalTopK: 'Global retrieve count',
+        writePolicy: 'Write policy',
+        autoScope: 'Auto scope decision',
+        defaultScope: 'Default write scope',
+        addScope: 'Add scope',
+        scopeAuto: 'Auto',
+        scopeWorkspace: 'Workspace',
+        scopeGlobal: 'Global',
+        scopeAll: 'All',
+        listScopeFilter: 'Scope filter',
         stats: 'Stats',
         total: 'Total',
         enabled: 'Enabled',
@@ -5587,6 +6012,27 @@ function MemorySettings() {
         followChatModel: '跟随聊天模型',
         embedding: '嵌入模型',
         embeddingHint: '用于将文本转换为向量，以支持检索。',
+        embeddingSource: '嵌入来源',
+        embeddingProvider: '服务商模型',
+        embeddingLocal: '本地模型',
+        embeddingDownload: '下载',
+        embeddingCancel: '取消',
+        embeddingInstalled: '已安装',
+        embeddingDownloading: '下载中',
+        embeddingDownloadError: '下载失败',
+        globalMemory: '全局记忆',
+        enableGlobalMemory: '启用全局记忆',
+        enableGlobalWrite: '允许写入全局记忆',
+        globalTopK: '全局检索数量',
+        writePolicy: '写入策略',
+        autoScope: '自动判定写入范围',
+        defaultScope: '默认写入范围',
+        addScope: '写入范围',
+        scopeAuto: '自动',
+        scopeWorkspace: '工作区',
+        scopeGlobal: '全局',
+        scopeAll: '全部',
+        listScopeFilter: '范围筛选',
         stats: '统计',
         total: '记忆数量',
         enabled: '启用数量',
@@ -5615,6 +6061,27 @@ function MemorySettings() {
         followChatModel: 'チャットモデルに従う',
         embedding: '埋め込みモデル',
         embeddingHint: '検索のためにテキストをベクトル化します。',
+        embeddingSource: '埋め込みソース',
+        embeddingProvider: 'プロバイダーモデル',
+        embeddingLocal: 'ローカルモデル',
+        embeddingDownload: 'ダウンロード',
+        embeddingCancel: 'キャンセル',
+        embeddingInstalled: 'インストール済み',
+        embeddingDownloading: 'ダウンロード中',
+        embeddingDownloadError: 'ダウンロード失敗',
+        globalMemory: 'グローバルメモリー',
+        enableGlobalMemory: 'グローバルメモリーを有効化',
+        enableGlobalWrite: 'グローバル書き込みを許可',
+        globalTopK: 'グローバル取得数',
+        writePolicy: '書き込みポリシー',
+        autoScope: '自動スコープ判定',
+        defaultScope: 'デフォルト書き込みスコープ',
+        addScope: '追加スコープ',
+        scopeAuto: '自動',
+        scopeWorkspace: 'ワークスペース',
+        scopeGlobal: 'グローバル',
+        scopeAll: 'すべて',
+        listScopeFilter: 'スコープ絞り込み',
         stats: '統計',
         total: '合計',
         enabled: '有効',
@@ -5632,11 +6099,22 @@ function MemorySettings() {
     return dict[settings.language as keyof typeof dict] || dict.en
   })()
 
+  // 与主会话保持一致：优先使用当前激活项目目录，再回退到全局 workspaceDir
+  const workspaceDir = useMemo(() => {
+    const projects = Array.isArray((settings as any)?.projects) ? (settings as any).projects : []
+    const pid = String((ui as any)?.activeProjectId || '').trim()
+    const p = pid ? projects.find((x: any) => String(x?.id || '').trim() === pid) : null
+    const dir = String((p as any)?.dir || '').trim()
+    if (dir) return dir
+    return String((settings as any)?.workspaceDir || '').trim()
+  }, [settings, ui])
+  const memoryGlobalEnabled = Boolean((settings as any).memoryGlobalEnabled)
+
   const stats = useMemo(() => {
-    const total = settings.memories.length
-    const enabled = settings.memories.filter((m) => m.isEnabled).length
+    const total = memoryItems.length
+    const enabled = memoryItems.filter((m) => m.isEnabled).length
     return { total, enabled, disabled: total - enabled }
-  }, [settings.memories])
+  }, [memoryItems])
 
   const availableModels = useMemo(() => {
     const models = providers
@@ -5649,11 +6127,328 @@ function MemorySettings() {
     return Array.from(new Set(models)).sort()
   }, [providers])
 
+  const selectedEmbeddingModelId = String(settings.memoryEmbeddingModelId || '').trim()
+  const embeddingSource: 'provider' | 'local' = selectedEmbeddingModelId.startsWith('local:') ? 'local' : 'provider'
+  const localModelOptions = useMemo(
+    () =>
+      embeddingCatalog.map((m) => ({
+        id: `local:${m.id}`,
+        baseId: m.id,
+        name: m.name || m.id,
+        sizeBytes: typeof m.sizeBytes === 'number' ? m.sizeBytes : null,
+        installed: embeddingInstalledIds.includes(`local:${m.id}`)
+      })),
+    [embeddingCatalog, embeddingInstalledIds]
+  )
+
+  const formatBytes = (bytes: number | undefined | null) => {
+    const n = typeof bytes === 'number' && Number.isFinite(bytes) ? bytes : 0
+    if (n <= 0) return '0 B'
+    const units = ['B', 'KB', 'MB', 'GB', 'TB']
+    let v = n
+    let u = 0
+    while (v >= 1024 && u < units.length - 1) {
+      v /= 1024
+      u += 1
+    }
+    const digits = u === 0 ? 0 : u <= 2 ? 1 : 2
+    return `${v.toFixed(digits)} ${units[u]}`
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const [catalogRes, installedRes] = await Promise.all([
+          fetchBackendJson<{ ok: boolean; models?: Array<{ id: string; name?: string; sizeBytes?: number | null }> }>('/memory/embedding/models/catalog', {
+            method: 'GET'
+          }),
+          fetchBackendJson<{ ok: boolean; models?: Array<{ id: string }> }>('/memory/embedding/models/installed', { method: 'GET' })
+        ])
+        if (cancelled) return
+        const models = Array.isArray(catalogRes.models) ? catalogRes.models : []
+        setEmbeddingCatalog(
+          models
+            .map((m) => ({
+              id: String(m?.id || '').trim(),
+              name: String(m?.name || m?.id || '').trim(),
+              sizeBytes: typeof m?.sizeBytes === 'number' ? m.sizeBytes : null
+            }))
+            .filter((m) => Boolean(m.id))
+        )
+        const installed = Array.isArray(installedRes.models) ? installedRes.models : []
+        setEmbeddingInstalledIds(
+          installed
+            .map((m) => String((m as any)?.id || '').trim())
+            .filter(Boolean)
+        )
+      } catch {
+        if (cancelled) return
+        setEmbeddingCatalog([])
+        setEmbeddingInstalledIds([])
+      }
+    })()
+    return () => {
+      cancelled = true
+      const timers = embeddingPollTimersRef.current
+      for (const k of Object.keys(timers)) {
+        window.clearTimeout(timers[k])
+      }
+      embeddingPollTimersRef.current = {}
+    }
+  }, [])
+
+  const pollEmbeddingTask = useCallback((localModelId: string, taskId: string) => {
+    const tick = async () => {
+      try {
+        const st = await fetchBackendJson<{ ok: boolean; task?: any }>(`/memory/embedding/models/download/status?taskId=${encodeURIComponent(taskId)}`, { method: 'GET' })
+        const task = (st as any)?.task || {}
+        const statusRaw = String(task.status || '').trim()
+        const nextStatus: 'starting' | 'running' | 'canceling' | 'done' | 'error' | 'canceled' =
+          statusRaw === 'done'
+            ? 'done'
+            : statusRaw === 'error'
+              ? 'error'
+              : statusRaw === 'canceled'
+                ? 'canceled'
+                : Boolean(task.cancelRequested)
+                  ? 'canceling'
+                  : 'running'
+        setEmbeddingDownloadByModelId((prev) => ({
+          ...prev,
+          [localModelId]: {
+            taskId,
+            status: nextStatus,
+            error: statusRaw === 'error' ? String(task.error || 'download failed') : undefined,
+            downloadedBytes: typeof task.downloadedBytes === 'number' ? task.downloadedBytes : undefined,
+            totalBytes: typeof task.totalBytes === 'number' ? task.totalBytes : undefined
+          }
+        }))
+        if (nextStatus === 'done') {
+          const installedRes = await fetchBackendJson<{ ok: boolean; models?: Array<{ id: string }> }>('/memory/embedding/models/installed', { method: 'GET' })
+          const installed = Array.isArray(installedRes.models) ? installedRes.models : []
+          setEmbeddingInstalledIds(installed.map((m) => String((m as any)?.id || '').trim()).filter(Boolean))
+          window.clearTimeout(embeddingPollTimersRef.current[localModelId])
+          delete embeddingPollTimersRef.current[localModelId]
+          return
+        }
+        if (nextStatus === 'error' || nextStatus === 'canceled') {
+          window.clearTimeout(embeddingPollTimersRef.current[localModelId])
+          delete embeddingPollTimersRef.current[localModelId]
+          return
+        }
+      } catch (e) {
+        setEmbeddingDownloadByModelId((prev) => ({
+          ...prev,
+          [localModelId]: { taskId, status: 'error', error: e instanceof Error ? e.message : 'download failed' }
+        }))
+        window.clearTimeout(embeddingPollTimersRef.current[localModelId])
+        delete embeddingPollTimersRef.current[localModelId]
+        return
+      }
+      embeddingPollTimersRef.current[localModelId] = window.setTimeout(() => void tick(), 1200)
+    }
+    embeddingPollTimersRef.current[localModelId] = window.setTimeout(() => void tick(), 500)
+  }, [])
+
+  const startEmbeddingDownload = useCallback(
+    async (localModelId: string) => {
+      const localId = String(localModelId || '').trim()
+      if (!localId.startsWith('local:')) return
+      const existing = embeddingDownloadByModelId[localId]
+      if (existing && (existing.status === 'starting' || existing.status === 'running' || existing.status === 'canceling')) return
+      setEmbeddingDownloadByModelId((prev) => ({ ...prev, [localId]: { taskId: '', status: 'starting' } }))
+      const modelId = localId.slice('local:'.length)
+      try {
+        const res = await fetchBackendJson<{ ok: boolean; taskId?: string }>('/memory/embedding/models/download', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: modelId })
+        })
+        const taskId = String((res as any)?.taskId || '').trim()
+        if (!taskId) throw new Error('No task id')
+        setEmbeddingDownloadByModelId((prev) => ({ ...prev, [localId]: { taskId, status: 'running' } }))
+        pollEmbeddingTask(localId, taskId)
+      } catch (e) {
+        setEmbeddingDownloadByModelId((prev) => ({
+          ...prev,
+          [localId]: { taskId: '', status: 'error', error: e instanceof Error ? e.message : 'download failed' }
+        }))
+      }
+    },
+    [embeddingDownloadByModelId, pollEmbeddingTask]
+  )
+
+  const cancelEmbeddingDownload = useCallback(async (localModelId: string) => {
+    const localId = String(localModelId || '').trim()
+    const taskId = String(embeddingDownloadByModelId[localId]?.taskId || '').trim()
+    if (!taskId) return
+    setEmbeddingDownloadByModelId((prev) => ({ ...prev, [localId]: { ...(prev[localId] || { taskId }), taskId, status: 'canceling' } }))
+    try {
+      await fetchBackendJson('/memory/embedding/models/download/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId })
+      })
+    } catch (e) {
+      setEmbeddingDownloadByModelId((prev) => ({
+        ...prev,
+        [localId]: { ...(prev[localId] || { taskId }), taskId, status: 'error', error: e instanceof Error ? e.message : 'cancel failed' }
+      }))
+    }
+  }, [embeddingDownloadByModelId])
+
+  useEffect(() => {
+    if (embeddingSource !== 'local') return
+    if (!selectedEmbeddingModelId) return
+    if (embeddingInstalledIds.includes(selectedEmbeddingModelId)) return
+    const st = embeddingDownloadByModelId[selectedEmbeddingModelId]
+    if (st && (st.status === 'starting' || st.status === 'running' || st.status === 'canceling')) return
+    void startEmbeddingDownload(selectedEmbeddingModelId)
+  }, [embeddingSource, selectedEmbeddingModelId, embeddingInstalledIds, embeddingDownloadByModelId, startEmbeddingDownload])
+
+  const ensureScopeAllowed = useCallback((scope: 'workspace' | 'global' | 'auto') => {
+    if (scope === 'auto') {
+      if (workspaceDir || memoryGlobalEnabled) return true
+      setMemoryError(settings.language === 'zh' ? '未选择工作区且未启用全局记忆，无法自动判定写入范围。' : 'No workspace and global memory is disabled. Cannot auto decide memory scope.')
+      return false
+    }
+    if (scope === 'global') return true
+    if (workspaceDir) return true
+    setMemoryError(settings.language === 'zh' ? '未选择工作区，无法管理工作区记忆。' : 'No workspace selected. Cannot manage workspace memories.')
+    return false
+  }, [workspaceDir, memoryGlobalEnabled, settings.language])
+
+  const loadMemoryItems = useCallback(async () => {
+    if (!workspaceDir && !memoryGlobalEnabled) {
+      setMemoryItems([])
+      setEditingContentById({})
+      return
+    }
+    setMemoryLoading(true)
+    setMemoryError('')
+    try {
+      const q = new URLSearchParams()
+      if (workspaceDir) q.set('workspaceDir', workspaceDir)
+      q.set('includeInactive', '1')
+      q.set('limit', '500')
+      if (memoryGlobalEnabled) q.set('includeGlobal', '1')
+      const res = await fetchBackendJson<{ ok: boolean; items?: Array<any> }>(`/memory/items?${q.toString()}`, { method: 'GET' })
+      const next = (Array.isArray(res.items) ? res.items : [])
+        .map((it) => {
+          const status = String((it as any)?.status || 'active').toLowerCase()
+          const scopeRaw = String((it as any)?.scope || 'workspace').toLowerCase()
+          const scope: 'workspace' | 'global' = scopeRaw === 'global' ? 'global' : 'workspace'
+          return {
+            id: String((it as any)?.id || '').trim(),
+            content: String((it as any)?.content || ''),
+            status,
+            isEnabled: status === 'active',
+            scope
+          }
+        })
+        .filter((it) => Boolean(it.id))
+      setMemoryItems(next)
+      setEditingContentById({})
+    } catch (e) {
+      setMemoryError(e instanceof Error ? e.message : 'Failed to load memories')
+    } finally {
+      setMemoryLoading(false)
+    }
+  }, [workspaceDir, memoryGlobalEnabled])
+
+  useEffect(() => {
+    void loadMemoryItems()
+  }, [loadMemoryItems])
+
+  useEffect(() => {
+    if (addScope === 'workspace' && !workspaceDir && memoryGlobalEnabled) {
+      setAddScope('global')
+    }
+    if (addScope === 'global' && !memoryGlobalEnabled) {
+      setAddScope(workspaceDir ? 'workspace' : 'auto')
+    }
+    if (!Boolean((settings as any).memoryScopeAutoEnabled) && addScope === 'auto') {
+      setAddScope(workspaceDir ? 'workspace' : memoryGlobalEnabled ? 'global' : 'workspace')
+    }
+  }, [addScope, workspaceDir, memoryGlobalEnabled, settings])
+
   const filteredMemories = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return settings.memories
-    return settings.memories.filter((m) => m.content.toLowerCase().includes(q))
-  }, [query, settings.memories])
+    const scoped = listScopeFilter === 'all' ? memoryItems : memoryItems.filter((m) => m.scope === listScopeFilter)
+    if (!q) return scoped
+    return scoped.filter((m) => m.content.toLowerCase().includes(q))
+  }, [query, memoryItems, listScopeFilter])
+
+  const addMemoryItem = useCallback(async () => {
+    const content = draft.trim()
+    if (!content) return
+    const scope = addScope
+    if (!ensureScopeAllowed(scope)) return
+    setMemoryError('')
+    try {
+      await fetchBackendJson('/memory/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceDir, content, source: 'settings', scope })
+      })
+      setDraft('')
+      await loadMemoryItems()
+    } catch (e) {
+      setMemoryError(e instanceof Error ? e.message : 'Failed to add memory')
+    }
+  }, [draft, addScope, ensureScopeAllowed, workspaceDir, loadMemoryItems])
+
+  const patchMemoryItem = useCallback(async (id: string, scope: 'workspace' | 'global', patch: Record<string, any>) => {
+    if (!id) return
+    if (!ensureScopeAllowed(scope)) return
+    setMemoryError('')
+    try {
+      await fetchBackendJson('/memory/items', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceDir, id, patch, scope })
+      })
+      await loadMemoryItems()
+    } catch (e) {
+      setMemoryError(e instanceof Error ? e.message : 'Failed to update memory')
+    }
+  }, [ensureScopeAllowed, workspaceDir, loadMemoryItems])
+
+  const deleteMemoryItem = useCallback(async (id: string, scope: 'workspace' | 'global') => {
+    if (!id) return
+    if (!ensureScopeAllowed(scope)) return
+    setMemoryError('')
+    try {
+      await fetchBackendJson('/memory/items', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceDir, id, scope })
+      })
+      await loadMemoryItems()
+    } catch (e) {
+      setMemoryError(e instanceof Error ? e.message : 'Failed to delete memory')
+    }
+  }, [ensureScopeAllowed, workspaceDir, loadMemoryItems])
+
+  const clearAllMemories = useCallback(async () => {
+    const rows = filteredMemories.filter((m) => ensureScopeAllowed(m.scope))
+    const ids = rows.map((m) => ({ id: m.id, scope: m.scope })).filter((x) => Boolean(x.id))
+    if (!ids.length) return
+    setMemoryError('')
+    try {
+      for (const row of ids) {
+        await fetchBackendJson('/memory/items', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workspaceDir, id: row.id, scope: row.scope })
+        })
+      }
+      await loadMemoryItems()
+    } catch (e) {
+      setMemoryError(e instanceof Error ? e.message : 'Failed to clear memories')
+    }
+  }, [ensureScopeAllowed, filteredMemories, workspaceDir, loadMemoryItems])
 
   const thresholdPercent = Math.round(Math.min(1, Math.max(0, settings.memorySimilarityThreshold || 0)) * 100)
 
@@ -5713,6 +6508,60 @@ function MemorySettings() {
             />
           </div>
         </div>
+
+        <div className="space-y-3 rounded-md border border-border bg-background px-3 py-3">
+          <div className="text-[13px] font-semibold">{t.globalMemory}</div>
+          <div className="flex items-center justify-between">
+            <Label>{t.enableGlobalMemory}</Label>
+            <Switch
+              checked={Boolean((settings as any).memoryGlobalEnabled)}
+              onCheckedChange={(c) => updateSettings({ memoryGlobalEnabled: Boolean(c) } as any)}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <Label>{t.enableGlobalWrite}</Label>
+            <Switch
+              checked={Boolean((settings as any).memoryGlobalWriteEnabled)}
+              onCheckedChange={(c) => updateSettings({ memoryGlobalWriteEnabled: Boolean(c) } as any)}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label>{t.globalTopK}</Label>
+            <Input
+              type="number"
+              min={1}
+              max={20}
+              value={Number((settings as any).memoryGlobalRetrieveCount || 3)}
+              onChange={(e) => updateSettings({ memoryGlobalRetrieveCount: Math.max(1, Math.min(20, Number(e.target.value || 3))) } as any)}
+            />
+          </div>
+        </div>
+
+        <div className="space-y-3 rounded-md border border-border bg-background px-3 py-3">
+          <div className="text-[13px] font-semibold">{t.writePolicy}</div>
+          <div className="flex items-center justify-between">
+            <Label>{t.autoScope}</Label>
+            <Switch
+              checked={Boolean((settings as any).memoryScopeAutoEnabled)}
+              onCheckedChange={(c) => updateSettings({ memoryScopeAutoEnabled: Boolean(c) } as any)}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label>{t.defaultScope}</Label>
+            <Select
+              value={String((settings as any).memoryDefaultWriteScope || 'workspace') === 'global' ? 'global' : 'workspace'}
+              onValueChange={(val) => updateSettings({ memoryDefaultWriteScope: val === 'global' ? 'global' : 'workspace' } as any)}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="workspace">{t.scopeWorkspace}</SelectItem>
+                <SelectItem value="global">{t.scopeGlobal}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
       </Card>
 
       <Card className="p-5 space-y-4">
@@ -5753,17 +6602,129 @@ function MemorySettings() {
 
       <Card className="p-5 space-y-2">
         <div className="text-[13px] font-semibold">{t.embedding}</div>
-        <div className="space-y-2">
-          <Input
-            list="anima-embedding-models"
-            value={settings.memoryEmbeddingModelId}
-            onChange={(e) => updateSettings({ memoryEmbeddingModelId: e.target.value })}
-          />
-          <datalist id="anima-embedding-models">
-            <option value="text-embedding-3-small" />
-            <option value="text-embedding-3-large" />
-            <option value="text-embedding-ada-002" />
-          </datalist>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label>{t.embeddingSource}</Label>
+              <Select
+                value={embeddingSource}
+                onValueChange={(val) => {
+                  const next = val === 'local' ? 'local' : 'provider'
+                  if (next === 'local') {
+                    const firstLocal = localModelOptions[0]?.id || ''
+                    updateSettings({ memoryEmbeddingModelId: firstLocal })
+                    if (firstLocal && !embeddingInstalledIds.includes(firstLocal)) {
+                      void startEmbeddingDownload(firstLocal)
+                    }
+                  } else {
+                    const firstProvider = availableModels[0] || ''
+                    updateSettings({ memoryEmbeddingModelId: firstProvider })
+                  }
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="provider">{t.embeddingProvider}</SelectItem>
+                  <SelectItem value="local">{t.embeddingLocal}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
+              <Label>{embeddingSource === 'local' ? t.embeddingLocal : t.embeddingProvider}</Label>
+              {embeddingSource === 'local' ? (
+                <Select
+                  value={selectedEmbeddingModelId}
+                  onValueChange={(val) => {
+                    updateSettings({ memoryEmbeddingModelId: val })
+                    if (val && !embeddingInstalledIds.includes(val)) {
+                      void startEmbeddingDownload(val)
+                    }
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={t.embeddingLocal} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {localModelOptions.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Select
+                  value={selectedEmbeddingModelId}
+                  onValueChange={(val) => updateSettings({ memoryEmbeddingModelId: val })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={t.embeddingProvider} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableModels.map((m) => (
+                      <SelectItem key={m} value={m}>
+                        {m}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+          </div>
+
+          {embeddingSource === 'local' && selectedEmbeddingModelId ? (
+            <div className="rounded-md border border-border bg-background px-3 py-2 text-xs space-y-1">
+              {embeddingInstalledIds.includes(selectedEmbeddingModelId) ? (
+                <div className="text-emerald-600 dark:text-emerald-400">{t.embeddingInstalled}</div>
+              ) : (
+                <>
+                  <div className="text-muted-foreground">
+                    {t.embeddingDownloading}
+                    {(() => {
+                      const st = embeddingDownloadByModelId[selectedEmbeddingModelId]
+                      if (!st) return ''
+                      if (typeof st.downloadedBytes === 'number' || typeof st.totalBytes === 'number') {
+                        return ` ${formatBytes(st.downloadedBytes)} / ${formatBytes(st.totalBytes)}`
+                      }
+                      return ''
+                    })()}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {(() => {
+                      const st = embeddingDownloadByModelId[selectedEmbeddingModelId]
+                      const status = st?.status || 'idle'
+                      if (status === 'running' || status === 'starting' || status === 'canceling') {
+                        return (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void cancelEmbeddingDownload(selectedEmbeddingModelId)}
+                          >
+                            {t.embeddingCancel}
+                          </Button>
+                        )
+                      }
+                      return (
+                        <Button size="sm" variant="outline" onClick={() => void startEmbeddingDownload(selectedEmbeddingModelId)}>
+                          {t.embeddingDownload}
+                        </Button>
+                      )
+                    })()}
+                    {(() => {
+                      const st = embeddingDownloadByModelId[selectedEmbeddingModelId]
+                      if (st?.status === 'error' && st.error) {
+                        return <span className="text-destructive">{t.embeddingDownloadError}: {st.error}</span>
+                      }
+                      return null
+                    })()}
+                  </div>
+                </>
+              )}
+            </div>
+          ) : null}
           <div className="text-xs text-muted-foreground">{t.embeddingHint}</div>
         </div>
       </Card>
@@ -5788,6 +6749,28 @@ function MemorySettings() {
 
       <Card className="p-5 space-y-3">
         <div className="text-[13px] font-semibold">{t.addMemory}</div>
+        <div className="space-y-1 max-w-[220px]">
+          <Label>{t.addScope}</Label>
+          <Select
+            value={addScope}
+            onValueChange={(val) => setAddScope(val === 'global' ? 'global' : val === 'workspace' ? 'workspace' : 'auto')}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto" disabled={!Boolean((settings as any).memoryScopeAutoEnabled)}>
+                {t.scopeAuto}
+              </SelectItem>
+              <SelectItem value="workspace" disabled={!workspaceDir}>
+                {t.scopeWorkspace}
+              </SelectItem>
+              <SelectItem value="global" disabled={!memoryGlobalEnabled}>
+                {t.scopeGlobal}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <Textarea
           className="min-h-[100px]"
           value={draft}
@@ -5796,12 +6779,8 @@ function MemorySettings() {
         />
         <div className="flex justify-end">
           <Button
-            onClick={() => {
-              const content = draft.trim()
-              if (!content) return
-              addMemory(content)
-              setDraft('')
-            }}
+            onClick={() => void addMemoryItem()}
+            disabled={memoryLoading}
             className="gap-2"
           >
             <Plus className="w-4 h-4" />
@@ -5826,35 +6805,78 @@ function MemorySettings() {
       <Card className="p-5 space-y-3">
         <div className="flex items-center justify-between gap-3">
           <div className="text-[13px] font-semibold">{t.memoryList}</div>
-          <Button
-            variant="outline"
-            onClick={() => updateSettings({ memories: [] })}
-            className="gap-2 text-destructive hover:text-destructive"
-          >
-            <Trash2 className="w-4 h-4" />
-            {t.clearAll}
-          </Button>
+          <div className="flex items-center gap-2">
+            <div className="w-[150px]">
+              <Select
+                value={listScopeFilter}
+                onValueChange={(val) => setListScopeFilter(val === 'workspace' ? 'workspace' : val === 'global' ? 'global' : 'all')}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={t.listScopeFilter} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t.scopeAll}</SelectItem>
+                  <SelectItem value="workspace">{t.scopeWorkspace}</SelectItem>
+                  <SelectItem value="global">{t.scopeGlobal}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => void clearAllMemories()}
+              disabled={memoryLoading || filteredMemories.length === 0}
+              className="gap-2 text-destructive hover:text-destructive"
+            >
+              <Trash2 className="w-4 h-4" />
+              {t.clearAll}
+            </Button>
+          </div>
         </div>
+        {memoryError ? <div className="text-[12px] text-destructive">{memoryError}</div> : null}
+        {!workspaceDir && !memoryGlobalEnabled ? (
+          <div className="text-[13px] text-muted-foreground">
+            {settings.language === 'zh' ? '请先选择工作区后再管理记忆。' : 'Please select a workspace before managing memories.'}
+          </div>
+        ) : null}
 
         <div className="space-y-2">
-          {filteredMemories.length === 0 ? (
+          {memoryLoading ? (
+            <div className="text-[13px] text-muted-foreground">{settings.language === 'zh' ? '加载中…' : 'Loading…'}</div>
+          ) : filteredMemories.length === 0 ? (
             <div className="text-[13px] text-muted-foreground">{t.empty}</div>
           ) : (
             filteredMemories.map((m) => (
               <div key={m.id} className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2">
+                <Badge variant="outline" className="shrink-0 text-[10px] px-1.5 py-0.5">
+                  {m.scope === 'global' ? t.scopeGlobal : t.scopeWorkspace}
+                </Badge>
                 <Checkbox
                   checked={m.isEnabled}
-                  onCheckedChange={(c) => updateMemory(m.id, { isEnabled: c as boolean })}
+                  onCheckedChange={(c) => void patchMemoryItem(m.id, m.scope, { status: c ? 'active' : 'inactive' })}
                 />
                 <Input
                   className="flex-1 border-none bg-transparent shadow-none focus-visible:ring-0 px-0 h-auto py-0"
-                  value={m.content}
-                  onChange={(e) => updateMemory(m.id, { content: e.target.value })}
+                  value={Object.prototype.hasOwnProperty.call(editingContentById, m.id) ? editingContentById[m.id] : m.content}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    setEditingContentById((prev) => ({ ...prev, [m.id]: v }))
+                  }}
+                  onBlur={() => {
+                    const next = Object.prototype.hasOwnProperty.call(editingContentById, m.id) ? editingContentById[m.id] : m.content
+                    const trimmed = String(next || '').trim()
+                    setEditingContentById((prev) => {
+                      const cp = { ...prev }
+                      delete cp[m.id]
+                      return cp
+                    })
+                    if (!trimmed || trimmed === m.content) return
+                    void patchMemoryItem(m.id, m.scope, { content: trimmed })
+                  }}
                 />
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => deleteMemory(m.id)}
+                  onClick={() => void deleteMemoryItem(m.id, m.scope)}
                   className="h-8 w-8 text-muted-foreground hover:text-destructive"
                 >
                   <Trash2 className="w-4 h-4" />

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import time
 import uuid
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from http import HTTPStatus
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -49,6 +51,82 @@ def _apply_thinking_level(provider: Any, composer: Dict[str, Any], extra_body: O
     return apply_thinking_level(provider, composer, extra_body, max_tokens)
 
 
+def _resolve_workspace_dir(settings_obj: Dict[str, Any], composer: Dict[str, Any]) -> str:
+    cdir = str((composer or {}).get("workspaceDir") or "").strip()
+    s = settings_obj.get("settings") if isinstance(settings_obj, dict) else {}
+    if not isinstance(s, dict):
+        s = {}
+    sdir = str(s.get("workspaceDir") or "").strip()
+    return cdir or sdir
+
+
+def _workspace_preflight_warning(settings_obj: Dict[str, Any], composer: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    ws = _resolve_workspace_dir(settings_obj, composer)
+    if ws:
+        return None
+    return {
+        "code": "workspace_missing",
+        "message": "No workspace directory selected; workspace tools (e.g. memory_add/read_file/bash) may fail.",
+    }
+
+
+def _classify_recovery_reason(error_text: str) -> str:
+    t = str(error_text or "").lower()
+    if "timeout" in t or "timed out" in t:
+        return "timeout"
+    if "context" in t or "token" in t or "max_output_tokens" in t:
+        return "context_budget"
+    return "runtime_error"
+
+
+def _make_recovery_trace(*, reason: str, action: str, detail: str, step: int, index: int) -> Dict[str, Any]:
+    started = now_ms()
+    return {
+        "id": f"tr_recover_{started}_{index}",
+        "toolCallId": f"recovery_{step}_{index}",
+        "name": "recovery/model_fallback",
+        "status": "succeeded",
+        "startedAt": started,
+        "endedAt": started,
+        "durationMs": 0,
+        "argsPreview": preview_json({"reason": reason, "action": action, "step": step}, max_chars=800),
+        "resultPreview": preview_tool_result(detail, max_chars=1200),
+    }
+
+
+def _build_verification(*, traces: List[Dict[str, Any]], require_evidence: bool) -> Dict[str, Any]:
+    evidences: List[Dict[str, Any]] = []
+    succeeded = [t for t in traces if isinstance(t, dict) and str(t.get("status") or "") == "succeeded" and not str(t.get("name") or "").startswith("recovery/")]
+    failed = [t for t in traces if isinstance(t, dict) and str(t.get("status") or "") == "failed"]
+    for tr in succeeded[:3]:
+        rp = tr.get("resultPreview") if isinstance(tr.get("resultPreview"), dict) else {}
+        evidences.append(
+            {
+                "type": "tool_receipt",
+                "tool": str(tr.get("name") or ""),
+                "summary": str(rp.get("text") or "")[:200],
+            }
+        )
+    if evidences:
+        return {"status": "passed", "evidence": evidences}
+    if failed and require_evidence:
+        top = failed[0]
+        err = top.get("error") if isinstance(top.get("error"), dict) else {}
+        return {
+            "status": "failed",
+            "evidence": [
+                {
+                    "type": "tool_failure",
+                    "tool": str(top.get("name") or ""),
+                    "summary": str(err.get("message") or "")[:200],
+                }
+            ],
+        }
+    if require_evidence:
+        return {"status": "unverified", "evidence": []}
+    return {"status": "passed", "evidence": [{"type": "skipped", "summary": "verification not required"}]}
+
+
 def _apply_persistent_compression(
     *,
     chat_id: str,
@@ -71,6 +149,311 @@ def _apply_persistent_compression(
         get_chat_meta_fn=get_chat_meta,
         merge_chat_meta_fn=merge_chat_meta,
     )
+
+
+def _isolate_worker_messages(messages: List[Dict[str, Any]], composer: Dict[str, Any]) -> List[Dict[str, Any]]:
+    role = str((composer or {}).get("agentRole") or "").strip().lower()
+    if role != "worker":
+        return messages
+    if not isinstance(messages, list) or not messages:
+        return []
+    last_user = None
+    for m in reversed(messages):
+        if isinstance(m, dict) and str(m.get("role") or "") == "user":
+            last_user = m
+            break
+    if isinstance(last_user, dict):
+        return [last_user]
+    return [messages[-1]] if isinstance(messages[-1], dict) else []
+
+
+def _collect_worker_tasks(composer: Dict[str, Any]) -> List[Any]:
+    role = str((composer or {}).get("agentRole") or "").strip().lower()
+    if role != "coordinator":
+        return []
+    raw = composer.get("workerTasks")
+    if not isinstance(raw, list):
+        return []
+    out: List[Any] = []
+    for item in raw:
+        if isinstance(item, dict):
+            out.append(dict(item))
+            continue
+        s = str(item or "").strip()
+        if s:
+            out.append(s)
+    return out
+
+
+def _clamp_int(raw: Any, default_v: int, min_v: int, max_v: int) -> int:
+    try:
+        v = int(raw)
+    except Exception:
+        v = int(default_v)
+    return max(min_v, min(max_v, v))
+
+
+def _normalize_worker_task(
+    item: Any,
+    *,
+    index: int,
+    default_model_override: str,
+    default_timeout_ms: int,
+) -> Dict[str, Any]:
+    if isinstance(item, dict):
+        prompt = str(item.get("prompt") or item.get("task") or item.get("content") or "").strip()
+        model_override = str(item.get("modelOverride") or default_model_override or "").strip()
+        timeout_ms = _clamp_int(item.get("timeoutMs"), default_timeout_ms, 0, 300_000)
+    else:
+        prompt = str(item or "").strip()
+        model_override = str(default_model_override or "").strip()
+        timeout_ms = _clamp_int(default_timeout_ms, default_timeout_ms, 0, 300_000)
+    return {
+        "index": index,
+        "prompt": prompt,
+        "modelOverride": model_override,
+        "timeoutMs": timeout_ms,
+    }
+
+
+def _run_coordinator_workers(
+    *,
+    provider: Any,
+    settings_obj: Dict[str, Any],
+    composer: Dict[str, Any],
+    temperature: float,
+    max_tokens: int,
+    extra_body: Optional[Dict[str, Any]],
+    emit_event: Optional[Callable[[Any], None]] = None,
+) -> Dict[str, Any]:
+    raw_tasks = _collect_worker_tasks(composer)
+    if not raw_tasks:
+        return {
+            "reportsText": "",
+            "traces": [],
+            "artifacts": [],
+            "verification": {"status": "passed", "evidence": []},
+            "orchestration": {"workers": 0, "failedWorkers": 0, "totalRetries": 0, "failureReasons": {}},
+        }
+
+    from anima_backend_shared.chat import apply_attachments_inline
+
+    default_model_override = str(composer.get("workerModelOverride") or "").strip()
+    default_timeout_ms = _clamp_int(composer.get("workerTimeoutMs"), 0, 0, 300_000)
+    parallelism = _clamp_int(composer.get("workerParallelism"), 1, 1, 8)
+    try:
+        retry_max = int(composer.get("workerRetryMax") or 1)
+    except Exception:
+        retry_max = 1
+    retry_max = max(0, min(retry_max, 3))
+    tasks = [
+        _normalize_worker_task(
+            item,
+            index=i,
+            default_model_override=default_model_override,
+            default_timeout_ms=default_timeout_ms,
+        )
+        for i, item in enumerate(raw_tasks, start=1)
+    ]
+    tasks = [t for t in tasks if str(t.get("prompt") or "").strip()]
+    if not tasks:
+        return {
+            "reportsText": "",
+            "traces": [],
+            "artifacts": [],
+            "verification": {"status": "passed", "evidence": []},
+            "orchestration": {"workers": 0, "failedWorkers": 0, "totalRetries": 0, "failureReasons": {}},
+        }
+
+    def _execute_one(task_def: Dict[str, Any]) -> Dict[str, Any]:
+        i = int(task_def.get("index") or 0)
+        task = str(task_def.get("prompt") or "").strip()
+        timeout_ms = _clamp_int(task_def.get("timeoutMs"), default_timeout_ms, 0, 300_000)
+        task_model_override = str(task_def.get("modelOverride") or "").strip()
+
+        local_traces: List[Dict[str, Any]] = []
+        local_artifacts: List[Dict[str, Any]] = []
+        local_retries = 0
+        local_failure_reasons: Dict[str, int] = {}
+        out: Dict[str, Any] = {}
+
+        worker_composer = dict(composer)
+        worker_composer.pop("workerTasks", None)
+        worker_composer.pop("workerParallelism", None)
+        worker_composer.pop("workerRetryMax", None)
+        worker_composer.pop("workerTimeoutMs", None)
+        worker_composer.pop("workerModelOverride", None)
+        worker_composer["agentRole"] = "worker"
+        worker_composer["verificationRequired"] = True
+        if task_model_override:
+            worker_composer["modelOverride"] = task_model_override
+        worker_messages = [{"role": "user", "content": task}]
+        worker_messages = inject_system_message(worker_messages, settings_obj, worker_composer)
+        prepared = apply_attachments_inline(worker_messages, worker_composer)
+        if callable(emit_event):
+            try:
+                emit_event({"type": "stage", "stage": f"worker_start:{i}", "step": i})
+            except Exception:
+                pass
+        attempt = 0
+        while True:
+            worker_provider = create_provider(settings_obj, worker_composer)
+            holder: Dict[str, Any] = {}
+
+            def _call() -> None:
+                holder["out"] = _run_tool_loop(
+                    provider=worker_provider,
+                    prepared=prepared,
+                    composer=worker_composer,
+                    settings_obj=settings_obj,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    extra_body=extra_body,
+                    emit_event=emit_event,
+                )
+
+            if timeout_ms > 0:
+                t = threading.Thread(target=_call, name=f"worker-loop-{i}", daemon=True)
+                t.start()
+                t.join(timeout_ms / 1000.0)
+                if t.is_alive():
+                    timeout_trace = _make_recovery_trace(
+                        reason="timeout",
+                        action="worker_timeout",
+                        detail=f"worker-{i} exceeded timeoutMs={timeout_ms}",
+                        step=i,
+                        index=len(local_traces),
+                    )
+                    local_traces.append(timeout_trace)
+                    out = {
+                        "paused": False,
+                        "final_content": "",
+                        "usage": None,
+                        "traces": [],
+                        "artifacts": [],
+                        "reasoning": "",
+                        "messages": [{"role": "assistant", "content": ""}],
+                        "rate_limit": None,
+                        "stop_reason": "timeout",
+                        "verification": {"status": "failed", "evidence": [{"type": "timeout", "summary": f"worker timeout {timeout_ms}ms"}]},
+                    }
+                else:
+                    out = holder.get("out") if isinstance(holder.get("out"), dict) else {}
+            else:
+                _call()
+                out = holder.get("out") if isinstance(holder.get("out"), dict) else {}
+
+            verification = out.get("verification") if isinstance(out.get("verification"), dict) else {}
+            v_status = str(verification.get("status") or "").strip() or "unverified"
+            stop_reason = str(out.get("stop_reason") or "completed").strip() or "completed"
+            ok = stop_reason == "completed" and v_status == "passed"
+            if not ok:
+                local_failure_reasons[stop_reason] = int(local_failure_reasons.get(stop_reason) or 0) + 1
+            if ok or attempt >= retry_max:
+                break
+            attempt += 1
+            local_retries += 1
+            retry_trace = _make_recovery_trace(
+                reason=stop_reason,
+                action="worker_retry",
+                detail=f"worker-{i} retry attempt={attempt} task={task[:120]}",
+                step=i,
+                index=len(local_traces),
+            )
+            local_traces.append(retry_trace)
+            if callable(emit_event):
+                try:
+                    emit_event({"type": "tool_trace", "trace": retry_trace})
+                except Exception:
+                    pass
+        local_traces.extend([x for x in (out.get("traces") or []) if isinstance(x, dict)])
+        local_artifacts.extend([x for x in (out.get("artifacts") or []) if isinstance(x, dict)])
+        verification = out.get("verification") if isinstance(out.get("verification"), dict) else {}
+        v_status = str(verification.get("status") or "").strip() or "unverified"
+        stop_reason = str(out.get("stop_reason") or "completed").strip()
+        content = str(out.get("final_content") or "").strip()
+        report = f"[worker-{i}] task={task}\nstatus={stop_reason}/{v_status}\nresult={content}"
+        if callable(emit_event):
+            try:
+                emit_event({"type": "stage", "stage": f"worker_done:{i}", "step": i})
+            except Exception:
+                pass
+        return {
+            "index": i,
+            "report": report,
+            "ok": (stop_reason == "completed" and v_status == "passed"),
+            "traces": local_traces,
+            "artifacts": local_artifacts,
+            "retries": local_retries,
+            "failureReasons": local_failure_reasons,
+        }
+
+    results: List[Dict[str, Any]] = []
+    if parallelism <= 1 or len(tasks) <= 1:
+        for task in tasks:
+            results.append(_execute_one(task))
+    else:
+        with ThreadPoolExecutor(max_workers=parallelism) as pool:
+            futs = [pool.submit(_execute_one, t) for t in tasks]
+            for fut in as_completed(futs):
+                try:
+                    r = fut.result()
+                    if isinstance(r, dict):
+                        results.append(r)
+                except Exception as e:
+                    results.append(
+                        {
+                            "index": 0,
+                            "report": f"[worker-unknown] status=runtime_error/failed result={str(e)}",
+                            "ok": False,
+                            "traces": [],
+                            "artifacts": [],
+                            "retries": 0,
+                            "failureReasons": {"runtime_error": 1},
+                        }
+                    )
+
+    results.sort(key=lambda x: int(x.get("index") or 0))
+    traces: List[Dict[str, Any]] = []
+    artifacts: List[Dict[str, Any]] = []
+    reports: List[str] = []
+    total_retries = 0
+    failure_reasons: Dict[str, int] = {}
+    failed_workers = 0
+    for r in results:
+        reports.append(str(r.get("report") or ""))
+        traces.extend([x for x in (r.get("traces") or []) if isinstance(x, dict)])
+        artifacts.extend([x for x in (r.get("artifacts") or []) if isinstance(x, dict)])
+        total_retries += int(r.get("retries") or 0)
+        if not bool(r.get("ok")):
+            failed_workers += 1
+        fr = r.get("failureReasons") if isinstance(r.get("failureReasons"), dict) else {}
+        for k, v in fr.items():
+            kk = str(k or "").strip() or "runtime_error"
+            try:
+                vv = int(v)
+            except Exception:
+                vv = 0
+            failure_reasons[kk] = int(failure_reasons.get(kk) or 0) + max(0, vv)
+    failed = failed_workers > 0
+
+    return {
+        "reportsText": "\n\n".join(reports).strip(),
+        "traces": traces,
+        "artifacts": artifacts,
+        "verification": {
+            "status": "failed" if failed else "passed",
+            "evidence": [
+                {"type": "worker_report", "summary": f"workers={len(tasks)} failed={1 if failed else 0}"},
+            ],
+        },
+        "orchestration": {
+            "workers": len(tasks),
+            "failedWorkers": failed_workers,
+            "totalRetries": total_retries,
+            "failureReasons": failure_reasons,
+        },
+    }
 
 
 def _run_tool_loop(
@@ -112,6 +495,8 @@ def _run_tool_loop(
     reasoning_parts: List[str] = []
     usage: Optional[Dict[str, Any]] = None
     final_content = ""
+    stop_reason = "completed"
+    verification_required = bool(composer.get("verificationRequired"))
 
     def _append_reasoning(prev: str, nxt: str) -> str:
         p = str(prev or "").strip()
@@ -124,9 +509,14 @@ def _run_tool_loop(
             return p
         return p + "\n\n" + n
 
+    try:
+        _emit({"type": "stage", "stage": "prepare", "step": 0})
+    except Exception:
+        pass
+
     for step in range(MAX_TOOL_STEPS):
         try:
-            _emit({"type": "stage", "stage": "model_call", "step": step})
+            _emit({"type": "stage", "stage": "model", "step": step})
         except Exception:
             pass
 
@@ -200,6 +590,15 @@ def _run_tool_loop(
                 if reasoning_content_parts:
                     msg["reasoning_content"] = "".join(reasoning_content_parts)
             else:
+                reason = _classify_recovery_reason("stream_failed")
+                detail = "stream path failed; fallback to non-stream chat_completion"
+                recover_trace = _make_recovery_trace(reason=reason, action="fallback_non_stream", detail=detail, step=step, index=len(traces))
+                traces.append(recover_trace)
+                try:
+                    _emit({"type": "stage", "stage": "recover", "step": step})
+                    _emit({"type": "tool_trace", "trace": recover_trace})
+                except Exception:
+                    pass
                 res = call_chat_completion(
                     provider,
                     cur,
@@ -273,6 +672,10 @@ def _run_tool_loop(
             if isinstance(rc, str) and rc.strip():
                 assistant_msg["reasoning_content"] = rc
         next_messages.append(assistant_msg)
+        try:
+            _emit({"type": "stage", "stage": "tools", "step": step})
+        except Exception:
+            pass
 
         workspace_dir = ""
         cdir = str(composer.get("workspaceDir") or "").strip()
@@ -347,6 +750,7 @@ def _run_tool_loop(
                 approval_id = str(uuid.uuid4())
                 return {
                     "paused": True,
+                    "stop_reason": "blocked_by_approval",
                     "approval": {
                         **approval_payload,
                         "approvalId": approval_id,
@@ -376,6 +780,7 @@ def _run_tool_loop(
                     "usage": usage,
                     "reasoning": "\n\n".join([r for r in reasoning_parts if str(r).strip()]).strip(),
                     "rate_limit": get_last_rate_limit(provider),
+                    "verification": {"status": "unverified", "evidence": []},
                 }
 
             traces.append(running_trace)
@@ -396,20 +801,30 @@ def _run_tool_loop(
                     pass
     else:
         final_content = "Tool execution limit reached."
+        stop_reason = "exhausted"
 
     rate_limit = get_last_rate_limit(provider)
     output_messages = list(cur)
+    verification = _build_verification(traces=traces, require_evidence=verification_required or bool(traces))
+    if verification_required and str(verification.get("status") or "") != "passed":
+        stop_reason = "verification_failed"
     output_messages.append({"role": "assistant", "content": str(final_content or "")})
+    try:
+        _emit({"type": "stage", "stage": "verify", "step": MAX_TOOL_STEPS})
+    except Exception:
+        pass
 
     return {
         "paused": False,
         "final_content": str(final_content or ""),
+        "stop_reason": stop_reason,
         "usage": usage,
         "traces": traces,
         "artifacts": artifacts,
         "reasoning": "\n\n".join([r for r in reasoning_parts if str(r).strip()]).strip(),
         "messages": output_messages,
         "rate_limit": rate_limit,
+        "verification": verification,
     }
 
 
@@ -428,7 +843,21 @@ def handle_post_runs_non_stream_via_stream_executor(body: Dict[str, Any]) -> Tup
         composer = {}
 
     settings_obj = load_settings()
-    provider = create_provider(settings_obj, composer)
+    workspace_warning = _workspace_preflight_warning(settings_obj, composer)
+    try:
+        provider = create_provider(settings_obj, composer)
+    except Exception as e:
+        msg = str(e)
+        low = msg.lower()
+        if "no provider configured" in low:
+            payload: Dict[str, Any] = {"ok": False, "error": msg, "code": "provider_not_configured"}
+            if isinstance(workspace_warning, dict):
+                payload["warnings"] = [workspace_warning]
+            return int(HTTPStatus.BAD_REQUEST), payload
+        payload = {"ok": False, "error": msg}
+        if isinstance(workspace_warning, dict):
+            payload["warnings"] = [workspace_warning]
+        return int(HTTPStatus.INTERNAL_SERVER_ERROR), payload
     temperature, max_tokens, extra_body = resolve_runtime_options(body=body, composer=composer, settings_obj=settings_obj)
 
     extra_body, max_tokens = _apply_thinking_level(provider, composer, extra_body, max_tokens)
@@ -440,6 +869,19 @@ def handle_post_runs_non_stream_via_stream_executor(body: Dict[str, Any]) -> Tup
         messages, composer, compression_evt = _apply_persistent_compression(
             chat_id=thread_id, messages=messages, settings_obj=settings_obj, provider=provider, composer=composer, extra_body=extra_body
         )
+    worker_ctx = _run_coordinator_workers(
+        provider=provider,
+        settings_obj=settings_obj,
+        composer=composer,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        extra_body=extra_body,
+        emit_event=None,
+    )
+    worker_reports_text = str(worker_ctx.get("reportsText") or "").strip()
+    if worker_reports_text:
+        messages = list(messages) + [{"role": "assistant", "content": "Worker reports:\n" + worker_reports_text}]
+    messages = _isolate_worker_messages(messages, composer)
     messages = inject_system_message(messages, settings_obj, composer)
     prepared = apply_attachments_inline(messages, composer)
 
@@ -480,6 +922,8 @@ def handle_post_runs_non_stream_via_stream_executor(body: Dict[str, Any]) -> Tup
                     "reasoning": out.get("reasoning") or "",
                     "messages": out.get("messages"),
                     "pauseContext": pause_context,
+                    "stopReason": out.get("stop_reason") or "blocked_by_approval",
+                    "verification": out.get("verification"),
                 },
             )
             return int(HTTPStatus.CONFLICT), {
@@ -488,6 +932,7 @@ def handle_post_runs_non_stream_via_stream_executor(body: Dict[str, Any]) -> Tup
                 "runId": run_id,
                 "threadId": thread_id,
                 "approval": approval,
+                "warnings": [workspace_warning] if isinstance(workspace_warning, dict) else [],
             }
 
         usage_final, usage_source = normalize_or_estimate_usage(
@@ -496,6 +941,22 @@ def handle_post_runs_non_stream_via_stream_executor(body: Dict[str, Any]) -> Tup
             composer=composer,
             messages=out.get("messages") if isinstance(out.get("messages"), list) else prepared,
         )
+        worker_traces = [x for x in (worker_ctx.get("traces") or []) if isinstance(x, dict)]
+        worker_artifacts = [x for x in (worker_ctx.get("artifacts") or []) if isinstance(x, dict)]
+        orchestration = worker_ctx.get("orchestration") if isinstance(worker_ctx.get("orchestration"), dict) else {"workers": 0, "failedWorkers": 0, "totalRetries": 0, "failureReasons": {}}
+        merged_traces = worker_traces + [x for x in (out.get("traces") or []) if isinstance(x, dict)]
+        merged_artifacts = worker_artifacts + [x for x in (out.get("artifacts") or []) if isinstance(x, dict)]
+        worker_ver = worker_ctx.get("verification") if isinstance(worker_ctx.get("verification"), dict) else {"status": "passed", "evidence": []}
+        final_ver = out.get("verification") if isinstance(out.get("verification"), dict) else {"status": "unverified", "evidence": []}
+        final_ver_status = str(final_ver.get("status") or "").strip() or "unverified"
+        worker_ver_status = str(worker_ver.get("status") or "").strip() or "unverified"
+        if worker_ver_status != "passed" and final_ver_status == "passed":
+            final_ver_status = "failed"
+        final_ver["status"] = final_ver_status
+        final_ver["evidence"] = [x for x in (worker_ver.get("evidence") or []) if isinstance(x, dict)] + [x for x in (final_ver.get("evidence") or []) if isinstance(x, dict)]
+        out_stop_reason = str(out.get("stop_reason") or "completed").strip() or "completed"
+        if worker_ver_status != "passed" and out_stop_reason == "completed":
+            out_stop_reason = "verification_failed"
         try:
             merge_chat_meta(thread_id, {"usageState": build_usage_state(usage_final, usage_source)})
         except Exception:
@@ -507,11 +968,14 @@ def handle_post_runs_non_stream_via_stream_executor(body: Dict[str, Any]) -> Tup
             {
                 "content": out.get("final_content") or "",
                 "usage": usage_final,
-                "traces": out.get("traces"),
-                "artifacts": out.get("artifacts"),
+                "traces": merged_traces,
+                "artifacts": merged_artifacts,
                 "reasoning": out.get("reasoning") or "",
                 "messages": out.get("messages"),
                 "compression": compression_evt,
+                "stopReason": out_stop_reason,
+                "verification": final_ver,
+                "orchestration": orchestration,
             },
         )
 
@@ -521,23 +985,31 @@ def handle_post_runs_non_stream_via_stream_executor(body: Dict[str, Any]) -> Tup
             "threadId": thread_id,
             "content": str(out.get("final_content") or ""),
             "usage": usage_final,
-            "traces": out.get("traces"),
-            "artifacts": out.get("artifacts"),
+            "traces": merged_traces,
+            "artifacts": merged_artifacts,
             "reasoning": str(out.get("reasoning") or ""),
             "backendImpl": "stream-executor",
+            "stopReason": out_stop_reason,
+            "verification": final_ver,
+            "orchestration": orchestration,
         }
         if isinstance(compression_evt, dict) and compression_evt:
             payload["compression"] = compression_evt
         rate_limit = out.get("rate_limit")
         if isinstance(rate_limit, dict) and rate_limit:
             payload["rateLimit"] = rate_limit
+        if isinstance(workspace_warning, dict):
+            payload["warnings"] = [workspace_warning]
         return int(HTTPStatus.OK), payload
     except Exception as e:
         try:
             update_run(run_id, "failed", {"error": str(e)})
         except Exception:
             pass
-        return int(HTTPStatus.INTERNAL_SERVER_ERROR), {"ok": False, "error": str(e)}
+        payload = {"ok": False, "error": str(e)}
+        if isinstance(workspace_warning, dict):
+            payload["warnings"] = [workspace_warning]
+        return int(HTTPStatus.INTERNAL_SERVER_ERROR), payload
 
 
 def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
@@ -560,7 +1032,26 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
         composer = {}
 
     settings_obj = load_settings()
-    provider = create_provider(settings_obj, composer)
+    workspace_warning = _workspace_preflight_warning(settings_obj, composer)
+    try:
+        provider = create_provider(settings_obj, composer)
+    except Exception as e:
+        msg = str(e)
+        low = msg.lower()
+        if "no provider configured" in low:
+            status = HTTPStatus.BAD_REQUEST
+            payload = {"ok": False, "error": msg, "code": "provider_not_configured"}
+        else:
+            status = HTTPStatus.INTERNAL_SERVER_ERROR
+            payload = {"ok": False, "error": msg}
+        if isinstance(workspace_warning, dict):
+            payload["warnings"] = [workspace_warning]
+        handler.send_response(status)
+        handler.send_header("Access-Control-Allow-Origin", "*")
+        handler.send_header("Content-Type", "application/json; charset=utf-8")
+        handler.end_headers()
+        handler.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+        return
     temperature, max_tokens, extra_body = resolve_runtime_options(body=body, composer=composer, settings_obj=settings_obj)
 
     extra_body, max_tokens = _apply_thinking_level(provider, composer, extra_body, max_tokens)
@@ -588,6 +1079,12 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
         except Exception as e:
             raise ClientDisconnected() from e
 
+    if isinstance(workspace_warning, dict):
+        try:
+            emit({"type": "warning", "warning": workspace_warning})
+        except Exception:
+            return
+
     compression_evt = None
     if use_thread_messages and thread_id:
         messages, composer, compression_evt = _apply_persistent_compression(
@@ -599,6 +1096,19 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
             extra_body=extra_body,
             emit_event=emit,
         )
+    worker_ctx = _run_coordinator_workers(
+        provider=provider,
+        settings_obj=settings_obj,
+        composer=composer,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        extra_body=extra_body,
+        emit_event=emit,
+    )
+    worker_reports_text = str(worker_ctx.get("reportsText") or "").strip()
+    if worker_reports_text:
+        messages = list(messages) + [{"role": "assistant", "content": "Worker reports:\n" + worker_reports_text}]
+    messages = _isolate_worker_messages(messages, composer)
     messages = inject_system_message(messages, settings_obj, composer)
     prepared = apply_attachments_inline(messages, composer)
     create_run(
@@ -630,6 +1140,9 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
                 "reasoning": obj.get("reasoning"),
                 "traces": obj.get("traces"),
                 "backendImpl": "stream-executor",
+                "stopReason": obj.get("stopReason"),
+                "verification": obj.get("verification"),
+                "orchestration": obj.get("orchestration"),
             }
             if isinstance(obj.get("artifacts"), list) and obj.get("artifacts"):
                 out["artifacts"] = obj.get("artifacts")
@@ -675,6 +1188,8 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
                     "reasoning": out.get("reasoning") or "",
                     "messages": out.get("messages"),
                     "pauseContext": pause_context,
+                    "stopReason": out.get("stop_reason") or "blocked_by_approval",
+                    "verification": out.get("verification"),
                 },
             )
             try:
@@ -694,6 +1209,22 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
             composer=composer,
             messages=out.get("messages") if isinstance(out.get("messages"), list) else prepared,
         )
+        worker_traces = [x for x in (worker_ctx.get("traces") or []) if isinstance(x, dict)]
+        worker_artifacts = [x for x in (worker_ctx.get("artifacts") or []) if isinstance(x, dict)]
+        orchestration = worker_ctx.get("orchestration") if isinstance(worker_ctx.get("orchestration"), dict) else {"workers": 0, "failedWorkers": 0, "totalRetries": 0, "failureReasons": {}}
+        merged_traces = worker_traces + [x for x in (out.get("traces") or []) if isinstance(x, dict)]
+        merged_artifacts = worker_artifacts + [x for x in (out.get("artifacts") or []) if isinstance(x, dict)]
+        worker_ver = worker_ctx.get("verification") if isinstance(worker_ctx.get("verification"), dict) else {"status": "passed", "evidence": []}
+        final_ver = out.get("verification") if isinstance(out.get("verification"), dict) else {"status": "unverified", "evidence": []}
+        final_ver_status = str(final_ver.get("status") or "").strip() or "unverified"
+        worker_ver_status = str(worker_ver.get("status") or "").strip() or "unverified"
+        if worker_ver_status != "passed" and final_ver_status == "passed":
+            final_ver_status = "failed"
+        final_ver["status"] = final_ver_status
+        final_ver["evidence"] = [x for x in (worker_ver.get("evidence") or []) if isinstance(x, dict)] + [x for x in (final_ver.get("evidence") or []) if isinstance(x, dict)]
+        out_stop_reason = str(out.get("stop_reason") or "completed").strip() or "completed"
+        if worker_ver_status != "passed" and out_stop_reason == "completed":
+            out_stop_reason = "verification_failed"
         try:
             merge_chat_meta(thread_id, {"usageState": build_usage_state(usage_final, usage_source)})
         except Exception:
@@ -705,10 +1236,13 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
             {
                 "content": out.get("final_content") or "",
                 "usage": usage_final,
-                "traces": out.get("traces"),
-                "artifacts": out.get("artifacts"),
+                "traces": merged_traces,
+                "artifacts": merged_artifacts,
                 "reasoning": out.get("reasoning") or "",
                 "messages": out.get("messages"),
+                "stopReason": out_stop_reason,
+                "verification": final_ver,
+                "orchestration": orchestration,
             },
         )
 
@@ -718,9 +1252,12 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
                     "type": "run_done",
                     "usage": usage_final,
                     "reasoning": out.get("reasoning") or "",
-                    "traces": out.get("traces"),
-                    "artifacts": out.get("artifacts"),
+                    "traces": merged_traces,
+                    "artifacts": merged_artifacts,
                     "rateLimit": out.get("rate_limit"),
+                    "stopReason": out_stop_reason,
+                    "verification": final_ver,
+                    "orchestration": orchestration,
                 }
             )
         except Exception:

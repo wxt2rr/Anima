@@ -26,6 +26,19 @@ from .qwen_auth import (
     handle_post_provider_auth_logout,
     handle_post_provider_auth_start,
 )
+from .memory import (
+    handle_delete_memory_items,
+    handle_get_memory_embedding_models_base_dir,
+    handle_get_memory_embedding_models_catalog,
+    handle_get_memory_embedding_models_download_status,
+    handle_get_memory_embedding_models_installed,
+    handle_get_memory_items,
+    handle_get_memory_metrics,
+    handle_patch_memory_items,
+    handle_post_memory_items,
+    handle_post_memory_embedding_models_download,
+    handle_post_memory_embedding_models_download_cancel,
+)
 from .runs import handle_get_run, handle_post_run_resume, handle_post_runs_non_stream
 from .runs_stream import handle_post_runs_stream
 from .settings_tools import (
@@ -37,6 +50,7 @@ from .settings_tools import (
     handle_patch_settings,
     handle_post_artifacts_cleanup,
     handle_post_providers_fetch_models,
+    handle_post_tts_preview,
     handle_post_skills_content,
     handle_post_skills_open_dir,
 )
@@ -135,6 +149,7 @@ EXACT_ROUTES: Dict[Tuple[str, str], ExactHandler] = {
     ("POST", "/api/artifacts/cleanup"): handle_post_artifacts_cleanup,
     ("POST", "/api/runs"): _handle_post_runs,
     ("POST", "/api/providers/fetch_models"): handle_post_providers_fetch_models,
+    ("POST", "/api/tts/preview"): handle_post_tts_preview,
     ("POST", "/api/providers/auth/start"): handle_post_provider_auth_start,
     ("GET", "/api/providers/auth/status"): handle_get_provider_auth_status,
     ("POST", "/api/providers/auth/logout"): handle_post_provider_auth_logout,
@@ -150,6 +165,17 @@ EXACT_ROUTES: Dict[Tuple[str, str], ExactHandler] = {
     ("POST", "/voice/stream/chunk"): handle_post_voice_stream_chunk,
     ("POST", "/voice/stream/stop"): handle_post_voice_stream_stop,
     ("GET", "/voice/stream/events"): handle_get_voice_stream_events,
+    ("GET", "/memory/metrics"): handle_get_memory_metrics,
+    ("GET", "/memory/items"): handle_get_memory_items,
+    ("POST", "/memory/items"): handle_post_memory_items,
+    ("PATCH", "/memory/items"): handle_patch_memory_items,
+    ("DELETE", "/memory/items"): handle_delete_memory_items,
+    ("GET", "/memory/embedding/models/base_dir"): handle_get_memory_embedding_models_base_dir,
+    ("GET", "/memory/embedding/models/catalog"): handle_get_memory_embedding_models_catalog,
+    ("GET", "/memory/embedding/models/installed"): handle_get_memory_embedding_models_installed,
+    ("GET", "/memory/embedding/models/download/status"): handle_get_memory_embedding_models_download_status,
+    ("POST", "/memory/embedding/models/download"): handle_post_memory_embedding_models_download,
+    ("POST", "/memory/embedding/models/download/cancel"): handle_post_memory_embedding_models_download_cancel,
 }
 
 
