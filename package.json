@@ -44,6 +44,10 @@
       {
         "from": "skills",
         "to": "skills"
+      },
+      {
+        "from": "images/logo_padded.png",
+        "to": "images/logo_padded.png"
       }
     ],
     "asar": true,

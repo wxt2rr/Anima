@@ -7,7 +7,7 @@ function run(cmd, args, options = {}) {
 }
 
 const repoRoot = new URL('..', import.meta.url).pathname
-const input = join(repoRoot, 'images', 'logo.png')
+const input = join(repoRoot, 'images', 'logo_padded.png')
 const iconsetDir = join(repoRoot, 'build', 'icon.iconset')
 const icnsOut = join(repoRoot, 'build', 'icon.icns')
 
