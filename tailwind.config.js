@@ -17,7 +17,13 @@ module.exports = {
     },
     extend: {
       fontFamily: {
-        sans: ['"Instrument Sans"', ...defaultTheme.fontFamily.sans],
+        sans: [
+          '"PingFang SC"',
+          '"Hiragino Sans GB"',
+          '"Microsoft YaHei"',
+          '"Noto Sans SC"',
+          ...defaultTheme.fontFamily.sans
+        ],
         mono: ['"JetBrains Mono"', ...defaultTheme.fontFamily.mono],
       },
       colors: {

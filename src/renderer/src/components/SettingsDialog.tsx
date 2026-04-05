@@ -2090,7 +2090,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
         </nav>
       </AppShellLeftPane>
 
-      <div className="relative z-10 flex-1 rounded-l-[var(--app-shell-content-radius)] bg-[var(--app-shell-content-bg)] flex flex-col h-full overflow-hidden min-w-0">
+      <div className="relative z-10 flex-1 bg-[var(--app-shell-content-bg)] flex flex-col h-full overflow-hidden min-w-0">
         <div className="px-7 py-5 border-b border-border/80 bg-card/50 backdrop-blur">
           <h2 className="font-semibold text-lg tracking-tight cursor-default">
             {tabs.find((t) => t.id === activeTab)?.label}

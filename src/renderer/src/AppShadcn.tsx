@@ -1,5 +1,5 @@
 import { Fragment, useState, useRef, useEffect, useMemo, useCallback, type ReactNode, type DragEvent, type ClipboardEvent } from 'react'
-import { Send, StopCircle, Paperclip, PanelLeftOpen, MessageSquarePlus, Wrench, Sparkles, X, ChevronDown, Mic, Folder, Brain, Eye, Check, GitBranch, Copy } from 'lucide-react'
+import { ArrowUp, Square, Paperclip, PanelLeftOpen, MessageSquarePlus, Wrench, Sparkles, X, ChevronDown, Mic, Folder, Brain, Shield, Check, GitBranch, Copy } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -116,7 +116,7 @@ function CircularProgress({ value }: { value: number }) {
           className="text-primary transition-all duration-300 ease-out"
         />
       </svg>
-      <div className="absolute inset-0 flex items-center justify-center text-[7px] leading-none text-primary/90">
+      <div className="absolute inset-0 flex items-center justify-center text-[7px] leading-none text-muted-foreground">
         {label}
       </div>
     </div>
@@ -135,7 +135,7 @@ function MaskedIcon({ url, className }: { url: string; className?: string }) {
     maskPosition: 'center',
     WebkitMaskSize: 'contain',
     maskSize: 'contain',
-    backgroundColor: 'hsl(var(--primary))'
+    backgroundColor: 'currentColor'
   }
   return <span className={className} style={style} aria-hidden="true" />
 }
@@ -351,7 +351,7 @@ function AppLoaded(): JSX.Element {
   )
 
   // Use a single state for mutually exclusive popovers
-  const [popoverPanel, setPopoverPanel] = useState<'' | 'attachments' | 'tools' | 'skills' | 'model' | 'thinking' | 'permission'>('')
+  const [popoverPanel, setPopoverPanel] = useState<'' | 'attachments' | 'tools' | 'skills' | 'model' | 'thinking' | 'permission' | 'git_branch'>('')
   
   const [traceDetailOpenByKey, setTraceDetailOpenByKey] = useState<Record<string, boolean>>({})
   const [reasoningOpenByMsgId, setReasoningOpenByMsgId] = useState<Record<string, boolean>>({})
@@ -1318,6 +1318,8 @@ function AppLoaded(): JSX.Element {
   const activeProjectName = String((activeProject as any)?.name || '').trim()
   const [topGitBranch, setTopGitBranch] = useState('')
   const [topGitRepoDir, setTopGitRepoDir] = useState('')
+  const [gitBranches, setGitBranches] = useState<string[]>([])
+  const [gitBranchLoading, setGitBranchLoading] = useState(false)
 
   useEffect(() => {
     let canceled = false
@@ -1358,6 +1360,41 @@ function AppLoaded(): JSX.Element {
       canceled = true
     }
   }, [activeProjectDir, settings.workspaceDir])
+
+  const refreshGitBranches = useCallback(async () => {
+    const repoDir = String(topGitRepoDir || '').trim()
+    if (!repoDir) {
+      setGitBranches([])
+      return
+    }
+    setGitBranchLoading(true)
+    try {
+      const res = await window.anima.git.getBranches(repoDir)
+      if (res?.ok) {
+        const next = Array.isArray(res.branches) ? res.branches.map((b) => String(b || '').trim()).filter(Boolean) : []
+        setGitBranches(next)
+        const current = String(res.current || '').trim()
+        if (current) setTopGitBranch(current)
+      }
+    } finally {
+      setGitBranchLoading(false)
+    }
+  }, [topGitRepoDir])
+
+  const switchGitBranch = useCallback(async (branch: string) => {
+    const repoDir = String(topGitRepoDir || '').trim()
+    const target = String(branch || '').trim()
+    if (!repoDir || !target) return
+    try {
+      const res = await window.anima.git.checkout({ cwd: repoDir, branch: target })
+      if (res?.ok) {
+        setTopGitBranch(target)
+        await refreshGitBranches()
+      }
+    } catch {
+      // ignore branch switch errors in compact bar
+    }
+  }, [topGitRepoDir, refreshGitBranches])
 
   const formatTokenCount = (n?: number) => {
     if (n == null || Number.isNaN(n)) return '—'
@@ -3636,7 +3673,7 @@ function AppLoaded(): JSX.Element {
                 startResizingLeft()
               }}
             />
-            <div className="flex-1 flex flex-col h-full overflow-hidden relative rounded-l-[var(--app-shell-content-radius)] bg-[var(--app-shell-content-bg)]">
+            <div className="flex-1 flex flex-col h-full overflow-hidden relative bg-[var(--app-shell-content-bg)]">
               <div className="flex h-full min-w-0 flex-col overflow-hidden pt-2 pr-2 pb-2">
               <header className="h-[52px] shrink-0 draggable relative z-30">
               <div className="absolute left-4 top-[4px] flex items-center">
@@ -3668,24 +3705,6 @@ function AppLoaded(): JSX.Element {
               <div className="absolute left-0 right-0 top-[6px] flex items-center justify-center pointer-events-none">
                 <div className="flex items-center gap-2 text-xs text-primary">
                   <span>{messages.length} 条消息</span>
-                  {topGitRepoDir ? (
-                    <>
-                      <span>·</span>
-                      <GitBranch className="w-3.5 h-3.5" />
-                      <TooltipProvider>
-                        <Tooltip delayDuration={300}>
-                          <TooltipTrigger asChild>
-                            <span className="max-w-[300px] truncate pointer-events-auto cursor-help font-medium">
-                              {topGitBranch}
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            {topGitRepoDir}
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    </>
-                  ) : null}
                 </div>
               </div>
             </header>
@@ -5037,7 +5056,7 @@ function AppLoaded(): JSX.Element {
             </AnimatePresence>
 
             <footer className="pl-6 pr-6 pt-6 pb-0 no-drag overflow-visible">
-              <div className="max-w-3xl mx-auto relative bg-white rounded-xl shadow-sm border border-border px-2 py-2 transition-all duration-200">
+              <div className="max-w-[50rem] mx-auto relative bg-white rounded-xl border border-border px-2 py-1.5 transition-all duration-200 shadow-[0_1px_2px_rgba(0,0,0,0.03),0_8px_14px_-12px_rgba(0,0,0,0.24)]">
                   {composer.attachments.length > 0 && (
                     <div className="flex gap-2 overflow-x-auto pb-2 px-1">
                       {composer.attachments.map((a) => {
@@ -5096,11 +5115,11 @@ function AppLoaded(): JSX.Element {
                       void toggleRecording()
                     }}
                     leftControls={
-                      <div className="flex items-center gap-2 flex-1 min-w-0 overflow-hidden">
+                      <div className="flex items-center gap-2 flex-1 min-w-0 overflow-hidden text-muted-foreground">
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-9 w-9 rounded-full shrink-0 text-primary/80 hover:text-primary hover:bg-primary/10 focus-visible:ring-0 focus-visible:ring-offset-0"
+                          className="h-9 w-9 rounded-full shrink-0 text-muted-foreground/80 hover:text-foreground hover:bg-black/5 focus-visible:ring-0 focus-visible:ring-offset-0"
                           onClick={() => void handlePickFiles()}
                         >
                           <Paperclip className="w-4 h-4" />
@@ -5113,7 +5132,7 @@ function AppLoaded(): JSX.Element {
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="h-9 w-9 rounded-full shrink-0 text-primary/80 hover:text-primary hover:bg-primary/10 focus-visible:ring-0 focus-visible:ring-offset-0"
+                                  className="h-9 w-9 rounded-full shrink-0 text-muted-foreground hover:text-foreground hover:bg-black/5 focus-visible:ring-0 focus-visible:ring-offset-0"
                                 >
                                   <Wrench className="w-4 h-4" />
                                 </Button>
@@ -5192,7 +5211,7 @@ function AppLoaded(): JSX.Element {
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="h-9 w-9 rounded-full shrink-0 text-primary/80 hover:text-primary hover:bg-primary/10 focus-visible:ring-0 focus-visible:ring-offset-0"
+                                  className="h-9 w-9 rounded-full shrink-0 text-muted-foreground hover:text-foreground hover:bg-black/5 focus-visible:ring-0 focus-visible:ring-offset-0"
                                 >
                                   <Sparkles className="w-4 h-4" />
                                 </Button>
@@ -5262,7 +5281,7 @@ function AppLoaded(): JSX.Element {
                           <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('model')} onMouseLeave={handleInputPanelMouseLeave}>
                             <Button
                               variant="ghost"
-                              className="h-9 rounded-full gap-2 px-3.5 text-xs font-normal text-foreground/82 hover:text-foreground hover:bg-black/5 shrink min-w-0 max-w-[220px] focus-visible:ring-0 focus-visible:ring-offset-0"
+                              className="h-9 rounded-full gap-2 px-3.5 text-xs font-normal text-muted-foreground hover:text-foreground hover:bg-black/5 shrink min-w-0 max-w-[220px] focus-visible:ring-0 focus-visible:ring-offset-0"
                             >
                               {effectiveProvider ? <MaskedIcon url={getProviderIconUrl(effectiveProvider)} className="w-3.5 h-3.5 shrink-0" /> : null}
                               <span className="truncate">{effectiveModel || 'Anima'}</span>
@@ -5326,9 +5345,9 @@ function AppLoaded(): JSX.Element {
                             <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('thinking')} onMouseLeave={handleInputPanelMouseLeave}>
                             <Button
                               variant="ghost"
-                              className="h-9 rounded-full gap-1.5 px-3 text-xs font-normal text-foreground/82 hover:text-foreground hover:bg-black/5 shrink-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                              className="h-9 rounded-full gap-1.5 px-3 text-xs font-normal text-muted-foreground hover:text-foreground hover:bg-black/5 shrink-0 focus-visible:ring-0 focus-visible:ring-offset-0"
                             >
-                              <Brain className="w-3.5 h-3.5 text-primary/80 shrink-0" />
+                              <Brain className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                               <span className="truncate">
                                 {{
                                   off: t.composer.thinkingOff,
@@ -5374,76 +5393,126 @@ function AppLoaded(): JSX.Element {
                           </Popover>
                         ) : null}
 
-                        <Popover open={popoverPanel === 'permission'} onOpenChange={(open) => handlePopoverOpenChange('permission', open)}>
-                          <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('permission')} onMouseLeave={handleInputPanelMouseLeave}>
-                            <Button
-                              variant="ghost"
-                              className="h-9 rounded-full gap-1.5 px-3 text-xs font-normal text-foreground/82 hover:text-foreground hover:bg-black/5 shrink-0 focus-visible:ring-0 focus-visible:ring-offset-0"
-                              title={t.composer.permission}
-                            >
-                              <Eye className="w-3.5 h-3.5 text-primary/80 shrink-0" />
-                              <span className="truncate">
-                                {permissionMode === 'full_access' ? t.composer.permissionFull : t.composer.permissionDefault}
-                              </span>
-                              <ChevronDown className="w-3.5 h-3.5 opacity-50 shrink-0" />
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent
-                            className="w-44 p-1"
-                            align="start"
-                            side="top"
-                            sideOffset={8}
-                            onMouseEnter={() => handleMouseEnter('permission')}
-                            onMouseLeave={handleMouseLeave}
-                          >
-                            <div className="px-2 py-1">
-                              <h4 className="font-medium text-xs leading-none">{t.composer.permission}</h4>
-                            </div>
-                            {[
-                              { value: 'workspace_whitelist', label: t.composer.permissionDefault },
-                              { value: 'full_access', label: t.composer.permissionFull }
-                            ].map((opt) => (
-                              <button
-                                key={opt.value}
-                                type="button"
-                                className="w-full h-8 px-2 rounded-md text-xs flex items-center justify-between hover:bg-black/5"
-                                onClick={() => {
-                                  setPopoverPanel('')
-                                  handlePermissionModeChange(opt.value as 'workspace_whitelist' | 'full_access')
-                                }}
-                              >
-                                <span>{opt.label}</span>
-                                {permissionMode === opt.value ? <Check className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5" />}
-                              </button>
-                            ))}
-                          </PopoverContent>
-                        </Popover>
-
-                        <TooltipProvider>
-                          <Tooltip delayDuration={0}>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-9 w-9 rounded-full transition-colors text-muted-foreground hover:text-foreground hover:bg-black/5 cursor-default focus-visible:ring-0 focus-visible:ring-offset-0"
-                              >
-                                <CircularProgress value={usageStats.percentage} />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent side="top" className="text-xs">
-                              <div className="flex flex-col gap-1">
-                                <div className="font-medium">
-                                  Context Usage: {usageStats.percentage > 0 ? `${usageStats.percentage.toFixed(1)}%` : '0%'}
-                                </div>
-                                <div className="text-muted-foreground">Used: {formatTokenCount(usageStats.used)}</div>
-                                {usageStats.total > 0 && <div className="text-muted-foreground">Limit: {formatTokenCount(usageStats.total)}</div>}
-                              </div>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
                       </div>
                     }
                   />
+              </div>
+              <div className="max-w-[50rem] mx-auto mt-2 px-1 w-full">
+                <div className="w-full flex items-center justify-between gap-2">
+                  <Popover open={popoverPanel === 'permission'} onOpenChange={(open) => handlePopoverOpenChange('permission', open)}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        className="h-8 rounded-md gap-1.5 px-2.5 text-xs font-normal text-muted-foreground hover:text-foreground hover:bg-black/5 shrink-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                        title={t.composer.permission}
+                      >
+                        <Shield className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">
+                          {permissionMode === 'full_access' ? t.composer.permissionFull : t.composer.permissionDefault}
+                        </span>
+                        <ChevronDown className="w-3.5 h-3.5 opacity-50 shrink-0" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-44 p-1" align="start" side="top" sideOffset={8}>
+                      <div className="px-2 py-1">
+                        <h4 className="font-medium text-xs leading-none">{t.composer.permission}</h4>
+                      </div>
+                      {[
+                        { value: 'workspace_whitelist', label: t.composer.permissionDefault },
+                        { value: 'full_access', label: t.composer.permissionFull }
+                      ].map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          className="w-full h-8 px-2 rounded-md text-xs flex items-center justify-between hover:bg-black/5"
+                          onClick={() => handlePermissionModeChange(opt.value as 'workspace_whitelist' | 'full_access')}
+                        >
+                          <span>{opt.label}</span>
+                          {permissionMode === opt.value ? <Check className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5" />}
+                        </button>
+                      ))}
+                    </PopoverContent>
+                  </Popover>
+
+                  <div className="flex items-center gap-1.5">
+                    <Popover
+                      open={popoverPanel === 'git_branch'}
+                      onOpenChange={(open) => {
+                        setPopoverPanel(open ? 'git_branch' : '')
+                        if (open) void refreshGitBranches()
+                      }}
+                    >
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          className="h-8 rounded-md gap-1.5 px-2.5 text-xs font-normal text-muted-foreground hover:text-foreground hover:bg-black/5 shrink-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                          title={topGitRepoDir ? topGitRepoDir : '无 Git 仓库'}
+                        >
+                          <GitBranch className="w-3.5 h-3.5 shrink-0" />
+                          <span className="max-w-[140px] truncate">{topGitRepoDir ? (topGitBranch || 'HEAD') : '无'}</span>
+                          <ChevronDown className="w-3.5 h-3.5 opacity-50 shrink-0" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-72 p-1.5" align="end" side="top" sideOffset={8}>
+                        {!topGitRepoDir ? (
+                          <div className="px-2 py-2 text-xs text-muted-foreground">当前项目不是 Git 仓库</div>
+                        ) : (
+                          <div className="space-y-1">
+                            <div className="px-2 py-1 text-[11px] font-medium text-muted-foreground uppercase">分支</div>
+                            {gitBranchLoading ? (
+                              <div className="px-2 py-2 text-xs text-muted-foreground">加载中…</div>
+                            ) : (
+                              (gitBranches.length ? gitBranches : [topGitBranch || 'HEAD']).map((b) => {
+                                const branch = String(b || '').trim()
+                                const selected = branch && branch === topGitBranch
+                                return (
+                                  <button
+                                    key={branch || 'HEAD'}
+                                    type="button"
+                                    className="w-full h-8 px-2 rounded-md text-xs flex items-center justify-between hover:bg-black/5"
+                                    onClick={() => {
+                                      void switchGitBranch(branch)
+                                      setPopoverPanel('')
+                                    }}
+                                  >
+                                    <span className="inline-flex items-center gap-1.5 truncate">
+                                      <GitBranch className="w-3.5 h-3.5 shrink-0" />
+                                      <span className="truncate">{branch || 'HEAD'}</span>
+                                    </span>
+                                    {selected ? <Check className="w-3.5 h-3.5" /> : null}
+                                  </button>
+                                )
+                              })
+                            )}
+                          </div>
+                        )}
+                      </PopoverContent>
+                    </Popover>
+
+                    <TooltipProvider>
+                      <Tooltip delayDuration={0}>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 rounded-full transition-colors text-muted-foreground hover:text-foreground hover:bg-black/5 cursor-default focus-visible:ring-0 focus-visible:ring-offset-0"
+                          >
+                            <CircularProgress value={usageStats.percentage} />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="text-xs">
+                          <div className="flex flex-col gap-1">
+                            <div className="font-medium">
+                              Context Usage: {usageStats.percentage > 0 ? `${usageStats.percentage.toFixed(1)}%` : '0%'}
+                            </div>
+                            <div className="text-muted-foreground">Used: {formatTokenCount(usageStats.used)}</div>
+                            {usageStats.total > 0 && <div className="text-muted-foreground">Limit: {formatTokenCount(usageStats.total)}</div>}
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                </div>
               </div>
               </footer>
               </div>
@@ -5564,30 +5633,32 @@ function ChatComposer({
 
   return (
     <div className="w-full">
-      <InputAnimation
-        className="w-full bg-transparent border-0 resize-none shadow-none text-[13px] leading-relaxed"
-        placeholder={placeholder}
-        rows={1}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onPaste={onPasteImage}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault()
-            void onSubmit()
-          }
-        }}
-      />
-      <div className="flex justify-between items-end px-0.5 pt-1.5 pb-0 mt-0.5 gap-2.5">
+      <div className="px-2">
+        <InputAnimation
+          className="w-full bg-transparent border-0 resize-none shadow-none text-[13px] leading-relaxed text-foreground placeholder:text-muted-foreground/70 px-0"
+          placeholder={placeholder}
+          rows={2}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onPaste={onPasteImage}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              void onSubmit()
+            }
+          }}
+        />
+      </div>
+      <div className="flex justify-between items-end px-2 pt-1.5 pb-0 mt-0.5 gap-2.5">
         {leftControls}
         <div className="flex items-center gap-1.5 shrink-0">
           <Button
             variant="ghost"
             size="icon"
-            className={`h-9 w-9 rounded-full transition-all duration-200 focus-visible:ring-0 focus-visible:ring-offset-0 ${
+            className={`h-8 w-8 rounded-full transition-all duration-200 focus-visible:ring-0 focus-visible:ring-offset-0 ${
               isRecording
                 ? 'text-blue-500 border-0 bg-blue-500/8 hover:bg-blue-500/12'
-                : `text-primary hover:text-primary hover:bg-primary/15 ${isVoiceModelAvailable ? '' : 'opacity-50'}`
+                : `text-muted-foreground hover:text-foreground hover:bg-black/5 ${isVoiceModelAvailable ? '' : 'opacity-50'}`
             }`}
             onClick={onToggleRecording}
             title={isRecording ? 'Stop Recording' : 'Voice Input'}
@@ -5620,13 +5691,15 @@ function ChatComposer({
           <Button
             variant="ghost"
             size="icon"
-            className={`h-9 w-9 rounded-full transition-all duration-200 text-primary hover:text-primary hover:bg-primary/15 focus-visible:ring-0 focus-visible:ring-offset-0 ${
-              String(value || '').trim() || isLoading ? '' : 'opacity-50'
+            className={`h-8 w-8 rounded-full transition-all duration-200 focus-visible:ring-0 focus-visible:ring-offset-0 ${
+              String(value || '').trim() || isLoading
+                ? 'bg-black text-white hover:bg-black/90'
+                : 'bg-black/55 text-white/80'
             }`}
             onClick={() => void onSubmit()}
             disabled={!String(value || '').trim() && !isLoading}
           >
-            {isLoading ? <StopCircle className="w-4 h-4 animate-pulse" /> : <Send className="w-4 h-4" />}
+            {isLoading ? <Square className="w-4 h-4 fill-current stroke-current text-white" /> : <ArrowUp className="w-4 h-4" />}
           </Button>
         </div>
       </div>

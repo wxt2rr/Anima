@@ -25,7 +25,7 @@ export function AppShellLeftPane({
   const paneWidth = collapsed ? 0 : (typeof width === 'number' ? width : 'var(--app-left-pane-width)')
   const showBleed = !collapsed && bleedPx > 0
   return (
-    <div className={cn('relative h-full shrink-0 flex', className)} style={{ width: paneWidth }}>
+    <div className={cn('relative h-full shrink-0 flex overflow-hidden transition-[width] duration-300 ease-in-out', className)} style={{ width: paneWidth }}>
       {showBleed ? (
         <div
           aria-hidden="true"

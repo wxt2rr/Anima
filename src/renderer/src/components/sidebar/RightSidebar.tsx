@@ -123,7 +123,7 @@ export const RightSidebar: React.FC<{ width?: number; onResizeStart?: () => void
             />
           )}
 
-          <div className="flex-1 min-w-0 rounded-xl border border-border overflow-hidden flex flex-col">
+          <div className="flex-1 min-w-0 rounded-r-xl border border-border overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-3 py-2 shrink-0 select-none bg-white border-b border-border">
               <div className="flex items-center p-1 bg-white rounded-xl no-drag">
                 {tabs.map(tab => {
