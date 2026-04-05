@@ -2871,6 +2871,19 @@ function AppLoaded(): JSX.Element {
           
           let msgId = traceMessageIds[trace.id]
           if (!msgId) {
+            const existingByTraceId = messages.find((m: any) => {
+              if (m?.role !== 'tool') return false
+              if (String(m?.turnId || '') !== String(turnId || '')) return false
+              const list = Array.isArray(m?.meta?.toolTraces) ? m.meta.toolTraces : []
+              return list.some((x: any) => String(x?.id || '') === String(trace.id || ''))
+            })
+            const existingId = String(existingByTraceId?.id || '').trim()
+            if (existingId) {
+              msgId = existingId
+              traceMessageIds[trace.id] = existingId
+            }
+          }
+          if (!msgId) {
             const incomingSig = toolTraceSignature(trace)
             if (incomingSig) {
               const existingRunningMsg = [...messages]
@@ -3053,9 +3066,20 @@ function AppLoaded(): JSX.Element {
                   }
                   if (Array.isArray(e.traces)) {
                     traces = e.traces
+                    const existingTraceIds = new Set(
+                      (useStore.getState().messages || [])
+                        .filter((m: any) => m?.role === 'tool' && String(m?.turnId || '') === String(turnId || ''))
+                        .flatMap((m: any) =>
+                          (Array.isArray(m?.meta?.toolTraces) ? m.meta.toolTraces : []).map((x: any) => String(x?.id || '').trim())
+                        )
+                        .filter(Boolean)
+                    )
                     for (const trace of e.traces) {
                       if (!trace || trace.status === 'running') continue
+                      const traceId = String((trace as any)?.id || '').trim()
+                      if (traceId && existingTraceIds.has(traceId)) continue
                       upsertTrace(trace)
+                      if (traceId) existingTraceIds.add(traceId)
                     }
                     assistantMeta = {
                       ...assistantMeta,
@@ -3260,9 +3284,20 @@ function AppLoaded(): JSX.Element {
                   }
                   if (Array.isArray(evt.traces)) {
                     traces = evt.traces
+                    const existingTraceIds = new Set(
+                      (useStore.getState().messages || [])
+                        .filter((m: any) => m?.role === 'tool' && String(m?.turnId || '') === String(turnId || ''))
+                        .flatMap((m: any) =>
+                          (Array.isArray(m?.meta?.toolTraces) ? m.meta.toolTraces : []).map((x: any) => String(x?.id || '').trim())
+                        )
+                        .filter(Boolean)
+                    )
                     for (const trace of evt.traces) {
                       if (!trace || trace.status === 'running') continue
+                      const traceId = String((trace as any)?.id || '').trim()
+                      if (traceId && existingTraceIds.has(traceId)) continue
                       upsertTrace(trace)
+                      if (traceId) existingTraceIds.add(traceId)
                     }
                     assistantMeta = {
                       ...assistantMeta,
@@ -4346,9 +4381,17 @@ function AppLoaded(): JSX.Element {
                                           : matchedApproval?.status === 'rejected'
                                             ? t.dangerousApprovalStatusRejected
                                             : ''
+                                    const rejectedByUserHint =
+                                      String((tr as any)?.resultPreview?.text || '').toLowerCase().includes('user rejected dangerous command approval') ||
+                                      String((tr as any)?.error?.message || '').toLowerCase().includes('user rejected dangerous command approval')
+                                    const isRejectedByUser = tr.name === 'bash' && (matchedApproval?.status === 'rejected' || rejectedByUserHint)
+                                    const notExecutedText =
+                                      traceLang === 'zh' ? '未执行' : traceLang === 'ja' ? '未実行' : 'Not executed'
                                     const isEditTrace = tr.name === 'apply_patch'
                                     const runningStatusText =
-                                      tr.name === 'load_skill' && !isRunning && !isFailed
+                                      isRejectedByUser
+                                        ? notExecutedText
+                                        : tr.name === 'load_skill' && !isRunning && !isFailed
                                         ? traceLang === 'zh'
                                           ? '已加载技能'
                                           : traceLang === 'ja'
@@ -4368,6 +4411,9 @@ function AppLoaded(): JSX.Element {
                                       if (text.length <= max) return text
                                       return `${text.slice(0, max - 3)}...`
                                     })()
+                                    const shouldHideRejectedGhostRow =
+                                      isRejectedByUser &&
+                                      !String(displayEntity || '').trim()
                                     const countDiffLines = (oldContent: unknown, newContent: unknown) => {
                                       try {
                                         const patch = createTwoFilesPatch('a', 'b', String(oldContent ?? ''), String(newContent ?? ''))
@@ -4479,6 +4525,7 @@ function AppLoaded(): JSX.Element {
                                       (Array.isArray((tr as any).artifacts) && (tr as any).artifacts.length > 0) ||
                                       (Array.isArray(tr.diffs) && tr.diffs.length > 0) ||
                                       (tr.status === 'failed' && Boolean(tr.error?.message))
+                                    if (shouldHideRejectedGhostRow) return null
 
                                     return (
                                       <div key={tr.id} className="group rounded-lg hover:bg-muted/40 transition-colors py-0.5">
@@ -4490,7 +4537,9 @@ function AppLoaded(): JSX.Element {
                                           }}
                                         >
                                           <span
-                                            className={`shrink-0 text-[12px] font-medium ${isRunning ? 'anima-flow-text' : 'text-muted-foreground group-hover:text-foreground'}`}
+                                            className={`shrink-0 text-[12px] font-medium ${
+                                              isRunning && !isRejectedByUser ? 'anima-flow-text' : 'text-muted-foreground group-hover:text-foreground'
+                                            }`}
                                           >
                                             {runningStatusText}
                                           </span>
@@ -4543,7 +4592,7 @@ function AppLoaded(): JSX.Element {
                                               </span>
                                             )}
                                             <span className="text-[11px] text-muted-foreground/40 whitespace-nowrap tabular-nums">
-                                              {typeof tr.durationMs === 'number' ? `${tr.durationMs}ms` : ''}
+                                              {isRejectedByUser ? '' : typeof tr.durationMs === 'number' ? `${tr.durationMs}ms` : ''}
                                             </span>
                                             {hasDetail ? (
                                               <span
@@ -4926,6 +4975,7 @@ function AppLoaded(): JSX.Element {
                               const st = String((msg.meta as any)?.stage || '').trim()
                               if (showOnlyFinalAssistantArtifacts) return null
                               if (!st) return null
+                              if (st === 'verify') return null
                               if (st === 'model_call' || st === 'tool_call') return null
                               if (st.startsWith('tool_start:') || st.startsWith('tool_done:') || st.startsWith('tool_end:')) return null
                               return (

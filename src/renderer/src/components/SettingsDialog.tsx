@@ -281,11 +281,11 @@ function CustomProviderDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[500px] max-h-[85vh] overflow-hidden flex flex-col">
+        <DialogHeader className="shrink-0">
           <DialogTitle>{t.title}</DialogTitle>
         </DialogHeader>
-        <div className="grid gap-4 py-4">
+        <div className="grid gap-4 py-4 overflow-y-auto pr-1 custom-scrollbar">
           <div className="grid gap-2">
             <Label>{t.providerType}</Label>
             <Select value={providerMode} onValueChange={(v) => setProviderMode(v as 'api' | 'acp')}>
@@ -410,7 +410,7 @@ function CustomProviderDialog({
             </>
           )}
         </div>
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           <Button variant="outline" onClick={() => onOpenChange(false)}>{t.cancel}</Button>
           <Button onClick={handleAdd}>{t.addProvider}</Button>
         </DialogFooter>
@@ -3611,43 +3611,6 @@ function ProvidersSettings() {
     }
   }
 
-  const addLocalProvider = (kind: 'ollama' | 'lmstudio') => {
-    const providerId = kind === 'ollama' ? 'ollama_local' : 'lmstudio_local'
-    const existing = providers.find((p) => String(p.id || '').trim().toLowerCase() === providerId)
-    if (existing) {
-      setSelectedProviderId(existing.id)
-      return
-    }
-    const presetModels =
-      kind === 'ollama'
-        ? [
-            { id: 'qwen3:8b', isEnabled: true, config: { id: 'qwen3:8b' } },
-            { id: 'llama3.1:8b', isEnabled: true, config: { id: 'llama3.1:8b' } },
-            { id: 'gemma3:12b', isEnabled: true, config: { id: 'gemma3:12b' } }
-          ]
-        : []
-    addProvider({
-      id: providerId,
-      name: kind === 'ollama' ? 'Ollama (Local)' : 'LM Studio (Local)',
-      type: 'openai_compatible',
-      isEnabled: false,
-      description: kind === 'ollama' ? 'Local inference via Ollama OpenAI-compatible endpoint.' : 'Local inference via LM Studio local server.',
-      config: {
-        apiKey: '',
-        baseUrl: kind === 'ollama' ? 'http://127.0.0.1:11434/v1' : 'http://127.0.0.1:1234/v1',
-        apiFormat: 'chat_completions',
-        modelsFetched: presetModels.length > 0,
-        models: presetModels,
-        selectedModel: String(presetModels[0]?.id || '')
-      }
-    } as any)
-    window.setTimeout(() => {
-      const next = useStore.getState().providers || []
-      const added = next.find((p) => String(p.id || '').trim().toLowerCase() === providerId)
-      if (added?.id) setSelectedProviderId(added.id)
-    }, 60)
-  }
-
   const refreshQwenProfiles = useCallback(async () => {
     if (!isQwen) return
     const res = await fetchBackendJson<{ ok: boolean; profiles?: Array<{ profileId: string; state: string; expiresAt?: number | null }> }>(
@@ -3960,20 +3923,6 @@ function ProvidersSettings() {
         {/* Top Actions Bar */}
         <div className="px-6 pt-3 pb-3 border-b border-border/60">
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button
-              variant="outline"
-              className="h-9 rounded-full px-4 bg-card/70 shrink-0 whitespace-nowrap"
-              onClick={() => addLocalProvider('ollama')}
-            >
-              {t.addLocalOllama}
-            </Button>
-            <Button
-              variant="outline"
-              className="h-9 rounded-full px-4 bg-card/70 shrink-0 whitespace-nowrap"
-              onClick={() => addLocalProvider('lmstudio')}
-            >
-              {t.addLocalLmStudio}
-            </Button>
             <Button
               className="h-9 rounded-full px-4 shrink-0 whitespace-nowrap"
               onClick={() => {
