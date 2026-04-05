@@ -759,6 +759,103 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         self.assertTrue(isinstance(run, dict))
         self.assertEqual(str((run or {}).get("status") or ""), "succeeded")
 
+    def test_run_resume_stream_reject_still_emits_aggregated_done(self) -> None:
+        from anima_backend_core.api.runs import handle_post_run_resume
+        from anima_backend_shared.database import create_run, get_run, set_app_settings, update_run
+
+        set_app_settings({"settings": {}})
+        run_id = f"resume_reject_run_{uuid.uuid4().hex}"
+        create_run(run_id, "t1", {"messages": [{"role": "user", "content": "hi"}], "composer": {"workspaceDir": "/tmp"}})
+        update_run(
+            run_id,
+            "paused",
+            {
+                "pauseContext": {
+                    "approvalId": "ap1",
+                    "approval": {"code": "dangerous_command_requires_approval", "command": "ls -la", "matchedPattern": "ls"},
+                    "pendingToolCall": {"id": "tc1", "name": "bash", "args": {"command": "ls -la"}},
+                    "messages": [
+                        {"role": "user", "content": "hi"},
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "bash", "arguments": '{"command":"ls -la"}'}}],
+                        },
+                    ],
+                    "traces": [],
+                    "artifacts": [],
+                    "composer": {"workspaceDir": "/tmp"},
+                    "temperature": 0.7,
+                    "maxTokens": 128,
+                }
+            },
+        )
+
+        class _WFile:
+            def __init__(self) -> None:
+                self.buf = b""
+
+            def write(self, b: bytes) -> None:
+                self.buf += b
+
+            def flush(self) -> None:
+                return
+
+        class _Handler:
+            def __init__(self) -> None:
+                self.headers = {}
+                self.wfile = _WFile()
+                self.query = {"stream": "1"}
+
+            def send_response(self, code) -> None:
+                self._code = int(code)
+
+            def send_header(self, _k, _v) -> None:
+                return
+
+            def end_headers(self) -> None:
+                return
+
+            def rfile_read(self) -> bytes:
+                return b'{"approvalId":"ap1","decision":"reject"}'
+
+        h = _Handler()
+        h.rfile = type("rf", (), {"read": lambda _self, n=-1: h.rfile_read()})()
+        h.headers = {"Content-Length": str(len(h.rfile_read()))}
+
+        out_payload = {
+            "paused": False,
+            "final_content": "done",
+            "usage": None,
+            "traces": [],
+            "artifacts": [],
+            "reasoning": "",
+            "messages": [{"role": "assistant", "content": "done"}],
+            "rate_limit": None,
+            "stop_reason": "completed",
+            "verification": {"status": "passed", "evidence": [{"type": "tool_receipt", "tool": "bash", "summary": "ok"}]},
+        }
+        worker_ctx = {
+            "reportsText": "",
+            "traces": [],
+            "artifacts": [],
+            "verification": {"status": "passed", "evidence": [{"type": "worker_report", "summary": "workers=0 failed=0"}]},
+            "orchestration": {"workers": 0, "failedWorkers": 0, "totalRetries": 0, "failureReasons": {}},
+        }
+
+        with patch("anima_backend_core.api.runs.create_provider", return_value=MockProvider()):
+            with patch("anima_backend_core.api.runs._run_coordinator_workers", return_value=worker_ctx):
+                with patch("anima_backend_core.api.runs._run_tool_loop", return_value=out_payload):
+                    handle_post_run_resume(h, run_id)
+
+        out = h.wfile.buf.decode("utf-8")
+        self.assertIn('"type": "done"', out)
+        self.assertIn('"orchestration"', out)
+        self.assertIn('"status": "succeeded"', out)
+        run = get_run(run_id)
+        self.assertTrue(isinstance(run, dict))
+        self.assertEqual(str((run or {}).get("status") or ""), "succeeded")
+
     def test_runs_stream_emits_artifacts_in_trace_and_done(self) -> None:
         from anima_backend_core.api.runs_stream import handle_post_runs_stream
 
@@ -1057,15 +1154,19 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         h = self._make_handler()
         body = {
             "messages": [{"role": "user", "content": "coordinator task"}],
-            "composer": {"workspaceDir": "/tmp", "agentRole": "coordinator", "workerTasks": ["sub task 1"]},
+            "composer": {"workspaceDir": "/tmp"},
         }
         with patch("anima_backend_core.api.runs_stream.load_settings", return_value={"settings": {}}):
             with patch("anima_backend_core.api.runs_stream.create_provider", return_value=_FakeProvider()):
                 with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
                     with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
                         with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
-                            with patch("anima_backend_core.api.runs_stream._run_tool_loop", side_effect=[worker_out, main_out]):
-                                handle_post_runs_stream(h, body)
+                            with patch(
+                                "anima_backend_core.api.runs_stream._plan_worker_execution",
+                                return_value={"tasks": [{"index": 1, "prompt": "sub task 1", "modelOverride": "", "timeoutMs": 0}], "parallelism": 1, "retryMax": 1, "timeoutMs": 0},
+                            ):
+                                with patch("anima_backend_core.api.runs_stream._run_tool_loop", side_effect=[worker_out, main_out]):
+                                    handle_post_runs_stream(h, body)
 
         raw = h.wfile.buf.decode("utf-8")
         events = []
@@ -1139,9 +1240,6 @@ class BackendCoreIntegrationTests(unittest.TestCase):
             "messages": [{"role": "user", "content": "coordinator task"}],
             "composer": {
                 "workspaceDir": "/tmp",
-                "agentRole": "coordinator",
-                "workerTasks": ["sub task retry"],
-                "workerRetryMax": 1,
             },
         }
         with patch("anima_backend_core.api.runs_stream.load_settings", return_value={"settings": {}}):
@@ -1149,8 +1247,12 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                 with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
                     with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
                         with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
-                            with patch("anima_backend_core.api.runs_stream._run_tool_loop", side_effect=[worker_fail, worker_pass, main_out]):
-                                handle_post_runs_stream(h, body)
+                            with patch(
+                                "anima_backend_core.api.runs_stream._plan_worker_execution",
+                                return_value={"tasks": [{"index": 1, "prompt": "sub task retry", "modelOverride": "", "timeoutMs": 0}], "parallelism": 1, "retryMax": 1, "timeoutMs": 0},
+                            ):
+                                with patch("anima_backend_core.api.runs_stream._run_tool_loop", side_effect=[worker_fail, worker_pass, main_out]):
+                                    handle_post_runs_stream(h, body)
 
         raw = h.wfile.buf.decode("utf-8")
         events = []
@@ -1212,10 +1314,6 @@ class BackendCoreIntegrationTests(unittest.TestCase):
             "messages": [{"role": "user", "content": "coordinator timeout task"}],
             "composer": {
                 "workspaceDir": "/tmp",
-                "agentRole": "coordinator",
-                "workerTasks": ["sub timeout"],
-                "workerTimeoutMs": 5,
-                "workerRetryMax": 0,
             },
         }
         with patch("anima_backend_core.api.runs_stream.load_settings", return_value={"settings": {}}):
@@ -1223,8 +1321,12 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                 with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
                     with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
                         with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
-                            with patch("anima_backend_core.api.runs_stream._run_tool_loop", side_effect=_fake_run_tool_loop):
-                                handle_post_runs_stream(h, body)
+                            with patch(
+                                "anima_backend_core.api.runs_stream._plan_worker_execution",
+                                return_value={"tasks": [{"index": 1, "prompt": "sub timeout", "modelOverride": "", "timeoutMs": 5}], "parallelism": 1, "retryMax": 0, "timeoutMs": 5},
+                            ):
+                                with patch("anima_backend_core.api.runs_stream._run_tool_loop", side_effect=_fake_run_tool_loop):
+                                    handle_post_runs_stream(h, body)
 
         raw = h.wfile.buf.decode("utf-8")
         events = []
@@ -1288,8 +1390,6 @@ class BackendCoreIntegrationTests(unittest.TestCase):
             "messages": [{"role": "user", "content": "coordinator model override"}],
             "composer": {
                 "workspaceDir": "/tmp",
-                "agentRole": "coordinator",
-                "workerTasks": [{"prompt": "sub model task", "modelOverride": "worker-model-x"}],
             },
         }
         with patch("anima_backend_core.api.runs_stream.load_settings", return_value={"settings": {}}):
@@ -1297,8 +1397,12 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                 with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
                     with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
                         with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
-                            with patch("anima_backend_core.api.runs_stream._run_tool_loop", side_effect=[worker_out, main_out]):
-                                handle_post_runs_stream(h, body)
+                            with patch(
+                                "anima_backend_core.api.runs_stream._plan_worker_execution",
+                                return_value={"tasks": [{"index": 1, "prompt": "sub model task", "modelOverride": "worker-model-x", "timeoutMs": 0}], "parallelism": 1, "retryMax": 1, "timeoutMs": 0},
+                            ):
+                                with patch("anima_backend_core.api.runs_stream._run_tool_loop", side_effect=[worker_out, main_out]):
+                                    handle_post_runs_stream(h, body)
 
         self.assertTrue(any(x == "worker-model-x" for x in seen_model_overrides))
 

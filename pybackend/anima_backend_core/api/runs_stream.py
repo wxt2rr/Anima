@@ -12,7 +12,7 @@ from anima_backend_shared.chat import ClientDisconnected, _ensure_tool_call_ids,
 from anima_backend_shared.constants import MAX_TOOL_STEPS
 from anima_backend_shared.database import create_run, get_chat, get_chat_meta, merge_chat_meta, update_run
 from anima_backend_shared.settings import load_settings
-from anima_backend_shared.util import extract_reasoning_text, now_ms, preview_json, preview_tool_result
+from anima_backend_shared.util import as_text, extract_reasoning_text, now_ms, preview_json, preview_tool_result
 
 from ..llm.adapter import call_chat_completion, call_chat_completion_stream, create_provider, get_last_rate_limit
 from ..tools.executor import execute_tool, make_tool_message, select_tools
@@ -168,10 +168,7 @@ def _isolate_worker_messages(messages: List[Dict[str, Any]], composer: Dict[str,
 
 
 def _collect_worker_tasks(composer: Dict[str, Any]) -> List[Any]:
-    role = str((composer or {}).get("agentRole") or "").strip().lower()
-    if role != "coordinator":
-        return []
-    raw = composer.get("workerTasks")
+    raw = composer.get("__workerTasksInternal")
     if not isinstance(raw, list):
         return []
     out: List[Any] = []
@@ -183,6 +180,165 @@ def _collect_worker_tasks(composer: Dict[str, Any]) -> List[Any]:
         if s:
             out.append(s)
     return out
+
+
+def _extract_json_object(text: str) -> Dict[str, Any]:
+    s = str(text or "").strip()
+    if not s:
+        return {}
+    try:
+        obj = json.loads(s)
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        pass
+    left = s.find("{")
+    right = s.rfind("}")
+    if left < 0 or right <= left:
+        return {}
+    try:
+        obj = json.loads(s[left : right + 1])
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+
+def _plan_worker_execution(
+    *,
+    provider: Any,
+    messages: List[Dict[str, Any]],
+    composer: Dict[str, Any],
+    temperature: float,
+    max_tokens: int,
+    extra_body: Optional[Dict[str, Any]],
+    emit_event: Optional[Callable[[Any], None]] = None,
+) -> Dict[str, Any]:
+    if str((composer or {}).get("agentRole") or "").strip().lower() == "worker":
+        return {"tasks": [], "parallelism": 1, "retryMax": 0, "timeoutMs": 0}
+
+    last_user = ""
+    for m in reversed(messages or []):
+        if not isinstance(m, dict):
+            continue
+        if str(m.get("role") or "").strip() != "user":
+            continue
+        text = str(m.get("content") or "").strip()
+        if text:
+            last_user = text
+            break
+    if not last_user:
+        return {"tasks": [], "parallelism": 1, "retryMax": 0, "timeoutMs": 0}
+
+    force_orchestration = bool((composer or {}).get("orchestrationForce"))
+    if not force_orchestration:
+        low = last_user.lower()
+        likely_complex = (
+            len(last_user) >= 80
+            or "\n" in last_user
+            or " and " in low
+            or " step " in low
+            or " tasks " in low
+            or "并且" in last_user
+            or "同时" in last_user
+            or "分别" in last_user
+            or "分成" in last_user
+            or "步骤" in last_user
+        )
+        if not likely_complex:
+            return {"tasks": [], "parallelism": 1, "retryMax": 0, "timeoutMs": 0}
+
+    if callable(emit_event):
+        try:
+            emit_event({"type": "stage", "stage": "planner_start", "step": 0})
+        except Exception:
+            pass
+
+    planner_messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是任务编排器。目标是判断是否需要并行子任务执行。"
+                "只输出一个 JSON 对象，不要输出其他文字。"
+                'JSON schema: {"shouldParallelize": boolean, "tasks": [{"prompt": string, "modelOverride": string, "timeoutMs": number}], '
+                '"parallelism": number, "retryMax": number, "timeoutMs": number}.'
+                "只有在任务可并行拆分时才 shouldParallelize=true，且 tasks 至少 2 项。"
+                "如果不需要并行，返回 shouldParallelize=false 且 tasks=[]。"
+            ),
+        },
+        {"role": "user", "content": f"用户任务:\n{last_user}"},
+    ]
+
+    try:
+        planner_res = call_chat_completion(
+            provider,
+            planner_messages,
+            temperature=min(float(temperature), 0.2),
+            max_tokens=max(256, min(int(max_tokens or 0) or 600, 1200)),
+            tools=None,
+            tool_choice=None,
+            model_override=str(composer.get("modelOverride") or "").strip() or None,
+            extra_body=extra_body,
+        )
+        planner_choice = ((planner_res.get("choices") or [{}])[0]) if isinstance(planner_res, dict) else {}
+        planner_msg = (planner_choice.get("message") or {}) if isinstance(planner_choice, dict) else {}
+        planner_text = str(planner_msg.get("content") or "")
+        planner_obj = _extract_json_object(planner_text)
+    except Exception as e:
+        planner_obj = {}
+        if callable(emit_event):
+            try:
+                tr = _make_recovery_trace(
+                    reason="runtime_error",
+                    action="planner_fallback",
+                    detail=f"planner failed: {str(e)}",
+                    step=0,
+                    index=0,
+                )
+                emit_event({"type": "tool_trace", "trace": tr})
+            except Exception:
+                pass
+
+    should_parallelize = bool(planner_obj.get("shouldParallelize"))
+    raw_tasks = planner_obj.get("tasks") if isinstance(planner_obj.get("tasks"), list) else []
+    if not should_parallelize or len(raw_tasks) < 2:
+        if callable(emit_event):
+            try:
+                emit_event({"type": "stage", "stage": "planner_done:skip", "step": 0})
+            except Exception:
+                pass
+        return {"tasks": [], "parallelism": 1, "retryMax": 0, "timeoutMs": 0}
+
+    timeout_ms = _clamp_int(planner_obj.get("timeoutMs"), 0, 0, 300_000)
+    tasks = [
+        _normalize_worker_task(
+            item,
+            index=i,
+            default_model_override="",
+            default_timeout_ms=timeout_ms,
+        )
+        for i, item in enumerate(raw_tasks, start=1)
+    ]
+    tasks = [t for t in tasks if str(t.get("prompt") or "").strip()]
+    if len(tasks) < 2:
+        if callable(emit_event):
+            try:
+                emit_event({"type": "stage", "stage": "planner_done:skip", "step": 0})
+            except Exception:
+                pass
+        return {"tasks": [], "parallelism": 1, "retryMax": 0, "timeoutMs": 0}
+
+    parallelism = _clamp_int(planner_obj.get("parallelism"), min(4, len(tasks)), 1, 8)
+    retry_max = _clamp_int(planner_obj.get("retryMax"), 1, 0, 3)
+    if callable(emit_event):
+        try:
+            emit_event({"type": "stage", "stage": f"planner_done:{len(tasks)}", "step": 0})
+        except Exception:
+            pass
+    return {
+        "tasks": tasks,
+        "parallelism": parallelism,
+        "retryMax": retry_max,
+        "timeoutMs": timeout_ms,
+    }
 
 
 def _clamp_int(raw: Any, default_v: int, min_v: int, max_v: int) -> int:
@@ -225,9 +381,11 @@ def _run_coordinator_workers(
     max_tokens: int,
     extra_body: Optional[Dict[str, Any]],
     emit_event: Optional[Callable[[Any], None]] = None,
+    plan: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    raw_tasks = _collect_worker_tasks(composer)
-    if not raw_tasks:
+    plan_obj = plan if isinstance(plan, dict) else {}
+    normalized_plan_tasks = plan_obj.get("tasks") if isinstance(plan_obj.get("tasks"), list) else []
+    if not normalized_plan_tasks:
         return {
             "reportsText": "",
             "traces": [],
@@ -238,23 +396,10 @@ def _run_coordinator_workers(
 
     from anima_backend_shared.chat import apply_attachments_inline
 
-    default_model_override = str(composer.get("workerModelOverride") or "").strip()
-    default_timeout_ms = _clamp_int(composer.get("workerTimeoutMs"), 0, 0, 300_000)
-    parallelism = _clamp_int(composer.get("workerParallelism"), 1, 1, 8)
-    try:
-        retry_max = int(composer.get("workerRetryMax") or 1)
-    except Exception:
-        retry_max = 1
-    retry_max = max(0, min(retry_max, 3))
-    tasks = [
-        _normalize_worker_task(
-            item,
-            index=i,
-            default_model_override=default_model_override,
-            default_timeout_ms=default_timeout_ms,
-        )
-        for i, item in enumerate(raw_tasks, start=1)
-    ]
+    default_timeout_ms = _clamp_int(plan_obj.get("timeoutMs"), 0, 0, 300_000)
+    parallelism = _clamp_int(plan_obj.get("parallelism"), 1, 1, 8)
+    retry_max = _clamp_int(plan_obj.get("retryMax"), 1, 0, 3)
+    tasks = [t for t in normalized_plan_tasks if isinstance(t, dict)]
     tasks = [t for t in tasks if str(t.get("prompt") or "").strip()]
     if not tasks:
         return {
@@ -545,7 +690,16 @@ def _run_tool_loop(
                         usage = evt.get("usage")
                     choice = ((evt.get("choices") or [{}])[0]) if isinstance(evt, dict) else {}
                     delta = (choice.get("delta") or {}) if isinstance(choice, dict) else {}
-                    part = delta.get("content")
+                    message = (choice.get("message") or {}) if isinstance(choice, dict) else {}
+                    top_message = evt.get("message") if isinstance(evt, dict) else {}
+                    if not isinstance(delta, dict):
+                        delta = {}
+                    if not isinstance(message, dict):
+                        message = {}
+                    if not isinstance(top_message, dict):
+                        top_message = {}
+
+                    part = as_text(delta.get("content")) or as_text(message.get("content")) or as_text(top_message.get("content"))
                     if isinstance(part, str) and part:
                         content_parts.append(part)
                         try:
@@ -553,8 +707,16 @@ def _run_tool_loop(
                             emitted_any_delta = True
                         except Exception:
                             pass
-                    rc_part = delta.get("reasoning_content")
-                    if isinstance(rc_part, str) and rc_part:
+                    for rk in ("reasoning_content", "thinking", "reasoning"):
+                        rc_part = (
+                            as_text(delta.get(rk))
+                            or as_text(message.get(rk))
+                            or as_text(top_message.get(rk))
+                            or as_text(choice.get(rk) if isinstance(choice, dict) else None)
+                            or as_text(evt.get(rk) if isinstance(evt, dict) else None)
+                        )
+                        if not rc_part:
+                            continue
                         reasoning_content_parts.append(rc_part)
                         emitted_reasoning_deltas = True
                         try:
@@ -562,6 +724,10 @@ def _run_tool_loop(
                         except Exception:
                             pass
                     tc_list = delta.get("tool_calls")
+                    if not isinstance(tc_list, list):
+                        tc_list = message.get("tool_calls") if isinstance(message.get("tool_calls"), list) else None
+                    if not isinstance(tc_list, list):
+                        tc_list = top_message.get("tool_calls") if isinstance(top_message.get("tool_calls"), list) else None
                     if isinstance(tc_list, list):
                         for tc in tc_list:
                             if not isinstance(tc, dict):
@@ -869,6 +1035,15 @@ def handle_post_runs_non_stream_via_stream_executor(body: Dict[str, Any]) -> Tup
         messages, composer, compression_evt = _apply_persistent_compression(
             chat_id=thread_id, messages=messages, settings_obj=settings_obj, provider=provider, composer=composer, extra_body=extra_body
         )
+    orchestration_plan = _plan_worker_execution(
+        provider=provider,
+        messages=messages,
+        composer=composer,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        extra_body=extra_body,
+        emit_event=None,
+    )
     worker_ctx = _run_coordinator_workers(
         provider=provider,
         settings_obj=settings_obj,
@@ -877,6 +1052,7 @@ def handle_post_runs_non_stream_via_stream_executor(body: Dict[str, Any]) -> Tup
         max_tokens=max_tokens,
         extra_body=extra_body,
         emit_event=None,
+        plan=orchestration_plan,
     )
     worker_reports_text = str(worker_ctx.get("reportsText") or "").strip()
     if worker_reports_text:
@@ -1096,6 +1272,15 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
             extra_body=extra_body,
             emit_event=emit,
         )
+    orchestration_plan = _plan_worker_execution(
+        provider=provider,
+        messages=messages,
+        composer=composer,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        extra_body=extra_body,
+        emit_event=emit,
+    )
     worker_ctx = _run_coordinator_workers(
         provider=provider,
         settings_obj=settings_obj,
@@ -1104,6 +1289,7 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
         max_tokens=max_tokens,
         extra_body=extra_body,
         emit_event=emit,
+        plan=orchestration_plan,
     )
     worker_reports_text = str(worker_ctx.get("reportsText") or "").strip()
     if worker_reports_text:

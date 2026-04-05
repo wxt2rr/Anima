@@ -1,16 +1,58 @@
 import { ipcMain } from 'electron';
 import simpleGit from 'simple-git';
+import { access } from 'fs/promises';
+import { constants as fsConstants } from 'fs';
+import { join, resolve } from 'path';
+import { execFile } from 'child_process';
 
 function toIpcSafe<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function runGit(cwd: string, args: string[]): Promise<string> {
+  return new Promise((resolvePromise, reject) => {
+    execFile('git', args, { cwd }, (error, stdout, stderr) => {
+      if (error) {
+        const message = String(stderr || error.message || '').trim() || String(error.message || 'git command failed')
+        reject(new Error(message))
+        return
+      }
+      resolvePromise(String(stdout || ''))
+    })
+  })
+}
+
+function parseShortStatus(output: string): { files: Array<{ path: string; index: string; working_dir: string }> } {
+  const files = String(output || '')
+    .split('\n')
+    .map((line) => line.replace(/\r$/, ''))
+    .filter(Boolean)
+    .map((line) => {
+      const index = line[0] || ' '
+      const workingDir = line[1] || ' '
+      const path = line.slice(3).trim()
+      return { path, index, working_dir: workingDir }
+    })
+    .filter((item) => Boolean(item.path))
+  return { files }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path, fsConstants.F_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function registerGitService() {
   ipcMain.handle('git:checkIsRepo', async (_, cwd: string) => {
     try {
-      const git = simpleGit(cwd);
-      const isRepo = await git.checkIsRepo();
-      return { ok: true, isRepo };
+      const dir = resolve(String(cwd || '').trim() || '.')
+      const marker = join(dir, '.git')
+      const isRepo = await pathExists(marker)
+      return { ok: true, isRepo, root: isRepo ? dir : undefined };
     } catch (error: any) {
       return { ok: false, error: error.message };
     }
@@ -81,9 +123,8 @@ export function registerGitService() {
 
   ipcMain.handle('git:status', async (_, cwd: string) => {
     try {
-      const git = simpleGit(cwd);
-      const status = await git.status();
-      return { ok: true, status: toIpcSafe(status) };
+      const out = await runGit(cwd, ['status', '--short'])
+      return { ok: true, status: parseShortStatus(out) };
     } catch (error: any) {
       return { ok: false, error: error.message };
     }
@@ -143,6 +184,10 @@ export function registerGitService() {
       const log = await git.log({ maxCount: 20 });
       return { ok: true, logs: log.all };
     } catch (error: any) {
+      const message = String(error?.message || '')
+      if (message.includes('does not have any commits yet')) {
+        return { ok: true, logs: [] }
+      }
       return { ok: false, error: error.message };
     }
   });

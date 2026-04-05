@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -160,6 +161,16 @@ def extract_reasoning_text(msg: Any) -> str:
         text = as_text(v)
         if text.strip():
             return text.strip()
+    content_text = as_text(msg.get("content"))
+    if content_text.strip():
+        parts: List[str] = []
+        for pattern in (r"<think>(.*?)</think>", r"<reasoning>(.*?)</reasoning>"):
+            for raw in re.findall(pattern, content_text, flags=re.IGNORECASE | re.DOTALL):
+                txt = str(raw or "").strip()
+                if txt:
+                    parts.append(txt)
+        if parts:
+            return "\n\n".join(parts).strip()
     return ""
 
 

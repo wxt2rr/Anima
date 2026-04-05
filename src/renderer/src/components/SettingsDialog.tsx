@@ -118,6 +118,7 @@ function CustomProviderDialog({
   initialMode?: 'api' | 'acp'
 }) {
   const addProvider = useStore(s => s.addProvider)
+  const settings = useStore(s => s.settings)
   const [providerMode, setProviderMode] = useState<'api' | 'acp'>(initialMode || 'api')
   const [name, setName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
@@ -131,6 +132,81 @@ function CustomProviderDialog({
   const [acpApprovalMode, setAcpApprovalMode] = useState<'per_action' | 'per_project' | 'always'>('per_action')
   const [acpEnv, setAcpEnv] = useState('')
   const [defaultModel, setDefaultModel] = useState('')
+  const t = (() => {
+    const dict = {
+      en: {
+        title: 'Add Custom Provider',
+        providerType: 'Provider Type',
+        apiProvider: 'API Provider',
+        acpProvider: 'ACP Provider',
+        providerName: 'Provider Name',
+        providerNamePlaceholder: 'My Custom Provider',
+        baseUrl: 'Base URL',
+        apiKey: 'API Key',
+        apiFormat: 'API Format',
+        apiFormatHint: 'Choose the API endpoint format your provider uses',
+        useMaxCompletionTokens: 'Use max_completion_tokens',
+        useMaxCompletionTokensHint: 'Enable for newer OpenAI models (o1, o3, etc.) that require max_completion_tokens instead of max_tokens',
+        command: 'Command',
+        args: 'Args',
+        kind: 'Kind',
+        framing: 'Framing',
+        approvalMode: 'Approval Mode',
+        defaultModel: 'Default Model',
+        env: 'Env (KEY=VALUE)',
+        cancel: 'Cancel',
+        addProvider: 'Add Provider'
+      },
+      zh: {
+        title: '添加自定义 Provider',
+        providerType: 'Provider 类型',
+        apiProvider: 'API Provider',
+        acpProvider: 'ACP Provider',
+        providerName: 'Provider 名称',
+        providerNamePlaceholder: '我的自定义 Provider',
+        baseUrl: 'Base URL',
+        apiKey: 'API Key',
+        apiFormat: 'API 格式',
+        apiFormatHint: '选择该 Provider 使用的 API 端点格式',
+        useMaxCompletionTokens: '使用 max_completion_tokens',
+        useMaxCompletionTokensHint: '新版本 OpenAI 模型（o1、o3 等）需使用 max_completion_tokens 替代 max_tokens',
+        command: '命令',
+        args: '参数',
+        kind: '类型',
+        framing: '分帧',
+        approvalMode: '审批模式',
+        defaultModel: '默认模型',
+        env: '环境变量（KEY=VALUE）',
+        cancel: '取消',
+        addProvider: '添加 Provider'
+      },
+      ja: {
+        title: 'カスタム Provider を追加',
+        providerType: 'Provider タイプ',
+        apiProvider: 'API Provider',
+        acpProvider: 'ACP Provider',
+        providerName: 'Provider 名',
+        providerNamePlaceholder: 'カスタム Provider',
+        baseUrl: 'Base URL',
+        apiKey: 'API Key',
+        apiFormat: 'API 形式',
+        apiFormatHint: 'この Provider が使う API エンドポイント形式を選択します',
+        useMaxCompletionTokens: 'max_completion_tokens を使用',
+        useMaxCompletionTokensHint: '新しい OpenAI モデル（o1、o3 など）では max_tokens ではなく max_completion_tokens が必要です',
+        command: 'コマンド',
+        args: '引数',
+        kind: '種別',
+        framing: 'フレーミング',
+        approvalMode: '承認モード',
+        defaultModel: 'デフォルトモデル',
+        env: '環境変数（KEY=VALUE）',
+        cancel: 'キャンセル',
+        addProvider: 'Provider を追加'
+      }
+    } as const
+    const lang = (settings?.language || 'en') as keyof typeof dict
+    return dict[lang] || dict.en
+  })()
 
   useEffect(() => {
     if (open) {
@@ -207,33 +283,33 @@ function CustomProviderDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
-          <DialogTitle>Add Custom Provider</DialogTitle>
+          <DialogTitle>{t.title}</DialogTitle>
         </DialogHeader>
         <div className="grid gap-4 py-4">
           <div className="grid gap-2">
-            <Label>Provider Type</Label>
+            <Label>{t.providerType}</Label>
             <Select value={providerMode} onValueChange={(v) => setProviderMode(v as 'api' | 'acp')}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="api">API Provider</SelectItem>
-                <SelectItem value="acp">ACP Provider</SelectItem>
+                <SelectItem value="api">{t.apiProvider}</SelectItem>
+                <SelectItem value="acp">{t.acpProvider}</SelectItem>
               </SelectContent>
             </Select>
           </div>
           <div className="grid gap-2">
-            <Label>Provider Name</Label>
+            <Label>{t.providerName}</Label>
             <Input
               value={name}
               onChange={e => setName(e.target.value)}
-              placeholder="My Custom Provider"
+              placeholder={t.providerNamePlaceholder}
             />
           </div>
           {providerMode === 'api' ? (
             <>
               <div className="grid gap-2">
-                <Label>Base URL</Label>
+                <Label>{t.baseUrl}</Label>
                 <Input
                   value={baseUrl}
                   onChange={e => setBaseUrl(e.target.value)}
@@ -241,7 +317,7 @@ function CustomProviderDialog({
                 />
               </div>
               <div className="grid gap-2">
-                <Label>API Key</Label>
+                <Label>{t.apiKey}</Label>
                 <Input
                   value={apiKey}
                   onChange={e => setApiKey(e.target.value)}
@@ -250,7 +326,7 @@ function CustomProviderDialog({
                 />
               </div>
               <div className="grid gap-2">
-                <Label>API Format</Label>
+                <Label>{t.apiFormat}</Label>
                 <Select value={apiFormat} onValueChange={setApiFormat}>
                   <SelectTrigger>
                     <SelectValue />
@@ -262,14 +338,14 @@ function CustomProviderDialog({
                   </SelectContent>
                 </Select>
                 <p className="text-[0.8rem] text-muted-foreground">
-                  Choose the API endpoint format your provider uses
+                  {t.apiFormatHint}
                 </p>
               </div>
               <div className="flex items-center justify-between space-x-2">
                 <div className="flex flex-col space-y-1">
-                  <Label>Use max_completion_tokens</Label>
+                  <Label>{t.useMaxCompletionTokens}</Label>
                   <p className="text-[0.8rem] text-muted-foreground max-w-[350px]">
-                    Enable for newer OpenAI models (o1, o3, etc.) that require max_completion_tokens instead of max_tokens
+                    {t.useMaxCompletionTokensHint}
                   </p>
                 </div>
                 <Switch
@@ -281,16 +357,16 @@ function CustomProviderDialog({
           ) : (
             <>
               <div className="grid gap-2">
-                <Label>Command</Label>
+                <Label>{t.command}</Label>
                 <Input value={acpCommand} onChange={e => setAcpCommand(e.target.value)} placeholder="codex-acp" />
               </div>
               <div className="grid gap-2">
-                <Label>Args</Label>
+                <Label>{t.args}</Label>
                 <Input value={acpArgs} onChange={e => setAcpArgs(e.target.value)} placeholder="--flag value" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="grid gap-2">
-                  <Label>Kind</Label>
+                  <Label>{t.kind}</Label>
                   <Select value={acpKind} onValueChange={v => setAcpKind(v as any)}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -301,7 +377,7 @@ function CustomProviderDialog({
                   </Select>
                 </div>
                 <div className="grid gap-2">
-                  <Label>Framing</Label>
+                  <Label>{t.framing}</Label>
                   <Select value={acpFraming} onValueChange={v => setAcpFraming(v as any)}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -313,7 +389,7 @@ function CustomProviderDialog({
                 </div>
               </div>
               <div className="grid gap-2">
-                <Label>Approval Mode</Label>
+                <Label>{t.approvalMode}</Label>
                 <Select value={acpApprovalMode} onValueChange={v => setAcpApprovalMode(v as any)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -324,19 +400,19 @@ function CustomProviderDialog({
                 </Select>
               </div>
               <div className="grid gap-2">
-                <Label>Default Model</Label>
+                <Label>{t.defaultModel}</Label>
                 <Input value={defaultModel} onChange={e => setDefaultModel(e.target.value)} placeholder="codex-acp" />
               </div>
               <div className="grid gap-2">
-                <Label>Env (KEY=VALUE)</Label>
+                <Label>{t.env}</Label>
                 <Textarea value={acpEnv} onChange={e => setAcpEnv(e.target.value)} rows={4} className="font-mono text-xs" />
               </div>
             </>
           )}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={handleAdd}>Add Provider</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>{t.cancel}</Button>
+          <Button onClick={handleAdd}>{t.addProvider}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -3263,21 +3339,54 @@ function ProvidersSettings() {
         useWithClaude: 'Use with Claude Code',
         useWithClaudeDesc: 'You can use this provider with Claude Code by setting the following environment variables:',
         copy: 'Copy',
-        copied: 'Copied'
+        copied: 'Copied',
+        fillBaseUrlFirst: 'Please enter Base URL first',
+        fillApiKeyFirst: 'Please enter API Key first',
+        detectLocalFailedHint: 'Failed to detect local models. Please ensure local server is running: Ollama http://127.0.0.1:11434 , LM Studio http://127.0.0.1:1234.',
+        qwenOAuthDesc: 'Device code login; credentials stay in local backend',
+        codexOAuthDesc: 'Browser login; credentials stay in local backend',
+        signIn: 'Sign in',
+        logout: 'Logout',
+        profile: 'Profile',
+        status: 'Status',
+        loggedIn: 'Logged in',
+        expired: 'Expired',
+        notLoggedIn: 'Not logged in',
+        acpKind: 'ACP Kind',
+        framing: 'Framing',
+        command: 'Command',
+        args: 'Args',
+        approvalMode: 'Approval Mode',
+        env: 'Env (KEY=VALUE)',
+        testAcp: 'Test ACP',
+        resetApprovals: 'Reset approvals',
+        apiFormatHint: 'Choose the API endpoint format your provider uses',
+        fetchModels: 'Fetch Models',
+        noModelsConfigured: 'No models configured.',
+        hiddenModelsHint: 'Models are hidden by default. Click Fetch Models to load and manage them.',
+        selectProviderHint: 'Select a provider to configure',
+        openAuthLink: 'Open the authorization link',
+        openAuthLinkLocalRedirect: 'Open the authorization link (redirects back to localhost)',
+        openInBrowser: 'Open in browser',
+        userCodeIfPrompted: 'User code (if prompted)',
+        waitingForApproval: 'Waiting for approval…',
+        oauthFailed: 'OAuth failed',
+        oauthSuccess: 'Success',
+        close: 'Close'
       },
       zh: {
         search: '搜索提供商…',
-        addCustom: 'Add Custom Provider',
-        addCustomAcp: 'Add Custom ACP Provider',
+        addCustom: '添加自定义 Provider',
+        addCustomAcp: '添加自定义 ACP Provider',
         addLocalOllama: '添加 Ollama（本地）',
         addLocalLmStudio: '添加 LM Studio（本地）',
         detectLocalModels: '探测本地模型',
         localProviderHint: '本地 provider 不需要 API Key。',
-        active: 'Active',
-        inactive: 'Inactive',
+        active: '启用',
+        inactive: '未启用',
         apiKey: 'API Key',
         baseUrl: 'Base URL (Optional)',
-        baseUrlHint: 'Leave empty to use the default OpenAI API endpoint',
+        baseUrlHint: '留空则使用默认 OpenAI API 端点',
         thinkingMode: '思考模式',
         thinkingModeHint: '开启 reasoning_content 输出（DeepSeek）。',
         models: '模型',
@@ -3296,7 +3405,106 @@ function ProvidersSettings() {
         useWithClaude: '与 Claude Code 一起使用',
         useWithClaudeDesc: '您可以通过设置以下环境变量，将此提供商与 Claude Code 一起使用：',
         copy: '复制',
-        copied: '已复制'
+        copied: '已复制',
+        fillBaseUrlFirst: '请先填写 Base URL',
+        fillApiKeyFirst: '请先填写 API Key',
+        detectLocalFailedHint: '本地模型探测失败。请确认本地服务已启动：Ollama http://127.0.0.1:11434 ，LM Studio http://127.0.0.1:1234。',
+        qwenOAuthDesc: '使用设备码登录，凭据仅保存在本地后端',
+        codexOAuthDesc: '浏览器登录，凭据仅保存在本地后端',
+        signIn: '登录',
+        logout: '退出',
+        profile: 'Profile',
+        status: '状态',
+        loggedIn: '已登录',
+        expired: '已过期',
+        notLoggedIn: '未登录',
+        acpKind: 'ACP 类型',
+        framing: '分帧',
+        command: '命令',
+        args: '参数',
+        approvalMode: '审批模式',
+        env: '环境变量（KEY=VALUE）',
+        testAcp: '测试 ACP',
+        resetApprovals: '重置审批',
+        apiFormatHint: '选择该 Provider 使用的 API 端点格式',
+        fetchModels: '拉取模型',
+        noModelsConfigured: '暂无已配置模型。',
+        hiddenModelsHint: '默认不展示模型列表。点击“拉取模型”后再进行选择与管理。',
+        selectProviderHint: '请选择要配置的 Provider',
+        openAuthLink: '打开链接授权',
+        openAuthLinkLocalRedirect: '打开链接授权（会回调到本机）',
+        openInBrowser: '在浏览器打开',
+        userCodeIfPrompted: '验证码（如提示）',
+        waitingForApproval: '等待授权完成…',
+        oauthFailed: 'OAuth 失败',
+        oauthSuccess: '登录成功',
+        close: '关闭'
+      },
+      ja: {
+        search: 'Provider を検索…',
+        addCustom: 'カスタム Provider を追加',
+        addCustomAcp: 'カスタム ACP Provider を追加',
+        addLocalOllama: 'Ollama（ローカル）を追加',
+        addLocalLmStudio: 'LM Studio（ローカル）を追加',
+        detectLocalModels: 'ローカルモデルを検出',
+        localProviderHint: 'ローカル Provider では API Key は不要です。',
+        active: '有効',
+        inactive: '無効',
+        apiKey: 'API Key',
+        baseUrl: 'Base URL（任意）',
+        baseUrlHint: '空欄の場合は既定の API エンドポイントを使用します',
+        thinkingMode: '思考モード',
+        thinkingModeHint: 'reasoning_content 出力を有効化（DeepSeek）。',
+        models: 'モデル',
+        defaultModel: 'デフォルトモデル',
+        manageModels: 'モデル管理',
+        enterModelId: 'モデル ID を入力',
+        enterApiKey: 'API Key を入力',
+        getKey: (name: string) => `${name} の API Keys で API Key を取得`,
+        proxyEndpoints: 'API プロキシエンドポイント',
+        advanced: '詳細',
+        proxyDesc: (name: string) => `Anima は ${name} 向けに API プロキシを提供します。リクエストは Chat Completions 形式に変換され、さまざまな AI ツールと互換になります。`,
+        responsesProxy: 'Responses API プロキシ',
+        messagesProxy: 'Messages API プロキシ',
+        responsesProxyDesc: (name: string) => `${name} Responses API（Codex など）が必要なツール向けのエンドポイントです。リクエストは Chat Completions 形式に変換されます。`,
+        messagesProxyDesc: 'Anthropic 互換ツール向けのエンドポイントです。リクエストは Chat Completions 形式に変換されます。',
+        useWithClaude: 'Claude Code で使用',
+        useWithClaudeDesc: '次の環境変数を設定すると、この Provider を Claude Code で使えます。',
+        copy: 'コピー',
+        copied: 'コピーしました',
+        fillBaseUrlFirst: '先に Base URL を入力してください',
+        fillApiKeyFirst: '先に API Key を入力してください',
+        detectLocalFailedHint: 'ローカルモデルの検出に失敗しました。ローカルサーバーが起動していることを確認してください: Ollama http://127.0.0.1:11434 , LM Studio http://127.0.0.1:1234.',
+        qwenOAuthDesc: 'デバイスコードでログイン。認証情報はローカルバックエンドのみに保存されます',
+        codexOAuthDesc: 'ブラウザログイン。認証情報はローカルバックエンドのみに保存されます',
+        signIn: 'ログイン',
+        logout: 'ログアウト',
+        profile: 'Profile',
+        status: '状態',
+        loggedIn: 'ログイン済み',
+        expired: '期限切れ',
+        notLoggedIn: '未ログイン',
+        acpKind: 'ACP 種別',
+        framing: 'フレーミング',
+        command: 'コマンド',
+        args: '引数',
+        approvalMode: '承認モード',
+        env: '環境変数（KEY=VALUE）',
+        testAcp: 'ACP テスト',
+        resetApprovals: '承認をリセット',
+        apiFormatHint: 'この Provider が使う API エンドポイント形式を選択します',
+        fetchModels: 'モデル取得',
+        noModelsConfigured: 'モデルが設定されていません。',
+        hiddenModelsHint: 'モデル一覧は初期状態で非表示です。「モデル取得」をクリックして読み込み・管理してください。',
+        selectProviderHint: '設定する Provider を選択してください',
+        openAuthLink: '認可リンクを開く',
+        openAuthLinkLocalRedirect: '認可リンクを開く（localhost にリダイレクト）',
+        openInBrowser: 'ブラウザで開く',
+        userCodeIfPrompted: 'ユーザーコード（必要な場合）',
+        waitingForApproval: '認可完了を待機中…',
+        oauthFailed: 'OAuth 失敗',
+        oauthSuccess: '成功',
+        close: '閉じる'
       }
     } as const
     return dict[settings.language as keyof typeof dict] || dict.en
@@ -3349,11 +3557,11 @@ function ProvidersSettings() {
     if (!activeProvider) return
     if (isAcp) return
     if (!activeProvider.config.baseUrl) {
-      alert(settings.language === 'zh' ? '请先填写 Base URL' : 'Please enter Base URL first')
+      alert(t.fillBaseUrlFirst)
       return
     }
     if (!isOAuthProvider && !isLocalProvider && !activeProvider.config.apiKey) {
-      alert(settings.language === 'zh' ? '请先填写 API Key' : 'Please enter API Key first')
+      alert(t.fillApiKeyFirst)
       return
     }
     setIsFetchingModels(true)
@@ -3393,9 +3601,7 @@ function ProvidersSettings() {
       console.error('Failed to fetch models', e)
       const raw = e instanceof Error ? e.message : String(e || 'Failed to fetch models')
       if (isLocalProvider) {
-        const hint = settings.language === 'zh'
-          ? '本地模型探测失败。请确认本地服务已启动：Ollama 默认 http://127.0.0.1:11434 ，LM Studio 默认 http://127.0.0.1:1234。'
-          : 'Failed to detect local models. Please ensure local server is running: Ollama http://127.0.0.1:11434 , LM Studio http://127.0.0.1:1234.'
+        const hint = t.detectLocalFailedHint
         alert(`${raw}\n\n${hint}`)
       } else {
         alert(raw)
@@ -3679,9 +3885,9 @@ function ProvidersSettings() {
   }
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full min-h-0">
       {/* Providers List - Left Column */}
-      <div className="w-64 border-r border-border/60 p-4 pr-5 flex flex-col gap-3 bg-card/35">
+      <div className="w-64 min-w-64 shrink-0 border-r border-border/60 p-4 pr-5 flex flex-col gap-3 bg-card/35">
         <div className="relative">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground z-10" />
           <Input
@@ -3752,24 +3958,24 @@ function ProvidersSettings() {
       {/* Provider Details - Right Column */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top Actions Bar */}
-        <div className="px-8 pt-2 pb-3">
-          <div className="flex items-center justify-end gap-2">
+        <div className="px-6 pt-3 pb-3 border-b border-border/60">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               variant="outline"
-              className="h-9 rounded-full px-4 bg-card/70"
+              className="h-9 rounded-full px-4 bg-card/70 shrink-0 whitespace-nowrap"
               onClick={() => addLocalProvider('ollama')}
             >
               {t.addLocalOllama}
             </Button>
             <Button
               variant="outline"
-              className="h-9 rounded-full px-4 bg-card/70"
+              className="h-9 rounded-full px-4 bg-card/70 shrink-0 whitespace-nowrap"
               onClick={() => addLocalProvider('lmstudio')}
             >
               {t.addLocalLmStudio}
             </Button>
             <Button
-              className="h-9 rounded-full px-4"
+              className="h-9 rounded-full px-4 shrink-0 whitespace-nowrap"
               onClick={() => {
                 setCustomProviderMode('api')
                 setCustomProviderDialogOpen(true)
@@ -3779,7 +3985,7 @@ function ProvidersSettings() {
             </Button>
             <Button
               variant="outline"
-              className="h-9 rounded-full px-4 bg-card/70"
+              className="h-9 rounded-full px-4 bg-card/70 shrink-0 whitespace-nowrap"
               onClick={() => {
                 setCustomProviderMode('acp')
                 setCustomProviderDialogOpen(true)
@@ -3964,33 +4170,33 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                       <div className="space-y-1">
                         <Label>Qwen OAuth</Label>
                         <p className="text-xs text-muted-foreground">
-                          {settings.language === 'zh' ? '使用设备码登录，凭据仅保存在本地后端' : 'Device code login; credentials stay in local backend'}
+                          {t.qwenOAuthDesc}
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
                         <Button variant="outline" size="sm" onClick={() => void startQwenLogin()}>
-                          {settings.language === 'zh' ? '登录' : 'Sign in'}
+                          {t.signIn}
                         </Button>
                         <Button variant="ghost" size="sm" onClick={() => void logoutQwen()}>
-                          {settings.language === 'zh' ? '退出' : 'Logout'}
+                          {t.logout}
                         </Button>
                       </div>
                     </div>
 
                     <div className="text-[13px]">
                       <div className="flex items-center justify-between">
-                        <span className="text-muted-foreground">{settings.language === 'zh' ? 'Profile' : 'Profile'}</span>
+                        <span className="text-muted-foreground">{t.profile}</span>
                         <span className="font-mono">{qwenProfileId}</span>
                       </div>
                       <div className="flex items-center justify-between">
-                        <span className="text-muted-foreground">{settings.language === 'zh' ? '状态' : 'Status'}</span>
+                        <span className="text-muted-foreground">{t.status}</span>
                         <span>
                           {(() => {
                             const p = qwenAuthProfiles.find(x => x.profileId === qwenProfileId) || qwenAuthProfiles[0]
                             const st = String(p?.state || 'not_logged_in')
-                            if (st === 'valid') return settings.language === 'zh' ? '已登录' : 'Logged in'
-                            if (st === 'expired') return settings.language === 'zh' ? '已过期' : 'Expired'
-                            return settings.language === 'zh' ? '未登录' : 'Not logged in'
+                            if (st === 'valid') return t.loggedIn
+                            if (st === 'expired') return t.expired
+                            return t.notLoggedIn
                           })()}
                         </span>
                       </div>
@@ -4006,33 +4212,33 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                       <div className="space-y-1">
                         <Label>OpenAI Codex OAuth</Label>
                         <p className="text-xs text-muted-foreground">
-                          {settings.language === 'zh' ? '浏览器登录，凭据仅保存在本地后端' : 'Browser login; credentials stay in local backend'}
+                          {t.codexOAuthDesc}
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
                         <Button variant="outline" size="sm" onClick={() => void startCodexLogin()}>
-                          {settings.language === 'zh' ? '登录' : 'Sign in'}
+                          {t.signIn}
                         </Button>
                         <Button variant="ghost" size="sm" onClick={() => void logoutCodex()}>
-                          {settings.language === 'zh' ? '退出' : 'Logout'}
+                          {t.logout}
                         </Button>
                       </div>
                     </div>
 
                     <div className="text-[13px]">
                       <div className="flex items-center justify-between">
-                        <span className="text-muted-foreground">{settings.language === 'zh' ? 'Profile' : 'Profile'}</span>
+                        <span className="text-muted-foreground">{t.profile}</span>
                         <span className="font-mono">{codexProfileId}</span>
                       </div>
                       <div className="flex items-center justify-between">
-                        <span className="text-muted-foreground">{settings.language === 'zh' ? '状态' : 'Status'}</span>
+                        <span className="text-muted-foreground">{t.status}</span>
                         <span>
                           {(() => {
                             const p = codexAuthProfiles.find(x => x.profileId === codexProfileId) || codexAuthProfiles[0]
                             const st = String(p?.state || 'not_logged_in')
-                            if (st === 'valid') return settings.language === 'zh' ? '已登录' : 'Logged in'
-                            if (st === 'expired') return settings.language === 'zh' ? '已过期' : 'Expired'
-                            return settings.language === 'zh' ? '未登录' : 'Not logged in'
+                            if (st === 'valid') return t.loggedIn
+                            if (st === 'expired') return t.expired
+                            return t.notLoggedIn
                           })()}
                         </span>
                       </div>
@@ -4046,7 +4252,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                   <CardContent className="p-6 space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
-                        <Label>ACP Kind</Label>
+                        <Label>{t.acpKind}</Label>
                         <Select
                           value={String(acpConfig.kind || 'native_acp')}
                           onValueChange={(val) => updateProvider(activeProvider.id, { acp: { ...acpConfig, kind: val } } as any)}
@@ -4060,7 +4266,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                         </Select>
                       </div>
                       <div className="space-y-1">
-                        <Label>Framing</Label>
+                        <Label>{t.framing}</Label>
                         <Select
                           value={String(acpConfig.framing || 'auto')}
                           onValueChange={(val) => updateProvider(activeProvider.id, { acp: { ...acpConfig, framing: val } } as any)}
@@ -4075,7 +4281,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                       </div>
                     </div>
                     <div className="space-y-1">
-                      <Label>Command</Label>
+                      <Label>{t.command}</Label>
                       <Input
                         value={String(acpConfig.command || '')}
                         onChange={(e) => updateProvider(activeProvider.id, { acp: { ...acpConfig, command: e.target.value } } as any)}
@@ -4083,7 +4289,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                       />
                     </div>
                     <div className="space-y-1">
-                      <Label>Args</Label>
+                      <Label>{t.args}</Label>
                       <Input
                         value={Array.isArray(acpConfig.args) ? acpConfig.args.join(' ') : String(acpConfig.args || '')}
                         onChange={(e) => updateProvider(activeProvider.id, { acp: { ...acpConfig, args: String(e.target.value || '').trim() ? String(e.target.value || '').trim().split(/\s+/) : [] } } as any)}
@@ -4091,7 +4297,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                       />
                     </div>
                     <div className="space-y-1">
-                      <Label>Approval Mode</Label>
+                      <Label>{t.approvalMode}</Label>
                       <Select
                         value={String(acpConfig.approvalMode || 'per_action')}
                         onValueChange={(val) => updateProvider(activeProvider.id, { acp: { ...acpConfig, approvalMode: val } } as any)}
@@ -4105,7 +4311,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                       </Select>
                     </div>
                     <div className="space-y-1">
-                      <Label>Env (KEY=VALUE)</Label>
+                      <Label>{t.env}</Label>
                       <Textarea
                         className="font-mono text-xs"
                         rows={4}
@@ -4153,13 +4359,13 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                           if (res?.ok && res.sessionId) await api.close({ sessionId: String(res.sessionId) })
                         }}
                       >
-                        Test ACP
+                        {t.testAcp}
                       </Button>
                       <Button variant="outline" size="sm" onClick={async () => {
                         const res = await window.anima.acp.resetApprovals()
                         if (!res?.ok) throw new Error(String((res as any)?.error || 'reset failed'))
                       }}>
-                        Reset approvals
+                        {t.resetApprovals}
                       </Button>
                     </div>
                   </CardContent>
@@ -4196,7 +4402,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                           </SelectContent>
                         </Select>
                         <p className="text-[0.8rem] text-muted-foreground">
-                          Choose the API endpoint format your provider uses
+                          {t.apiFormatHint}
                         </p>
                       </div>
                     )}
@@ -4219,7 +4425,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                          className="gap-2"
                        >
                          {isFetchingModels ? <RefreshCw className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                         {isLocalProvider ? t.detectLocalModels : 'Fetch Models'}
+                         {isLocalProvider ? t.detectLocalModels : t.fetchModels}
                        </Button>
                     </div>
 
@@ -4286,7 +4492,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                              ))}
                              {normalizeModels(activeProvider.config.models).length === 0 && (
                                 <div className="p-4 text-center text-muted-foreground text-xs">
-                                   No models configured.
+                                   {t.noModelsConfigured}
                                 </div>
                              )}
                            </div>
@@ -4313,9 +4519,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                       </>
                     ) : (
                       <div className="text-xs text-muted-foreground">
-                        {settings.language === 'zh'
-                          ? '默认不展示模型列表。点击 Fetch Models 后再进行选择与管理。'
-                          : 'Models are hidden by default. Click Fetch Models to load and manage them.'}
+                        {t.hiddenModelsHint}
                       </div>
                     )}
                  </CardContent>
@@ -4343,7 +4547,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-              <p>Select a provider to configure</p>
+              <p>{t.selectProviderHint}</p>
             </div>
           )}
         </div>
@@ -4362,7 +4566,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>{settings.language === 'zh' ? '打开链接授权' : 'Open the authorization link'}</Label>
+              <Label>{t.openAuthLink}</Label>
               <div className="relative group">
                 <div className="absolute inset-y-0 right-0 flex items-center pr-2">
                   <Button
@@ -4386,13 +4590,13 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                   rel="noreferrer"
                   className="text-xs text-primary underline"
                 >
-                  {settings.language === 'zh' ? '在浏览器打开' : 'Open in browser'}
+                  {t.openInBrowser}
                 </a>
               )}
             </div>
 
             <div className="space-y-2">
-              <Label>{settings.language === 'zh' ? '验证码（如提示）' : 'User code (if prompted)'}</Label>
+              <Label>{t.userCodeIfPrompted}</Label>
               <div className="flex items-center justify-between gap-3 bg-secondary rounded-lg px-4 py-3">
                 <span className="font-mono text-[13px]">{qwenLogin.userCode || '-'}</span>
                 <Button
@@ -4401,7 +4605,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                   onClick={() => copyToClipboard(qwenLogin.userCode)}
                   disabled={!qwenLogin.userCode}
                 >
-                  {settings.language === 'zh' ? '复制' : 'Copy'}
+                  {t.copy}
                 </Button>
               </div>
             </div>
@@ -4409,12 +4613,12 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
             <div className="text-[13px]">
               {qwenLogin.state === 'pending' && (
                 <span className="text-muted-foreground">
-                  {settings.language === 'zh' ? '等待授权完成…' : 'Waiting for approval…'}
+                  {t.waitingForApproval}
                 </span>
               )}
-              {qwenLogin.state === 'error' && <span className="text-destructive">{qwenLogin.error || 'OAuth failed'}</span>}
+              {qwenLogin.state === 'error' && <span className="text-destructive">{qwenLogin.error || t.oauthFailed}</span>}
               {qwenLogin.state === 'success' && (
-                <span className="text-emerald-600 dark:text-emerald-400">{settings.language === 'zh' ? '登录成功' : 'Success'}</span>
+                <span className="text-emerald-600 dark:text-emerald-400">{t.oauthSuccess}</span>
               )}
             </div>
           </div>
@@ -4423,7 +4627,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
               variant="outline"
               onClick={() => setQwenLogin({ open: false, providerRecordId: '', flowId: '', verificationUrl: '', userCode: '', expiresAt: 0, pollIntervalMs: 2000, state: 'idle' })}
             >
-              {settings.language === 'zh' ? '关闭' : 'Close'}
+              {t.close}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -4442,7 +4646,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>{settings.language === 'zh' ? '打开链接授权（会回调到本机）' : 'Open the authorization link (redirects back to localhost)'}</Label>
+              <Label>{t.openAuthLinkLocalRedirect}</Label>
               <div className="relative group">
                 <div className="absolute inset-y-0 right-0 flex items-center pr-2">
                   <Button
@@ -4466,7 +4670,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                   rel="noreferrer"
                   className="text-xs text-primary underline"
                 >
-                  {settings.language === 'zh' ? '在浏览器打开' : 'Open in browser'}
+                  {t.openInBrowser}
                 </a>
               )}
             </div>
@@ -4474,12 +4678,12 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
             <div className="text-[13px]">
               {codexLogin.state === 'pending' && (
                 <span className="text-muted-foreground">
-                  {settings.language === 'zh' ? '等待授权完成…' : 'Waiting for approval…'}
+                  {t.waitingForApproval}
                 </span>
               )}
-              {codexLogin.state === 'error' && <span className="text-destructive">{codexLogin.error || 'OAuth failed'}</span>}
+              {codexLogin.state === 'error' && <span className="text-destructive">{codexLogin.error || t.oauthFailed}</span>}
               {codexLogin.state === 'success' && (
-                <span className="text-emerald-600 dark:text-emerald-400">{settings.language === 'zh' ? '登录成功' : 'Success'}</span>
+                <span className="text-emerald-600 dark:text-emerald-400">{t.oauthSuccess}</span>
               )}
             </div>
           </div>
@@ -4488,7 +4692,7 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
               variant="outline"
               onClick={() => setCodexLogin({ open: false, providerRecordId: '', flowId: '', verificationUrl: '', expiresAt: 0, pollIntervalMs: 1000, state: 'idle' })}
             >
-              {settings.language === 'zh' ? '关闭' : 'Close'}
+              {t.close}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -5995,7 +6199,16 @@ function MemorySettings() {
         searchPlaceholder: 'Search memories…',
         memoryList: 'Memory list',
         clearAll: 'Clear all',
-        empty: 'No memories yet.'
+        empty: 'No memories yet.',
+        scopeAutoNoWorkspace: 'No workspace and global memory is disabled. Cannot auto decide memory scope.',
+        workspaceRequired: 'No workspace selected. Cannot manage workspace memories.',
+        workspaceRequiredToManage: 'Please select a workspace before managing memories.',
+        loading: 'Loading…',
+        failedLoad: 'Failed to load memories',
+        failedAdd: 'Failed to add memory',
+        failedUpdate: 'Failed to update memory',
+        failedDelete: 'Failed to delete memory',
+        failedClear: 'Failed to clear memories'
       },
       zh: {
         feature: '记忆功能',
@@ -6044,7 +6257,16 @@ function MemorySettings() {
         searchPlaceholder: '输入关键词搜索…',
         memoryList: '记忆列表',
         clearAll: '全部清空',
-        empty: '暂无记忆内容。'
+        empty: '暂无记忆内容。',
+        scopeAutoNoWorkspace: '未选择工作区且未启用全局记忆，无法自动判定写入范围。',
+        workspaceRequired: '未选择工作区，无法管理工作区记忆。',
+        workspaceRequiredToManage: '请先选择工作区后再管理记忆。',
+        loading: '加载中…',
+        failedLoad: '加载记忆失败',
+        failedAdd: '添加记忆失败',
+        failedUpdate: '更新记忆失败',
+        failedDelete: '删除记忆失败',
+        failedClear: '清空记忆失败'
       },
       ja: {
         feature: 'メモリー',
@@ -6093,7 +6315,16 @@ function MemorySettings() {
         searchPlaceholder: 'キーワードで検索…',
         memoryList: '一覧',
         clearAll: '全て削除',
-        empty: 'メモリーはまだありません。'
+        empty: 'メモリーはまだありません。',
+        scopeAutoNoWorkspace: 'ワークスペース未選択かつグローバルメモリーが無効のため、自動スコープ判定できません。',
+        workspaceRequired: 'ワークスペース未選択のため、ワークスペースメモリーを管理できません。',
+        workspaceRequiredToManage: 'メモリー管理の前にワークスペースを選択してください。',
+        loading: '読み込み中…',
+        failedLoad: 'メモリーの読み込みに失敗しました',
+        failedAdd: 'メモリーの追加に失敗しました',
+        failedUpdate: 'メモリーの更新に失敗しました',
+        failedDelete: 'メモリーの削除に失敗しました',
+        failedClear: 'メモリーの全削除に失敗しました'
       }
     } as const
     return dict[settings.language as keyof typeof dict] || dict.en
@@ -6310,14 +6541,14 @@ function MemorySettings() {
   const ensureScopeAllowed = useCallback((scope: 'workspace' | 'global' | 'auto') => {
     if (scope === 'auto') {
       if (workspaceDir || memoryGlobalEnabled) return true
-      setMemoryError(settings.language === 'zh' ? '未选择工作区且未启用全局记忆，无法自动判定写入范围。' : 'No workspace and global memory is disabled. Cannot auto decide memory scope.')
+      setMemoryError(t.scopeAutoNoWorkspace)
       return false
     }
     if (scope === 'global') return true
     if (workspaceDir) return true
-    setMemoryError(settings.language === 'zh' ? '未选择工作区，无法管理工作区记忆。' : 'No workspace selected. Cannot manage workspace memories.')
+    setMemoryError(t.workspaceRequired)
     return false
-  }, [workspaceDir, memoryGlobalEnabled, settings.language])
+  }, [workspaceDir, memoryGlobalEnabled, t.scopeAutoNoWorkspace, t.workspaceRequired])
 
   const loadMemoryItems = useCallback(async () => {
     if (!workspaceDir && !memoryGlobalEnabled) {
@@ -6351,11 +6582,11 @@ function MemorySettings() {
       setMemoryItems(next)
       setEditingContentById({})
     } catch (e) {
-      setMemoryError(e instanceof Error ? e.message : 'Failed to load memories')
+      setMemoryError(e instanceof Error ? e.message : t.failedLoad)
     } finally {
       setMemoryLoading(false)
     }
-  }, [workspaceDir, memoryGlobalEnabled])
+  }, [workspaceDir, memoryGlobalEnabled, t.failedLoad])
 
   useEffect(() => {
     void loadMemoryItems()
@@ -6395,9 +6626,9 @@ function MemorySettings() {
       setDraft('')
       await loadMemoryItems()
     } catch (e) {
-      setMemoryError(e instanceof Error ? e.message : 'Failed to add memory')
+      setMemoryError(e instanceof Error ? e.message : t.failedAdd)
     }
-  }, [draft, addScope, ensureScopeAllowed, workspaceDir, loadMemoryItems])
+  }, [draft, addScope, ensureScopeAllowed, workspaceDir, loadMemoryItems, t.failedAdd])
 
   const patchMemoryItem = useCallback(async (id: string, scope: 'workspace' | 'global', patch: Record<string, any>) => {
     if (!id) return
@@ -6411,9 +6642,9 @@ function MemorySettings() {
       })
       await loadMemoryItems()
     } catch (e) {
-      setMemoryError(e instanceof Error ? e.message : 'Failed to update memory')
+      setMemoryError(e instanceof Error ? e.message : t.failedUpdate)
     }
-  }, [ensureScopeAllowed, workspaceDir, loadMemoryItems])
+  }, [ensureScopeAllowed, workspaceDir, loadMemoryItems, t.failedUpdate])
 
   const deleteMemoryItem = useCallback(async (id: string, scope: 'workspace' | 'global') => {
     if (!id) return
@@ -6427,9 +6658,9 @@ function MemorySettings() {
       })
       await loadMemoryItems()
     } catch (e) {
-      setMemoryError(e instanceof Error ? e.message : 'Failed to delete memory')
+      setMemoryError(e instanceof Error ? e.message : t.failedDelete)
     }
-  }, [ensureScopeAllowed, workspaceDir, loadMemoryItems])
+  }, [ensureScopeAllowed, workspaceDir, loadMemoryItems, t.failedDelete])
 
   const clearAllMemories = useCallback(async () => {
     const rows = filteredMemories.filter((m) => ensureScopeAllowed(m.scope))
@@ -6446,9 +6677,9 @@ function MemorySettings() {
       }
       await loadMemoryItems()
     } catch (e) {
-      setMemoryError(e instanceof Error ? e.message : 'Failed to clear memories')
+      setMemoryError(e instanceof Error ? e.message : t.failedClear)
     }
-  }, [ensureScopeAllowed, filteredMemories, workspaceDir, loadMemoryItems])
+  }, [ensureScopeAllowed, filteredMemories, workspaceDir, loadMemoryItems, t.failedClear])
 
   const thresholdPercent = Math.round(Math.min(1, Math.max(0, settings.memorySimilarityThreshold || 0)) * 100)
 
@@ -6835,13 +7066,13 @@ function MemorySettings() {
         {memoryError ? <div className="text-[12px] text-destructive">{memoryError}</div> : null}
         {!workspaceDir && !memoryGlobalEnabled ? (
           <div className="text-[13px] text-muted-foreground">
-            {settings.language === 'zh' ? '请先选择工作区后再管理记忆。' : 'Please select a workspace before managing memories.'}
+            {t.workspaceRequiredToManage}
           </div>
         ) : null}
 
         <div className="space-y-2">
           {memoryLoading ? (
-            <div className="text-[13px] text-muted-foreground">{settings.language === 'zh' ? '加载中…' : 'Loading…'}</div>
+            <div className="text-[13px] text-muted-foreground">{t.loading}</div>
           ) : filteredMemories.length === 0 ? (
             <div className="text-[13px] text-muted-foreground">{t.empty}</div>
           ) : (

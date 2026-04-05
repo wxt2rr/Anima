@@ -458,7 +458,7 @@ interface AppState {
       providerOverrideId: string
       modelOverride: string
       contextWindowOverride: number
-      thinkingLevel: 'default' | 'off' | 'low' | 'medium' | 'high'
+      thinkingLevel: 'default' | 'off' | 'low' | 'medium' | 'high' | 'xhigh'
     }
   }
   settings: Settings | null
@@ -481,6 +481,7 @@ interface AppState {
   clearMessages: () => void
   createChat: () => Promise<void>
   createChatInProject: (projectId: string) => Promise<void>
+  ensureActiveChatInProject: (projectId?: string) => Promise<string>
   updateChat: (chatId: string, updates: Partial<ChatThread>) => Promise<void>
   setActiveChat: (chatId: string) => Promise<void>
   deleteChat: (chatId: string) => Promise<void>
@@ -1109,9 +1110,9 @@ export const useStore = create<AppState>()(
             }
           }
 
-          let activeId = state.activeChatId
-          if (!activeId || (chats.length > 0 && !chats.find((c: any) => c.id === activeId))) {
-             activeId = chats[0]?.id
+          let activeId = String(state.activeChatId || '').trim()
+          if (!activeId || !chats.find((c: any) => String(c?.id || '').trim() === activeId)) {
+             activeId = String(chats[0]?.id || '').trim()
           }
           
           if (activeId) {
@@ -1136,7 +1137,20 @@ export const useStore = create<AppState>()(
 
       createChat: async () => {
         const pid = String(get().ui.activeProjectId || '').trim()
-        if (!pid) return
+        if (!pid) {
+          set((state) => ({
+            activeChatId: '',
+            messages: [],
+            ui: {
+              ...state.ui,
+              sidebarCollapsed: false,
+              sidebarSearchOpen: false,
+              sidebarSearchQuery: '',
+              composer: createDefaultComposer()
+            }
+          }))
+          return
+        }
         await get().createChatInProject(pid)
       },
 
@@ -1146,6 +1160,33 @@ export const useStore = create<AppState>()(
         const st = get()
         const projects = Array.isArray(st.settings?.projects) ? (st.settings!.projects as Project[]) : []
         if (!projects.some((p) => p.id === pid)) return
+
+        set((state) => ({
+          activeChatId: '',
+          messages: [],
+          ui: {
+            ...state.ui,
+            activeProjectId: pid,
+            sidebarCollapsed: false,
+            sidebarSearchOpen: false,
+            sidebarSearchQuery: '',
+            composer: createDefaultComposer()
+          }
+        }))
+      },
+
+      ensureActiveChatInProject: async (projectId?: string) => {
+        const st = get()
+        const pid = String(projectId || st.ui.activeProjectId || '').trim()
+        if (!pid) return ''
+        const projects = Array.isArray(st.settings?.projects) ? (st.settings!.projects as Project[]) : []
+        if (!projects.some((p) => p.id === pid)) return ''
+        const existingChatId = String(st.activeChatId || '').trim()
+        if (existingChatId) {
+          const exists = st.chats.some((c) => String(c?.id || '').trim() === existingChatId)
+          if (exists) return existingChatId
+          set({ activeChatId: '', messages: [] })
+        }
 
         const newChat = await api.createChat('New Chat')
         const nextMeta = { ...(newChat as any)?.meta, projectId: pid }
@@ -1160,11 +1201,12 @@ export const useStore = create<AppState>()(
             activeProjectId: pid,
             sidebarCollapsed: false,
             sidebarSearchOpen: false,
-            sidebarSearchQuery: '',
-            composer: createDefaultComposer()
+            sidebarSearchQuery: ''
           },
           chats: [withMeta, ...state.chats]
         }))
+
+        return withMeta.id
       },
 
       updateChat: async (chatId, updates) => {

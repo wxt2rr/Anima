@@ -226,16 +226,19 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
                     resumed_messages.append({"role": "assistant", "content": "Worker reports:\n" + worker_reports_text})
 
                 if decision == "reject":
-                    tool_content = json.dumps({"ok": False, "error": "User rejected dangerous command approval"}, ensure_ascii=False)
+                    tool_content = json.dumps(
+                        {"ok": True, "skipped": True, "reason": "User rejected dangerous command approval"},
+                        ensure_ascii=False,
+                    )
                     trace = {
                         "id": f"tr_resume_{uuid.uuid4().hex[:8]}",
                         "toolCallId": tool_call_id,
                         "name": tool_name,
-                        "status": "failed",
+                        "status": "succeeded",
                         "startedAt": 0,
                         "endedAt": 0,
                         "durationMs": 0,
-                        "error": {"message": "User rejected dangerous command approval"},
+                        "resultPreview": {"kind": "text", "text": "User rejected dangerous command approval", "truncated": False},
                     }
                 else:
                     _tools_unused, mcp_index, _tool_choice_unused = select_tools(settings_obj, composer)

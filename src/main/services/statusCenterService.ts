@@ -205,7 +205,7 @@ export function createStatusCenterService(getMainWindow: () => BrowserWindow | n
 
   const imageForCurrent = () => {
     const display: '22' = '22'
-    const renderSize = 18
+    const renderSize = 22
     if (runState.state === 'idle') {
       return fallbackPng(renderSize)
     }

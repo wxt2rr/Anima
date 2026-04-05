@@ -36,11 +36,28 @@ export const RightSidebar: React.FC<{ width?: number; onResizeStart?: () => void
   const currentPanel = activeRightPanel || 'files'
   const [mountedPanels, setMountedPanels] = useState<Record<string, boolean>>({})
   const [expandedReady, setExpandedReady] = useState(false)
+  const debugEnabled = typeof import.meta !== 'undefined' && Boolean((import.meta as any).env?.DEV)
+
+  if (debugEnabled) {
+    console.debug('[RightSidebar][render]', {
+      rightSidebarOpen,
+      activeRightPanel,
+      currentPanel: activeRightPanel || 'files',
+      mountedPanels,
+      expandedReady
+    })
+  }
 
   useEffect(() => {
     if (!rightSidebarOpen) {
       setExpandedReady(false)
       return
+    }
+    if (debugEnabled) {
+      console.debug('[RightSidebar][effect:expandedReady]', {
+        rightSidebarOpen,
+        currentPanel
+      })
     }
     setExpandedReady(false)
     const t = window.setTimeout(() => setExpandedReady(true), 160)
@@ -49,6 +66,12 @@ export const RightSidebar: React.FC<{ width?: number; onResizeStart?: () => void
 
   useEffect(() => {
     if (!rightSidebarOpen) return
+    if (debugEnabled) {
+      console.debug('[RightSidebar][effect:mountPanel]', {
+        currentPanel,
+        mounted: Boolean(mountedPanels[currentPanel])
+      })
+    }
     setMountedPanels((prev) => (prev[currentPanel] ? prev : { ...prev, [currentPanel]: true }))
   }, [currentPanel, rightSidebarOpen])
 

@@ -1,5 +1,5 @@
 import { Fragment, useState, useRef, useEffect, useMemo, useCallback, type ReactNode, type DragEvent, type ClipboardEvent } from 'react'
-import { ArrowUp, Square, Paperclip, PanelLeftOpen, MessageSquarePlus, Wrench, Sparkles, X, ChevronDown, Mic, Folder, Brain, Shield, Check, GitBranch, Copy } from 'lucide-react'
+import { ArrowUp, Square, Paperclip, PanelLeftOpen, MessageSquarePlus, Wrench, Sparkles, X, ChevronDown, Mic, Folder, Brain, Shield, Check, GitBranch, Copy, Settings } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -456,6 +456,7 @@ function AppLoaded(): JSX.Element {
     updateSettings,
     toggleSidebarCollapsed,
     createChat,
+    ensureActiveChatInProject,
     initApp,
     setActiveRightPanel,
     setPreviewUrl,
@@ -1595,10 +1596,22 @@ function AppLoaded(): JSX.Element {
     return { used, total, percentage }
   }, [tokenStatus, effectiveProvider, effectiveModel, composer.contextWindowOverride])
 
-  const thinkingLevel = composer.thinkingLevel && composer.thinkingLevel !== 'default' ? composer.thinkingLevel : 'medium'
-  const shouldShowAnalysis = effectiveProvider?.type === 'deepseek' && (
-    thinkingLevel !== 'off'
-  )
+  const thinkingLevel = ((): 'off' | 'low' | 'medium' | 'high' | 'xhigh' => {
+    const raw = String(composer.thinkingLevel || '').trim().toLowerCase()
+    if (raw === 'off' || raw === 'low' || raw === 'medium' || raw === 'high' || raw === 'xhigh') return raw
+    return 'medium'
+  })()
+  const effectiveProviderIdLower = String(effectiveProvider?.id || '').toLowerCase()
+  const effectiveProviderNameLower = String(effectiveProvider?.name || '').toLowerCase()
+  const effectiveProviderBaseUrlLower = String(effectiveProvider?.config?.baseUrl || '').toLowerCase()
+  const isOllamaLikeProvider =
+    effectiveProviderIdLower.includes('ollama') ||
+    effectiveProviderNameLower.includes('ollama') ||
+    effectiveProviderBaseUrlLower.includes('127.0.0.1:11434') ||
+    effectiveProviderBaseUrlLower.includes('localhost:11434')
+  const shouldShowAnalysis =
+    effectiveProvider?.type === 'deepseek' ||
+    isOllamaLikeProvider
 
   const toggleAutoModel = () => {
     if (isAutoModel) {
@@ -1988,11 +2001,12 @@ function AppLoaded(): JSX.Element {
           useProviderDefault: 'Use provider default',
           contextWindow: 'Context window (messages)',
           thinking: 'Thinking',
-          thinkingDefault: 'Default',
+          thinkingSelect: 'Reasoning level',
           thinkingOff: 'Off',
           thinkingLow: 'Low',
           thinkingMedium: 'Medium',
           thinkingHigh: 'High',
+          thinkingXHigh: 'Ultra',
           preview: 'Preview',
           prepare: 'Prepare'
         },
@@ -2074,11 +2088,12 @@ function AppLoaded(): JSX.Element {
           useProviderDefault: '使用提供商默认',
           contextWindow: '上下文窗口（消息数）',
           thinking: '思考',
-          thinkingDefault: '默认',
+          thinkingSelect: '选择推理功能',
           thinkingOff: '关闭',
           thinkingLow: '低',
           thinkingMedium: '中',
           thinkingHigh: '高',
+          thinkingXHigh: '超高',
           preview: '预览',
           prepare: '准备'
         },
@@ -2161,11 +2176,12 @@ function AppLoaded(): JSX.Element {
           useProviderDefault: '既定モデルを使用',
           contextWindow: 'コンテキスト（メッセージ数）',
           thinking: 'Thinking',
-          thinkingDefault: 'Default',
+          thinkingSelect: '推論レベルを選択',
           thinkingOff: 'Off',
           thinkingLow: 'Low',
           thinkingMedium: 'Medium',
           thinkingHigh: 'High',
+          thinkingXHigh: 'Ultra',
           preview: 'プレビュー',
           prepare: '準備'
         },
@@ -2653,21 +2669,27 @@ function AppLoaded(): JSX.Element {
       return false
     }
 
-    let ensuredProjectId = String(useStore.getState().ui.activeProjectId || '').trim()
+    const lang = String(settings?.language || 'en').trim()
+    const noProjectMsg =
+      lang === 'zh'
+        ? '请先添加项目'
+        : lang === 'ja'
+          ? '先にプロジェクトを追加してください'
+          : 'Please add a project first'
+    const stateNow = useStore.getState()
+    const projectsNow = Array.isArray((stateNow.settings as any)?.projects) ? ((stateNow.settings as any).projects as any[]) : []
+    let ensuredProjectId = String(stateNow.ui.activeProjectId || '').trim()
+    const hasActiveProject =
+      Boolean(ensuredProjectId) && projectsNow.some((p: any) => String(p?.id || '').trim() === ensuredProjectId)
+    if (!hasActiveProject) {
+      ensuredProjectId = ''
+    }
     if (!ensuredProjectId) {
-      const res = await window.anima?.window?.pickDirectory?.()
-      if (!res?.ok || res.canceled) return false
-      const dir = String(res.path || '').trim()
-      if (!dir) return false
-      ensuredProjectId = await useStore.getState().addProject(dir)
-      if (ensuredProjectId) await useStore.getState().createChatInProject(ensuredProjectId)
+      alert(noProjectMsg)
+      return false
     }
 
-    if (ensuredProjectId && !String(useStore.getState().activeChatId || '').trim()) {
-      await useStore.getState().createChatInProject(ensuredProjectId)
-    }
-
-    const ensuredChatId = String(useStore.getState().activeChatId || '').trim()
+    const ensuredChatId = String(await ensureActiveChatInProject(ensuredProjectId)).trim()
     if (!ensuredChatId) return false
 
     const userMessage = trimmed
@@ -3696,6 +3718,14 @@ function AppLoaded(): JSX.Element {
                           </Button>
                         </TooltipTrigger>
                         <TooltipContent>New Chat</TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={openSettings}>
+                            <Settings className="w-4 h-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Settings</TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
                   </div>
@@ -5340,7 +5370,7 @@ function AppLoaded(): JSX.Element {
                           </PopoverContent>
                         </Popover>
 
-                        {effectiveProvider?.type === 'deepseek' ? (
+                        {effectiveProvider ? (
                           <Popover open={popoverPanel === 'thinking'} onOpenChange={(open) => handlePopoverOpenChange('thinking', open)}>
                             <PopoverTrigger asChild onMouseEnter={() => handleInputPanelMouseEnter('thinking')} onMouseLeave={handleInputPanelMouseLeave}>
                             <Button
@@ -5353,14 +5383,15 @@ function AppLoaded(): JSX.Element {
                                   off: t.composer.thinkingOff,
                                   low: t.composer.thinkingLow,
                                   medium: t.composer.thinkingMedium,
-                                  high: t.composer.thinkingHigh
+                                  high: t.composer.thinkingHigh,
+                                  xhigh: t.composer.thinkingXHigh
                                 }[thinkingLevel] || t.composer.thinkingMedium}
                                 </span>
                                 <ChevronDown className="w-3.5 h-3.5 opacity-50 shrink-0" />
                               </Button>
                             </PopoverTrigger>
                             <PopoverContent
-                              className="w-40 p-1"
+                              className="w-44 p-1"
                               align="start"
                               side="top"
                               sideOffset={8}
@@ -5368,13 +5399,14 @@ function AppLoaded(): JSX.Element {
                               onMouseLeave={handleMouseLeave}
                             >
                               <div className="px-2 py-1">
-                                <h4 className="font-medium text-xs leading-none">{t.composer.thinking}</h4>
+                                <h4 className="font-medium text-xs leading-none">{t.composer.thinkingSelect}</h4>
                               </div>
                               {[
                                 { value: 'off', label: t.composer.thinkingOff },
                                 { value: 'low', label: t.composer.thinkingLow },
                                 { value: 'medium', label: t.composer.thinkingMedium },
-                                { value: 'high', label: t.composer.thinkingHigh }
+                                { value: 'high', label: t.composer.thinkingHigh },
+                                { value: 'xhigh', label: t.composer.thinkingXHigh }
                               ].map((opt) => (
                                 <button
                                   key={opt.value}
@@ -5385,7 +5417,10 @@ function AppLoaded(): JSX.Element {
                                     setPopoverPanel('')
                                   }}
                                 >
-                                  <span>{opt.label}</span>
+                                  <span className="inline-flex items-center gap-2">
+                                    <Brain className="w-3.5 h-3.5 text-muted-foreground" />
+                                    {opt.label}
+                                  </span>
                                   {thinkingLevel === opt.value ? <Check className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5" />}
                                 </button>
                               ))}
@@ -5560,6 +5595,7 @@ function ChatComposer({
   const [value, setValue] = useState('')
   const voiceAnchorRef = useRef<number | null>(null)
   const reduceMotion = useReducedMotion()
+  const actionButtonSizeClass = 'h-8 w-8 p-0 rounded-full'
 
   const api = useMemo(() => {
     const ensureAnchor = (prev: string) => {
@@ -5655,7 +5691,7 @@ function ChatComposer({
           <Button
             variant="ghost"
             size="icon"
-            className={`h-8 w-8 rounded-full transition-all duration-200 focus-visible:ring-0 focus-visible:ring-offset-0 ${
+            className={`${actionButtonSizeClass} transition-all duration-200 focus-visible:ring-0 focus-visible:ring-offset-0 ${
               isRecording
                 ? 'text-blue-500 border-0 bg-blue-500/8 hover:bg-blue-500/12'
                 : `text-muted-foreground hover:text-foreground hover:bg-black/5 ${isVoiceModelAvailable ? '' : 'opacity-50'}`
@@ -5691,7 +5727,7 @@ function ChatComposer({
           <Button
             variant="ghost"
             size="icon"
-            className={`h-8 w-8 rounded-full transition-all duration-200 focus-visible:ring-0 focus-visible:ring-offset-0 ${
+            className={`${actionButtonSizeClass} transition-all duration-200 focus-visible:ring-0 focus-visible:ring-offset-0 ${
               String(value || '').trim() || isLoading
                 ? 'bg-black text-white hover:bg-black/90'
                 : 'bg-black/55 text-white/80'

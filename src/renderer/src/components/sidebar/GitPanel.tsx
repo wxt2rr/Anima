@@ -11,7 +11,6 @@ import { useStore } from '@/store/useStore';
 export const GitPanel: React.FC<{ active?: boolean }> = ({ active = true }) => {
   const settings = useStore((s) => s.settings)
   const ui = useStore((s) => s.ui)
-  const updateSettings = useStore((s) => s.updateSettings)
   const projects = Array.isArray(settings?.projects) ? ((settings as any).projects as any[]) : []
   const activeProjectId = String((ui as any)?.activeProjectId || '').trim()
   const activeProjectDir = activeProjectId
@@ -31,34 +30,121 @@ export const GitPanel: React.FC<{ active?: boolean }> = ({ active = true }) => {
   const [changesOpen, setChangesOpen] = useState(true);
   const [stashesOpen, setStashesOpen] = useState(true);
   const [headOpen, setHeadOpen] = useState(true);
+  const debugEnabled = typeof import.meta !== 'undefined' && Boolean((import.meta as any).env?.DEV)
+  const debugRef = React.useRef({ renders: 0, refreshes: 0 })
+  debugRef.current.renders += 1
+  if (debugEnabled) {
+    console.debug('[GitPanel][render]', {
+      renders: debugRef.current.renders,
+      active,
+      activeProjectDir,
+      workspaceDir: settings?.workspaceDir || '',
+      cwd,
+      isRepo,
+      loading
+    })
+  }
+
+  const withTimeout = async <T,>(promise: Promise<T>, ms: number): Promise<T> => {
+    let timer: number | null = null
+    const timeout = new Promise<never>((_, reject) => {
+      timer = window.setTimeout(() => reject(new Error('timeout')), ms)
+    })
+    try {
+      return await Promise.race([promise, timeout])
+    } finally {
+      if (timer != null) window.clearTimeout(timer)
+    }
+  }
 
   const refreshAll = async (path: string) => {
-    setLoading(true);
-    const repoCheck = await window.anima.git.checkIsRepo(path);
-    setIsRepo(!!repoCheck.isRepo);
-
-    if (repoCheck.isRepo) {
-        const [statusRes, branchRes, stashRes, logRes] = await Promise.all([
-            window.anima.git.status(path),
-            window.anima.git.getBranches(path),
-            window.anima.git.getStashes(path),
-            window.anima.git.getLog(path)
-        ]);
-
-        if (statusRes.ok) setStatus(statusRes.status);
-        if (branchRes.ok) {
-            setBranches(branchRes.branches || []);
-            setCurrentBranch(branchRes.current || branchRes.branches?.[0] || '');
-        }
-        if (stashRes.ok) setStashes(stashRes.stashes || []);
-        if (logRes.ok) setLogs(logRes.logs || []);
+    debugRef.current.refreshes += 1
+    const refreshId = debugRef.current.refreshes
+    if (debugEnabled) {
+      console.debug('[GitPanel][refresh:start]', {
+        refreshId,
+        path,
+        active,
+        cwd,
+        workspaceDir: settings?.workspaceDir || ''
+      })
     }
-    setLoading(false);
+    setLoading(true);
+    try {
+      const repoCheck = await withTimeout(window.anima.git.checkIsRepo(path), 3000);
+      const nextIsRepo = Boolean(repoCheck?.ok && repoCheck?.isRepo)
+      setIsRepo(nextIsRepo);
+      if (debugEnabled) {
+        console.debug('[GitPanel][refresh:repoCheck]', { refreshId, path, repoCheck, nextIsRepo })
+      }
+
+      if (!nextIsRepo) {
+        setStatus(null)
+        setBranches([])
+        setCurrentBranch('')
+        setStashes([])
+        setLogs([])
+        if (debugEnabled) {
+          console.debug('[GitPanel][refresh:end]', { refreshId, path, nextIsRepo, reason: 'not_repo' })
+        }
+        return
+      }
+
+      const [statusRes, branchRes, stashRes, logRes] = await Promise.all([
+        window.anima.git.status(path),
+        window.anima.git.getBranches(path),
+        window.anima.git.getStashes(path),
+        window.anima.git.getLog(path)
+      ]);
+
+      if (statusRes.ok) setStatus(statusRes.status);
+      if (branchRes.ok) {
+        setBranches(branchRes.branches || []);
+        setCurrentBranch(branchRes.current || branchRes.branches?.[0] || '');
+      }
+      if (stashRes.ok) setStashes(stashRes.stashes || []);
+      if (logRes.ok) setLogs(logRes.logs || []);
+      if (debugEnabled) {
+        console.debug('[GitPanel][refresh:end]', {
+          refreshId,
+          path,
+          nextIsRepo,
+          statusOk: statusRes.ok,
+          branchOk: branchRes.ok,
+          stashOk: stashRes.ok,
+          logOk: logRes.ok
+        })
+      }
+    } catch (error) {
+      if (debugEnabled) {
+        console.debug('[GitPanel][refresh:error]', {
+          refreshId,
+          path,
+          error: error instanceof Error ? error.message : String(error || '')
+        })
+      }
+      setIsRepo(false)
+      setStatus(null)
+      setBranches([])
+      setCurrentBranch('')
+      setStashes([])
+      setLogs([])
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Initialize: Check if current opened directory is a repo
   useEffect(() => {
     if (!active) return
+    if (debugEnabled) {
+      console.debug('[GitPanel][effect:init]', {
+        active,
+        activeProjectDir,
+        workspaceDir: settings?.workspaceDir || '',
+        cwd
+      })
+    }
     const init = async () => {
         const base = String(activeProjectDir || settings?.workspaceDir || '').trim()
         if (base) {
@@ -69,7 +155,6 @@ export const GitPanel: React.FC<{ active?: boolean }> = ({ active = true }) => {
             try {
                 const res = await window.anima.fs.getCwd();
                 if (res.ok && res.cwd) {
-                    updateSettings({ workspaceDir: res.cwd });
                     setCwd(res.cwd);
                     refreshAll(res.cwd);
                 }
@@ -79,12 +164,11 @@ export const GitPanel: React.FC<{ active?: boolean }> = ({ active = true }) => {
         }
     };
     init();
-  }, [active, activeProjectDir, settings?.workspaceDir, updateSettings]);
+  }, [active, activeProjectDir, settings?.workspaceDir]);
 
   const handlePickRepo = async () => {
     const res = await window.anima.window.pickDirectory();
     if (res.ok && !res.canceled) {
-      updateSettings({ workspaceDir: res.path });
       setCwd(res.path);
       refreshAll(res.path);
     }

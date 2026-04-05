@@ -90,12 +90,38 @@ def apply_thinking_level(
 ) -> tuple[Optional[Dict[str, Any]], int]:
     spec = getattr(provider, "_spec", None)
     provider_type = str(getattr(spec, "provider_type", "") or "").strip().lower() if spec is not None else ""
+    provider_id = str(getattr(spec, "provider_id", "") or "").strip().lower() if spec is not None else ""
+    base_url = str(getattr(spec, "base_url", "") or "").strip().lower() if spec is not None else ""
+
+    level = str(composer.get("thinkingLevel") or "").strip().lower() or "default"
+    if level not in ("default", "off", "low", "medium", "high", "xhigh"):
+        level = "default"
+
+    # Ollama/OpenAI-compatible实现的思考开关存在差异，这里同时下发常见字段做兼容。
+    # 仅在Ollama本地端口/ID命中时启用，避免影响其他兼容提供商。
+    is_ollama = provider_id.startswith("ollama") or "127.0.0.1:11434" in base_url or "localhost:11434" in base_url
+    if is_ollama and level != "default":
+        out_extra = dict(extra_body or {})
+        effort_map = {
+            "off": "none",
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "high",
+        }
+        effort = effort_map.get(level)
+        if effort:
+            out_extra["reasoning_effort"] = effort
+            if effort == "none":
+                out_extra["think"] = False
+            else:
+                out_extra["think"] = True
+                out_extra["reasoning"] = {"effort": effort}
+            return out_extra, max_tokens
+
     if provider_type != "deepseek":
         return extra_body, max_tokens
 
-    level = str(composer.get("thinkingLevel") or "").strip().lower() or "default"
-    if level not in ("default", "off", "low", "medium", "high"):
-        level = "default"
     if level == "default":
         return extra_body, max_tokens
 
@@ -109,6 +135,8 @@ def apply_thinking_level(
         return out_extra, 4096
     if level == "medium":
         return out_extra, 16384
+    if level == "xhigh":
+        return out_extra, max_tokens
     return out_extra, max_tokens
 
 

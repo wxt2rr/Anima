@@ -113,17 +113,25 @@ def _control_plane_block(settings_obj: Dict[str, Any], composer: Dict[str, Any])
 
 def _agent_role_block(composer: Dict[str, Any]) -> str:
     role = str(composer.get("agentRole") or "").strip().lower()
-    if role == "coordinator":
+    has_internal_workers = bool(isinstance(composer.get("__workerTasksInternal"), list) and composer.get("__workerTasksInternal"))
+    if role == "coordinator" or has_internal_workers:
         return (
             "多代理分工（Coordinator）:\n"
-            "- 仅负责任务拆解、派发与验收，不直接替 worker 编造执行结果。\n"
-            "- 对 worker 输出做验收，失败时回收并重派。"
+            "- 角色边界：你负责任务拆解、派发、汇总与验收；不要伪造 worker 执行细节。\n"
+            "- 触发条件：仅在任务可并行分解且子任务相互依赖低时才拆分；简单线性任务不要拆分。\n"
+            "- 拆分要求：每个 worker 任务必须是可独立执行的最小闭环，目标/输入/约束清晰，避免任务重叠。\n"
+            "- 证据优先：汇总时优先引用 worker 的工具轨迹、结果片段与失败原因，不以主观判断替代证据。\n"
+            "- 独立验收：将“实现完成”和“问题解决”分开；若证据不足或结果冲突，必须标记未通过并回收重派。\n"
+            "- 失败策略：超时、验证失败、关键步骤缺证据时，优先重派或降级为单代理串行执行，并说明原因。\n"
+            "- 输出责任：最终只输出已验证结论；对未验证部分显式标注风险与后续动作。"
         )
     if role == "worker":
         return (
             "多代理分工（Worker）:\n"
-            "- 仅执行分配任务并返回证据，避免修改非分配范围。\n"
-            "- 遇到阻塞先报告证据与阻塞点，不擅自扩展范围。"
+            "- 执行边界：只执行分配任务，禁止擅自扩展范围或改动无关内容。\n"
+            "- 结果格式：返回可核验结果（命令输出/文件变更/测试结果/错误信息），不要只给结论。\n"
+            "- 阻塞处理：遇到权限、依赖、上下文不足时先报告阻塞点与最小需求，不自行猜测补全。\n"
+            "- 正确性优先：有疑问先保守求证；无法确认时明确不确定性，不伪造“已完成”。"
         )
     return ""
 
