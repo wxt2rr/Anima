@@ -1,111 +1,136 @@
-# Anima 
+# Anima
 <img src="https://github.com/wxt2rr/Anima/blob/main/images/logo_padded.png" width="100">
 
-[中文](./README.zh-CN.md) | [English](./README.en.md)
+Anima 是一个面向 macOS 的 AI 桌面助手，采用 Electron + 本地 Python 后端架构。它把聊天、工具调用、模型管理、技能系统、自动化任务和桌面能力整合在一个本地应用里，重点是可控、可验证、可扩展。
 
-Anima is an AI desktop companion for macOS, built with Electron and a local Python backend.
+## 功能概览
 
-## Highlights
+- 对话执行引擎，支持普通执行、SSE 流式输出、继续执行与运行记录查询
+- 多模型服务商管理，支持云端模型、本地模型和 ACP Provider
+- 内置工具系统，覆盖文件、终端、检索、网页抓取、截图、图像/视频生成等场景
+- Skills 机制，支持扫描、校验、按需加载 `SKILL.md`
+- 自动化任务（Cron/定时任务）
+- Telegram 通道集成（可选）
+- 语音能力，包括模型管理、转写与流式语音接口
+- 内置 Python 后端，随桌面应用一起打包
+- GitHub Releases 自动更新
 
-- Chat execution engine (sync + streaming)
-- Multi-provider model configuration and model fetching
-- Local tool calling (files, shell, web search/fetch, image/video generation)
-- Skills system (`SKILL.md`-based, on-demand loading)
-- Automation jobs (Cron scheduler)
-- Optional Telegram channel integration
-- Voice transcription stack (model management + transcription)
-- Built-in Python backend bundled with the app
-- Auto update via GitHub Releases
+![主界面示意](https://github.com/wxt2rr/Anima/blob/main/images/files.png)
+![Git 相关界面示意](https://github.com/wxt2rr/Anima/blob/main/images/git.png)
+![终端界面示意](https://github.com/wxt2rr/Anima/blob/main/images/terminal.png)
+![网页工具界面示意](https://github.com/wxt2rr/Anima/blob/main/images/web.png)
+![设置页示意](https://github.com/wxt2rr/Anima/blob/main/images/setting.png)
 
-![Main UI Placeholder](https://github.com/wxt2rr/Anima/blob/main/images/files.png)
-![Main UI Placeholder](https://github.com/wxt2rr/Anima/blob/main/images/git.png)
-![Main UI Placeholder](https://github.com/wxt2rr/Anima/blob/main/images/terminal.png)
-![Main UI Placeholder](https://github.com/wxt2rr/Anima/blob/main/images/web.png)
-![Main UI Placeholder](https://github.com/wxt2rr/Anima/blob/main/images/setting.png)
+## 当前内置模型服务商
 
-## Feature Details
+当前默认配置已内置以下模型服务商：
 
-### 1. Conversation and Run Engine
+- `Qwen`：普通 OpenAI Compatible Provider，默认使用 DashScope 兼容接口，需填写 API Key
+- `Codex Auth`：基于 ChatGPT/Codex OAuth 的专用 Provider
+- `OpenAI`
+- `Anthropic`
+- `Google`
+- `DeepSeek`
+- `Moonshot`
+- `Ollama (Local)`
+- `LM Studio (Local)`
+- `Qwen Code (ACP)`
+- `Codex (codex-acp)`
 
-- Backend provides both `/api/runs` and `/api/runs?stream=1` (non-streaming + SSE streaming).
-- Supports run resume (`/api/runs/{id}/resume`) and run retrieval (`/api/runs/{id}`).
-- Chat history and run data are managed through dedicated chat APIs (`/api/chats/*`).
+说明：
 
-### 2. Model and Provider Management
+- `Qwen Auth` 相关 OAuth 代码仍保留在仓库中用于兼容旧数据，但已从设置页默认入口隐藏，不再作为当前推荐接入方式。
+- 本地 Provider 里，`Ollama` 和 `LM Studio` 走 OpenAI Compatible 接口；ACP Provider 则走本地命令进程。
 
-- Multi-provider setup with model fetching via `/api/providers/fetch_models`.
-- Built-in OpenAI Codex OAuth profile support in settings.
-- Per-run overrides for provider/model and runtime options.
+## 功能详解
 
-### 3. Tooling System (Builtin + MCP)
+### 1. 对话与运行引擎
 
-- Built-in tools include:
-  - Workspace/file operations: `glob_files`, `list_dir`, `read_file`, `edit_file`, `write_file`, `rg_search`
-  - Shell execution: `bash`
-  - Web retrieval: `WebSearch`, `WebFetch`
-  - Media generation: `screenshot`, `generate_image`, `generate_video`
-  - Skill loading: `load_skill`
-  - Automation controls: `cron_list`, `cron_upsert`, `cron_delete`, `cron_run`
-- MCP tool discovery and unified listing are available through `/tools/list`.
+- 后端提供 `/api/runs` 与 `/api/runs?stream=1` 两条执行路径，分别对应普通执行与流式执行。
+- 支持继续执行（`/api/runs/{id}/resume`）与运行记录查询（`/api/runs/{id}`）。
+- 聊天线程与运行数据通过 `/api/chats/*` 分层管理。
+- 前端支持工具轨迹展示、运行状态展示、diff 结果查看等调试信息。
 
-### 4. Permission and Safety Controls
+### 2. 模型与服务商管理
 
-- `bash` supports two permission modes:
-  - `workspace_whitelist` (default): restricted to workspace + whitelist roots
-  - `full_access`: unrestricted mode
-- Command blacklist/whitelist is configurable using command entries (not regex required).
-- In default mode, blacklisted commands can require explicit human confirmation before execution.
-- Web fetch pipeline blocks localhost/private-network targets by default to reduce SSRF risk.
+- 通过 `/api/providers/fetch_models` 拉取和管理模型列表。
+- 支持按会话覆盖 provider / model 等运行参数。
+- 支持 OpenAI Compatible、专有 Provider、ACP、本地模型服务等多种接入形式。
+- 设置页内置 `Codex Auth` 登录流程，也提供普通 `Qwen`、`OpenAI`、`Anthropic` 等 API Key 入口。
 
-### 5. Skills System
+### 3. 工具系统（Builtin + MCP）
 
-- Local skill scanning, frontmatter validation, and on-demand content loading.
-- Settings APIs support listing skills, reading skill content, and opening the skills directory.
-- Built-in skills and user-defined skills can coexist.
+- 内置工具包括：
+  - 工作区文件能力：`glob_files`、`list_dir`、`read_file`、`edit_file`、`write_file`、`rg_search`
+  - 终端执行：`bash`
+  - 网络检索与抓取：`WebSearch`、`WebFetch`
+  - 多媒体：`screenshot`、`generate_image`、`generate_video`
+  - 技能加载：`load_skill`
+  - 自动化控制：`cron_list`、`cron_upsert`、`cron_delete`、`cron_run`
+- 支持 MCP 工具发现与统一调度，通过 `/tools/list` 聚合 builtin + MCP tools。
+- 对工具执行结果支持轨迹记录、diff 展示和错误可视化。
 
-### 6. Automation (Cron Jobs)
+### 4. 权限与安全机制
 
-- CRUD + manual trigger endpoints for jobs (`/api/cron/jobs` + `cron_run`).
-- Supports one-time schedules, interval schedules, and cron expressions.
-- Scheduler state is reconciled on backend startup.
+- `bash` 支持两种权限模式：
+  - `workspace_whitelist`：仅允许工作区与白名单路径
+  - `full_access`：完全访问
+- 支持命令黑白名单。
+- 默认权限下，命中风险命令可触发人工确认。
+- 网页抓取默认拦截本地地址和私网地址，降低 SSRF 风险。
+- 编辑工具冲突场景下，运行时会阻止同文件直接重复提交旧 patch，避免连续错误重试。
 
-### 7. Telegram Channel (Optional)
+### 5. Skills 体系
 
-- Telegram integration is reconciled from settings at backend startup.
-- Incoming Telegram messages can trigger runs and return responses.
-- Reply pipeline supports text, image, document, and video payloads.
+- 支持本地技能目录扫描、frontmatter 校验和内容按需加载。
+- 设置页可查看技能列表、读取技能内容、打开技能目录。
+- 支持内置技能与用户技能共存，适合沉淀可复用工作流。
 
-### 8. Voice Capabilities
+### 6. 自动化（Cron Jobs）
 
-- Voice model base dir/catalog/installed/download-status APIs.
-- Transcription API (`/voice/transcribe`) and chunked voice stream APIs (`/voice/stream/*`).
+- 提供任务增删改查与手动触发接口（`/api/cron/jobs`、`cron_run`）。
+- 支持一次性任务、间隔任务和 Cron 表达式任务。
+- 服务启动时会根据设置自动恢复调度状态。
 
-### 9. Desktop and Dev Utilities
+### 7. Telegram 通道（可选）
 
-- Built-in PTY terminal service (create/write/resize/kill).
-- Detects local preview URLs from terminal output and forwards them to UI.
-- Integrated app update state flow (check/download/install).
+- 后端启动时根据设置自动启停 Telegram 集成。
+- 支持从 Telegram 收到消息后触发运行并回传结果。
+- 支持文本、图片、文档、视频回包，适合远程使用。
 
-## Requirements
+### 8. 语音能力
+
+- 支持语音模型目录、模型清单、安装状态、下载状态查询。
+- 支持语音转写接口（`/voice/transcribe`）和分片流式语音接口（`/voice/stream/*`）。
+- 支持 Qwen TTS、本地模型托管与自定义 HTTP TTS 预览。
+
+### 9. 桌面端与开发辅助
+
+- 内置 PTY 终端服务，支持创建、写入、缩放、销毁。
+- 可识别终端输出中的本地预览 URL 并回传到界面。
+- 集成自动更新状态流（检查、下载、安装）。
+- 支持打包内置 Python 后端与技能目录。
+
+## 环境要求
 
 - macOS
 - Node.js + npm
 - Python 3
 
-## Development
+## 本地开发
 
 ```bash
 npm install
 npm run dev
 ```
 
-If your Python path is custom:
+如果本机 Python 路径不是默认值，可在启动前设置：
 
 ```bash
 ANIMA_PYTHON=/path/to/python3 npm run dev
 ```
 
-## Build & Package (macOS)
+## 构建与打包（macOS）
 
 ```bash
 npm install
@@ -113,69 +138,83 @@ npm run build
 npm run dist:mac
 ```
 
-Or directly:
+也可以直接执行：
 
 ```bash
 npm install
 npm run dist:mac
 ```
 
-Artifacts are generated under `dist/`:
+产物默认位于 `dist/`：
 
 - `dist/*.dmg`
 - `dist/*.zip`
-- `dist/mac-*/Anima.app` (in some build modes)
+- `dist/mac-*/Anima.app`
 
-## Auto Update
+## 常用脚本
 
-This project uses `electron-updater` + `electron-builder`. Once a release is published on GitHub Releases, the app can fetch and apply updates automatically.
+```bash
+npm run dev
+npm run build
+npm run typecheck
+npm run lint
+npm run test:acp
+npm run dist:mac
+npm run dist:mac:publish
+npm run verify:dist:mac
+```
 
-![Updater Placeholder](https://github.com/wxt2rr/Anima/blob/main/images/updates.png)
+## 自动更新
 
-## Release Flow
+项目已接入 `electron-updater` + `electron-builder`，发布到 GitHub Releases 后可自动拉取更新。
 
-1. Bump `package.json` version and commit.
-2. Tag and push:
+![更新界面示意](https://github.com/wxt2rr/Anima/blob/main/images/updates.png)
+
+## 发布流程
+
+1. 更新 `package.json` 版本号并提交
+2. 打 tag 并推送：
 
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-3. CI runs `npm run dist:mac:publish` and uploads artifacts to the tagged Release.
+3. CI 执行 `npm run dist:mac:publish` 并上传产物到对应 Release
 
-One-command release script:
+一键发版脚本：
 
 ```bash
 npm run release -- 0.1.1
 ```
 
-Or interactive:
+也支持交互式：
 
 ```bash
 npm run release
 ```
 
-## FAQ
+## 项目结构
 
-- Stale app icon: macOS may cache Dock/Finder icons. You can run `killall Dock` if needed.
-- Unsigned/unnotarized build: Gatekeeper prompts may appear. Use right-click "Open" or remove quarantine:
+```text
+.
+├── src/              # Electron main / preload / renderer
+├── pybackend/        # 本地 Python 后端
+├── skills/           # 内置技能
+├── build/            # 打包资源
+├── images/           # 文档与界面截图
+└── scripts/          # 构建、发版与校验脚本
+```
+
+## 常见问题
+
+- 看到旧图标：macOS 可能缓存 Dock/Finder 图标，必要时执行 `killall Dock`
+- 未签名/未公证：可能触发 Gatekeeper 提示，可右键“打开”或移除隔离属性：
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Anima.app
 ```
 
-## Project Structure (Simplified)
-
-```text
-.
-├── src/              # Electron renderer/main/preload
-├── pybackend/        # Local Python backend
-├── skills/           # Built-in skills
-├── build/            # Packaging assets
-└── scripts/          # Build/release helper scripts
-```
-
-## License
+## 许可证
 
 [MIT](./LICENSE)
