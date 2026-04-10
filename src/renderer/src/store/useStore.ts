@@ -145,6 +145,7 @@ export interface Provider {
   description?: string
   icon?: string
   isEnabled: boolean
+  hiddenInSettings?: boolean
   auth?: {
     mode: 'oauth_device_code' | 'oauth_openai_codex'
     profileId?: string
@@ -276,6 +277,7 @@ export interface Settings {
   mcpEnabledServerIds: string[]
   defaultSkillMode: ChatDefaultMode
   skillsEnabledIds: string[]
+  orchestrationForce?: boolean
 
   enableStreamingSoundEffects: boolean
 
@@ -322,6 +324,10 @@ export interface Settings {
     apiKey?: string
     qwenModel?: string
     qwenLanguageType?: string
+    qwenMode?: 'endpoint' | 'local'
+    qwenLocalModelId?: string
+    qwenLocalEndpoint?: string
+    qwenLocalModelsInstalled?: Array<{ id: string; name?: string; path?: string }>
     speed: number
     pitch: number
     volume: number
@@ -800,6 +806,7 @@ const normalizeSettingsPayload = (rawSettings: any): any => {
 
   if (!rawSettings.defaultToolMode) rawSettings.defaultToolMode = 'auto'
   if (!rawSettings.defaultSkillMode) rawSettings.defaultSkillMode = 'auto'
+  rawSettings.orchestrationForce = Boolean(rawSettings.orchestrationForce)
   if (!rawSettings.selectedSystemPromptId) rawSettings.selectedSystemPromptId = ''
 
   if (!rawSettings.voice) {
@@ -834,6 +841,10 @@ const normalizeSettingsPayload = (rawSettings: any): any => {
       apiKey: '',
       qwenModel: 'qwen3-tts-flash',
       qwenLanguageType: 'Auto',
+      qwenMode: 'endpoint',
+      qwenLocalModelId: 'qwen3-tts-flash',
+      qwenLocalEndpoint: 'http://127.0.0.1:8000/v1/audio/speech',
+      qwenLocalModelsInstalled: [],
       speed: 1,
       pitch: 1,
       volume: 1,
@@ -850,6 +861,11 @@ const normalizeSettingsPayload = (rawSettings: any): any => {
     tts.apiKey = String(tts.apiKey || '').trim()
     tts.qwenModel = String(tts.qwenModel || '').trim() || 'qwen3-tts-flash'
     tts.qwenLanguageType = String(tts.qwenLanguageType || '').trim() || 'Auto'
+    const qwenModeRaw = String(tts.qwenMode || '').trim().toLowerCase()
+    tts.qwenMode = qwenModeRaw === 'local' ? 'local' : 'endpoint'
+    tts.qwenLocalModelId = String(tts.qwenLocalModelId || '').trim() || 'qwen3-tts-flash'
+    tts.qwenLocalEndpoint = String(tts.qwenLocalEndpoint || '').trim() || 'http://127.0.0.1:8000/v1/audio/speech'
+    if (!Array.isArray(tts.qwenLocalModelsInstalled)) tts.qwenLocalModelsInstalled = []
     tts.enabled = Boolean(tts.enabled)
     const speed = Number(tts.speed)
     const pitch = Number(tts.pitch)

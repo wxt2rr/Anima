@@ -318,6 +318,63 @@ class OpenAIChatProvider:
         except Exception as e:
             raise RuntimeError(str(e))
 
+    def chat_completion(
+        self,
+        messages: List[Dict[str, Any]],
+        temperature: float,
+        max_tokens: int,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        model_override: Optional[str] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        content = ""
+        tool_acc: Dict[int, Dict[str, Any]] = {}
+        for evt in self.chat_completion_stream(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            tools=tools,
+            tool_choice=tool_choice,
+            model_override=model_override,
+            extra_body=extra_body,
+        ):
+            choice = ((evt.get("choices") or [{}])[0]) if isinstance(evt, dict) else {}
+            delta = (choice.get("delta") or {}) if isinstance(choice, dict) else {}
+            part = delta.get("content")
+            if isinstance(part, str) and part:
+                content += part
+            tc_list = delta.get("tool_calls")
+            if isinstance(tc_list, list):
+                for tc in tc_list:
+                    if not isinstance(tc, dict):
+                        continue
+                    idx = tc.get("index")
+                    if not isinstance(idx, int):
+                        continue
+                    cur_tc = tool_acc.get(idx) or {"id": "", "type": "", "function": {"name": "", "arguments": ""}}
+                    if isinstance(tc.get("id"), str) and tc.get("id"):
+                        cur_tc["id"] = tc.get("id")
+                    if isinstance(tc.get("type"), str) and tc.get("type"):
+                        cur_tc["type"] = tc.get("type")
+                    fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+                    if isinstance(fn.get("name"), str) and fn.get("name"):
+                        cur_tc["function"]["name"] = fn.get("name")
+                    if isinstance(fn.get("arguments"), str) and fn.get("arguments"):
+                        cur_tc["function"]["arguments"] = (cur_tc["function"].get("arguments") or "") + fn.get("arguments")
+                    tool_acc[idx] = cur_tc
+        message: Dict[str, Any] = {"role": "assistant", "content": content}
+        if tool_acc:
+            message["tool_calls"] = [tool_acc[i] for i in sorted(tool_acc.keys())]
+        return {
+            "choices": [
+                {
+                    "message": message,
+                    "finish_reason": "tool_calls" if tool_acc else "stop",
+                }
+            ]
+        }
+
 
 class OpenAICodexChatProvider(OpenAIChatProvider):
     def __init__(self, spec: ProviderSpec):
@@ -420,8 +477,10 @@ class OpenAICodexChatProvider(OpenAIChatProvider):
         messages: List[Dict[str, Any]],
         temperature: float,
         max_tokens: int,
-        model_override: Optional[str],
-        extra_body: Optional[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        model_override: Optional[str] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         actual_model = str(model_override or self._spec.model or "").strip()
         if not actual_model:
@@ -435,24 +494,8 @@ class OpenAICodexChatProvider(OpenAIChatProvider):
                 reasoning_effort = suffix[1:]
                 break
 
-        inp: List[Dict[str, str]] = []
-        instructions_parts: List[str] = []
-        for m in messages or []:
-            if not isinstance(m, dict):
-                continue
-            role = str(m.get("role") or "").strip().lower()
-            content = str(m.get("content") or "")
-            if role == "system":
-                if content.strip():
-                    instructions_parts.append(content)
-            elif role == "user":
-                inp.append({"role": "user", "content": content})
-            elif role == "assistant":
-                inp.append({"role": "assistant", "content": content})
-            else:
-                continue
+        instructions, inp = self._codex_build_input(messages)
 
-        instructions = "\n\n".join([x for x in instructions_parts if str(x).strip()]).strip()
         if not instructions:
             instructions = "You are a helpful assistant."
 
@@ -465,6 +508,11 @@ class OpenAICodexChatProvider(OpenAIChatProvider):
         }
         if reasoning_effort:
             payload["reasoning"] = {"effort": reasoning_effort}
+        if tools:
+            payload["tools"] = self._codex_map_tools(tools)
+            mapped_tool_choice = self._codex_map_tool_choice(tool_choice)
+            if mapped_tool_choice is not None:
+                payload["tool_choice"] = mapped_tool_choice
         if isinstance(extra_body, dict):
             for k, v in extra_body.items():
                 if k in ("model", "input", "store", "stream"):
@@ -473,6 +521,183 @@ class OpenAICodexChatProvider(OpenAIChatProvider):
                     continue
                 payload[k] = v
         return payload
+
+    def _codex_build_input(self, messages: List[Dict[str, Any]]) -> tuple[str, List[Dict[str, Any]]]:
+        inp: List[Dict[str, Any]] = []
+        instructions_parts: List[str] = []
+        known_call_ids: set[str] = set()
+        for m in messages or []:
+            if not isinstance(m, dict):
+                continue
+            role = str(m.get("role") or "").strip().lower()
+            content = str(m.get("content") or "")
+            if role == "system":
+                if content.strip():
+                    instructions_parts.append(content)
+                continue
+            if role == "user":
+                inp.append({"role": "user", "content": content})
+                continue
+            if role == "assistant":
+                if content:
+                    inp.append({"role": "assistant", "content": content})
+                tool_calls = m.get("tool_calls")
+                if isinstance(tool_calls, list):
+                    for tc in tool_calls:
+                        if not isinstance(tc, dict):
+                            continue
+                        fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+                        call_id = str(tc.get("id") or "").strip()
+                        name = str(fn.get("name") or "").strip()
+                        arguments = str(fn.get("arguments") or "")
+                        if not call_id or not name:
+                            continue
+                        known_call_ids.add(call_id)
+                        inp.append({"type": "function_call", "call_id": call_id, "name": name, "arguments": arguments})
+                continue
+            if role == "tool":
+                call_id = str(m.get("tool_call_id") or "").strip()
+                if not call_id or call_id not in known_call_ids:
+                    continue
+                inp.append({"type": "function_call_output", "call_id": call_id, "output": content})
+        instructions = "\n\n".join([x for x in instructions_parts if str(x).strip()]).strip()
+        return instructions, inp
+
+    def _codex_map_tool_choice(self, tool_choice: Optional[Union[str, Dict[str, Any]]]) -> Optional[Union[str, Dict[str, Any]]]:
+        if tool_choice is None:
+            return None
+        if isinstance(tool_choice, str):
+            s = tool_choice.strip()
+            return s or None
+        if not isinstance(tool_choice, dict):
+            return None
+        choice_type = str(tool_choice.get("type") or "").strip()
+        if choice_type != "function":
+            return tool_choice
+        fn = tool_choice.get("function") if isinstance(tool_choice.get("function"), dict) else {}
+        name = str(fn.get("name") or "").strip()
+        if not name:
+            return None
+        return {"type": "function", "name": name}
+
+    def _codex_map_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for tool in tools or []:
+            if not isinstance(tool, dict):
+                continue
+            tool_type = str(tool.get("type") or "").strip() or "function"
+            if tool_type != "function":
+                out.append(tool)
+                continue
+            fn = tool.get("function") if isinstance(tool.get("function"), dict) else {}
+            name = str(fn.get("name") or tool.get("name") or "").strip()
+            if not name:
+                continue
+            description = str(fn.get("description") or tool.get("description") or "").strip()
+            parameters = fn.get("parameters")
+            if not isinstance(parameters, dict):
+                parameters = tool.get("parameters") if isinstance(tool.get("parameters"), dict) else {"type": "object", "properties": {}}
+            strict = bool(tool.get("strict") is True or fn.get("strict") is True)
+            out.append(
+                {
+                    "type": "function",
+                    "name": name,
+                    "description": description,
+                    "parameters": parameters,
+                    "strict": strict,
+                }
+            )
+        return out
+
+    def _codex_extract_tool_call_deltas(self, evt: Dict[str, Any], state: Dict[str, Any]) -> List[Dict[str, Any]]:
+        t = str(evt.get("type") or "").strip()
+        out: List[Dict[str, Any]] = []
+        by_item_id = state.setdefault("by_item_id", {})
+        announced = state.setdefault("announced", set())
+        args_emitted = state.setdefault("args_emitted", set())
+
+        def _remember(item: Dict[str, Any], fallback_index: int) -> Dict[str, Any]:
+            idx = _parse_int(evt.get("output_index"))
+            if idx is None:
+                idx = fallback_index
+            item_id = str(item.get("id") or "").strip() or f"fc_{idx}"
+            meta = {
+                "index": idx,
+                "item_id": item_id,
+                "id": str(item.get("call_id") or item_id).strip() or item_id,
+                "name": str(item.get("name") or "").strip(),
+                "arguments": str(item.get("arguments") or ""),
+            }
+            by_item_id[item_id] = meta
+            return meta
+
+        def _emit_start(meta: Dict[str, Any]) -> None:
+            item_id = str(meta.get("item_id") or "")
+            if not item_id or item_id in announced:
+                return
+            announced.add(item_id)
+            out.append(
+                {
+                    "index": int(meta.get("index") or 0),
+                    "id": str(meta.get("id") or ""),
+                    "type": "function",
+                    "function": {"name": str(meta.get("name") or ""), "arguments": ""},
+                }
+            )
+
+        if t in ("response.output_item.added", "response.output_item.done"):
+            item = evt.get("item") if isinstance(evt.get("item"), dict) else {}
+            if str(item.get("type") or "").strip() == "function_call":
+                meta = _remember(item, 0)
+                _emit_start(meta)
+                if t == "response.output_item.done":
+                    item_id = str(meta.get("item_id") or "")
+                    arguments = str(meta.get("arguments") or "")
+                    if arguments and item_id and item_id not in args_emitted:
+                        args_emitted.add(item_id)
+                        out.append({"index": int(meta.get("index") or 0), "function": {"arguments": arguments}})
+            return out
+
+        if t == "response.function_call_arguments.delta":
+            item_id = str(evt.get("item_id") or "").strip()
+            meta = by_item_id.get(item_id) if item_id else None
+            if isinstance(meta, dict):
+                _emit_start(meta)
+                delta = evt.get("delta")
+                if isinstance(delta, str) and delta:
+                    args_emitted.add(item_id)
+                    out.append({"index": int(meta.get("index") or 0), "function": {"arguments": delta}})
+            return out
+
+        if t == "response.function_call_arguments.done":
+            item_id = str(evt.get("item_id") or "").strip()
+            meta = by_item_id.get(item_id) if item_id else None
+            if isinstance(meta, dict):
+                _emit_start(meta)
+                arguments = evt.get("arguments")
+                if isinstance(arguments, str) and arguments and item_id not in args_emitted:
+                    args_emitted.add(item_id)
+                    out.append({"index": int(meta.get("index") or 0), "function": {"arguments": arguments}})
+            return out
+
+        if t == "response.done":
+            resp = evt.get("response") if isinstance(evt.get("response"), dict) else {}
+            output = resp.get("output") if isinstance(resp.get("output"), list) else []
+            for i, item in enumerate(output):
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("type") or "").strip() != "function_call":
+                    continue
+                meta = _remember(item, i)
+                _emit_start(meta)
+                item_id = str(meta.get("item_id") or "")
+                arguments = str(meta.get("arguments") or "")
+                if arguments and item_id and item_id not in args_emitted:
+                    args_emitted.add(item_id)
+                    out.append({"index": int(meta.get("index") or 0), "function": {"arguments": arguments}})
+            return out
+
+        return out
 
     def _extract_text_delta(self, evt: Dict[str, Any]) -> str:
         t = str(evt.get("type") or "").strip()
@@ -531,6 +756,19 @@ class OpenAICodexChatProvider(OpenAIChatProvider):
                 if msg:
                     raise RuntimeError(msg)
             raise RuntimeError("Codex upstream error")
+        if t == "response.output_item.done":
+            item = evt.get("item")
+            if isinstance(item, dict):
+                return self._extract_text_from_response_obj({"output": [item]})
+            return ""
+        if t == "response.output_text.done":
+            text = evt.get("text")
+            if isinstance(text, str) and text:
+                return text
+            output_text = evt.get("output_text")
+            if isinstance(output_text, str) and output_text:
+                return output_text
+            return ""
         if t not in ("response.ongoing", "response.done"):
             return ""
         resp = evt.get("response")
@@ -557,6 +795,12 @@ class OpenAICodexChatProvider(OpenAIChatProvider):
                 if isinstance(val, str) and val:
                     text += val
         return text
+
+    def _is_final_response_event(self, evt: Dict[str, Any]) -> bool:
+        t = str(evt.get("type") or "").strip()
+        if t in ("response.done", "response.completed", "response.failed", "response.cancelled", "response.incomplete"):
+            return True
+        return False
 
     def _extract_text_from_response_obj(self, resp: Dict[str, Any]) -> str:
         output = resp.get("output")
@@ -724,8 +968,7 @@ class OpenAICodexChatProvider(OpenAIChatProvider):
                 if full:
                     previous = full
 
-            t = str(evt.get("type") or "").strip()
-            if t == "response.done" or t.endswith(".done"):
+            if self._is_final_response_event(evt):
                 break
 
         if timed_out and p.poll() is None:
@@ -796,9 +1039,6 @@ class OpenAICodexChatProvider(OpenAIChatProvider):
         model_override: Optional[str] = None,
         extra_body: Optional[Dict[str, Any]] = None,
     ) -> Iterator[Dict[str, Any]]:
-        if tools or tool_choice is not None:
-            raise RuntimeError("Codex provider does not support tools yet")
-
         url = self._codex_url()
         headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
         if self._spec.api_key:
@@ -808,7 +1048,7 @@ class OpenAICodexChatProvider(OpenAIChatProvider):
         if "User-Agent" not in headers and "user-agent" not in {k.lower(): k for k in headers.keys()}:
             headers["User-Agent"] = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) anima/0.1.0 Chrome/124.0.6367.243 Electron/30.5.1 Safari/537.36"
 
-        payload = self._codex_payload(messages, temperature, max_tokens, model_override, extra_body)
+        payload = self._codex_payload(messages, temperature, max_tokens, tools, tool_choice, model_override, extra_body)
         data = json.dumps(payload).encode("utf-8")
 
         curl = shutil.which("curl")
@@ -865,8 +1105,11 @@ class OpenAICodexChatProvider(OpenAIChatProvider):
         yielded_any = False
         yielded_stop = False
         used_fallback = False
+        saw_tool_calls = False
         lines_logged = 0
         max_lines = 120
+        tool_state: Dict[str, Any] = {}
+        event_preview: List[str] = []
 
         def _readline(timeout_s: int) -> Optional[bytes]:
             if p.stdout is None:
@@ -968,6 +1211,13 @@ class OpenAICodexChatProvider(OpenAIChatProvider):
                 continue
             if not isinstance(evt, dict):
                 continue
+            if len(event_preview) < 8:
+                evt_type = str(evt.get("type") or "").strip() or "unknown"
+                try:
+                    preview = json.dumps(evt, ensure_ascii=False)
+                except Exception:
+                    preview = str(evt)
+                event_preview.append(f"{evt_type}: {preview[:300]}")
             delta = self._extract_text_delta(evt)
             if delta:
                 previous += delta
@@ -982,11 +1232,16 @@ class OpenAICodexChatProvider(OpenAIChatProvider):
                 if delta2:
                     yield {"choices": [{"delta": {"content": delta2}, "finish_reason": None}]}
 
-            t = str(evt.get("type") or "").strip()
-            if t == "response.done" or t.endswith(".done"):
+            tool_deltas = self._codex_extract_tool_call_deltas(evt, tool_state)
+            for tc in tool_deltas:
+                yielded_any = True
+                saw_tool_calls = True
+                yield {"choices": [{"delta": {"tool_calls": [tc]}, "finish_reason": None}]}
+
+            if self._is_final_response_event(evt):
                 yielded_any = True
                 yielded_stop = True
-                yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+                yield {"choices": [{"delta": {}, "finish_reason": "tool_calls" if saw_tool_calls else "stop"}]}
                 break
 
         try:
@@ -1023,12 +1278,20 @@ class OpenAICodexChatProvider(OpenAIChatProvider):
                 f"curl failed rc={rc}: {err[:2000]} | provider={self._spec.provider_id} type={self._spec.provider_type} baseUrl={self._spec.base_url} proxyUrl={normalize_proxy_url(self._spec.proxy_url)} apiKeyPresent={bool(str(self._spec.api_key or '').strip())}"
             )
         if not yielded_any:
+            preview = " | ".join(event_preview[:4]).strip()
+            if preview:
+                raise RuntimeError(f"Model returned no text and no tool calls. Upstream events: {preview}")
             for e in _fallback_once():
                 yield e
             return
-        if previous and not yielded_stop:
-            yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+        if (previous or saw_tool_calls) and not yielded_stop:
+            yield {"choices": [{"delta": {}, "finish_reason": "tool_calls" if saw_tool_calls else "stop"}]}
             return
+        if not previous and not saw_tool_calls:
+            preview = " | ".join(event_preview[:4]).strip()
+            if preview:
+                raise RuntimeError(f"Model returned no text and no tool calls. Upstream events: {preview}")
+            raise RuntimeError("Model returned no text and no tool calls")
 
     def chat_completion(
         self,
@@ -1041,6 +1304,7 @@ class OpenAICodexChatProvider(OpenAIChatProvider):
         extra_body: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         content = ""
+        tool_acc: Dict[int, Dict[str, Any]] = {}
         for evt in self.chat_completion_stream(
             messages,
             temperature=temperature,
@@ -1055,7 +1319,36 @@ class OpenAICodexChatProvider(OpenAIChatProvider):
             part = delta.get("content")
             if isinstance(part, str) and part:
                 content += part
-        return {"choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": "stop"}]}
+            tc_list = delta.get("tool_calls")
+            if isinstance(tc_list, list):
+                for tc in tc_list:
+                    if not isinstance(tc, dict):
+                        continue
+                    idx = tc.get("index")
+                    if not isinstance(idx, int):
+                        continue
+                    cur_tc = tool_acc.get(idx) or {"id": "", "type": "", "function": {"name": "", "arguments": ""}}
+                    if isinstance(tc.get("id"), str) and tc.get("id"):
+                        cur_tc["id"] = tc.get("id")
+                    if isinstance(tc.get("type"), str) and tc.get("type"):
+                        cur_tc["type"] = tc.get("type")
+                    fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+                    if isinstance(fn.get("name"), str) and fn.get("name"):
+                        cur_tc["function"]["name"] = fn.get("name")
+                    if isinstance(fn.get("arguments"), str) and fn.get("arguments"):
+                        cur_tc["function"]["arguments"] = (cur_tc["function"].get("arguments") or "") + fn.get("arguments")
+                    tool_acc[idx] = cur_tc
+        message: Dict[str, Any] = {"role": "assistant", "content": content}
+        if tool_acc:
+            message["tool_calls"] = [tool_acc[i] for i in sorted(tool_acc.keys())]
+        return {
+            "choices": [
+                {
+                    "message": message,
+                    "finish_reason": "tool_calls" if tool_acc else "stop",
+                }
+            ]
+        }
 
 
 def _provider_spec_from_obj(settings_obj: Dict[str, Any], provider_obj: Dict[str, Any]) -> Optional[ProviderSpec]:

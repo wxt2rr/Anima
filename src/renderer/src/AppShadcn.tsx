@@ -269,10 +269,7 @@ function App(): JSX.Element {
 
   if (!configLoaded) {
     return (
-      <div className="h-screen w-screen bg-background text-foreground relative overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_45%,hsl(var(--primary)/0.08),transparent_55%)]" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,hsl(var(--foreground)/0.06),transparent_55%)]" />
-
+      <div className="h-screen w-screen bg-white text-foreground relative overflow-hidden">
         <div className="h-full w-full grid place-items-center p-6">
           <motion.div
             initial={reduceMotion ? false : { opacity: 0, y: 10, scale: 0.985 }}
@@ -1766,6 +1763,7 @@ function AppLoaded(): JSX.Element {
       enabledMcpServerIds,
       skillMode: composer.skillMode || settings.defaultSkillMode,
       enabledSkillIds,
+      orchestrationForce: Boolean((settings as any).orchestrationForce),
       providerOverrideId: composer.providerOverrideId || '',
       modelOverride: composer.modelOverride || '',
       contextWindowOverride: composer.contextWindowOverride || selectedModelConfig?.config?.contextWindow || 0,
@@ -2720,6 +2718,9 @@ function AppLoaded(): JSX.Element {
             apiKey: String(tts.apiKey || ''),
             qwenModel: String(tts.qwenModel || ''),
             qwenLanguageType: String(tts.qwenLanguageType || ''),
+            qwenMode: String(tts.qwenMode || 'endpoint'),
+            qwenLocalModelId: String(tts.qwenLocalModelId || ''),
+            qwenLocalEndpoint: String(tts.qwenLocalEndpoint || ''),
             speed: Number(tts.speed || 1),
             pitch: Number(tts.pitch || 1),
             volume: Number(tts.volume || 1),
@@ -3066,20 +3067,9 @@ function AppLoaded(): JSX.Element {
                   }
                   if (Array.isArray(e.traces)) {
                     traces = e.traces
-                    const existingTraceIds = new Set(
-                      (useStore.getState().messages || [])
-                        .filter((m: any) => m?.role === 'tool' && String(m?.turnId || '') === String(turnId || ''))
-                        .flatMap((m: any) =>
-                          (Array.isArray(m?.meta?.toolTraces) ? m.meta.toolTraces : []).map((x: any) => String(x?.id || '').trim())
-                        )
-                        .filter(Boolean)
-                    )
                     for (const trace of e.traces) {
                       if (!trace || trace.status === 'running') continue
-                      const traceId = String((trace as any)?.id || '').trim()
-                      if (traceId && existingTraceIds.has(traceId)) continue
                       upsertTrace(trace)
-                      if (traceId) existingTraceIds.add(traceId)
                     }
                     assistantMeta = {
                       ...assistantMeta,
@@ -3284,20 +3274,9 @@ function AppLoaded(): JSX.Element {
                   }
                   if (Array.isArray(evt.traces)) {
                     traces = evt.traces
-                    const existingTraceIds = new Set(
-                      (useStore.getState().messages || [])
-                        .filter((m: any) => m?.role === 'tool' && String(m?.turnId || '') === String(turnId || ''))
-                        .flatMap((m: any) =>
-                          (Array.isArray(m?.meta?.toolTraces) ? m.meta.toolTraces : []).map((x: any) => String(x?.id || '').trim())
-                        )
-                        .filter(Boolean)
-                    )
                     for (const trace of evt.traces) {
                       if (!trace || trace.status === 'running') continue
-                      const traceId = String((trace as any)?.id || '').trim()
-                      if (traceId && existingTraceIds.has(traceId)) continue
                       upsertTrace(trace)
-                      if (traceId) existingTraceIds.add(traceId)
                     }
                     assistantMeta = {
                       ...assistantMeta,

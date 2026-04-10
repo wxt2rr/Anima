@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 import threading
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from http import HTTPStatus
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -12,7 +14,7 @@ from anima_backend_shared.chat import ClientDisconnected, _ensure_tool_call_ids,
 from anima_backend_shared.constants import MAX_TOOL_STEPS
 from anima_backend_shared.database import create_run, get_chat, get_chat_meta, merge_chat_meta, update_run
 from anima_backend_shared.settings import load_settings
-from anima_backend_shared.util import as_text, extract_reasoning_text, now_ms, preview_json, preview_tool_result
+from anima_backend_shared.util import as_text, extract_reasoning_text, norm_abs, now_ms, preview_json, preview_tool_result
 
 from ..llm.adapter import call_chat_completion, call_chat_completion_stream, create_provider, get_last_rate_limit
 from ..tools.executor import execute_tool, make_tool_message, select_tools
@@ -22,6 +24,7 @@ from .runs_compression import apply_persistent_compression, apply_thinking_level
 from .runs_request import prepare_messages_for_run, resolve_runtime_options
 
 _DANGEROUS_APPROVAL_PREFIX = "ANIMA_DANGEROUS_COMMAND_APPROVAL:"
+_PATCH_FILE_LINE_RE = re.compile(r"^\*\*\* (?:Add|Delete|Update) File: (.+)$")
 
 
 def _parse_dangerous_approval_error(message: Any) -> Optional[Dict[str, Any]]:
@@ -77,6 +80,129 @@ def _classify_recovery_reason(error_text: str) -> str:
     if "context" in t or "token" in t or "max_output_tokens" in t:
         return "context_budget"
     return "runtime_error"
+
+
+def _resolve_guard_path(workspace_dir: str, path: Any) -> str:
+    raw = str(path or "").strip()
+    if not workspace_dir or not raw:
+        return ""
+    try:
+        return norm_abs(str(Path(workspace_dir) / raw))
+    except Exception:
+        return ""
+
+
+def _extract_apply_patch_guard_paths(workspace_dir: str, args: Dict[str, Any]) -> List[str]:
+    patch_text = str((args or {}).get("patch") or "")
+    if not patch_text.strip():
+        return []
+    out: List[str] = []
+    seen: set[str] = set()
+    for line in patch_text.splitlines():
+        m = _PATCH_FILE_LINE_RE.match(line.strip())
+        if not m:
+            continue
+        resolved = _resolve_guard_path(workspace_dir, m.group(1))
+        if resolved and resolved not in seen:
+            seen.add(resolved)
+            out.append(resolved)
+    return out
+
+
+def _build_edit_guard_state(existing_traces: Optional[List[Dict[str, Any]]], workspace_dir: str) -> Dict[str, set[str]]:
+    state: Dict[str, set[str]] = {"blocked_paths": set()}
+    if not isinstance(existing_traces, list) or not workspace_dir:
+        return state
+    for tr in existing_traces:
+        if not isinstance(tr, dict):
+            continue
+        name = str(tr.get("name") or "").strip()
+        status = str(tr.get("status") or "").strip()
+        if name == "apply_patch" and status == "failed":
+            err = str(((tr.get("error") or {}) if isinstance(tr.get("error"), dict) else {}).get("message") or "")
+            if "CONFLICT" not in err and "source block occurrences" not in err:
+                continue
+            for p in _extract_apply_patch_guard_paths(workspace_dir, tr.get("args") if isinstance(tr.get("args"), dict) else {}):
+                state["blocked_paths"].add(p)
+        elif name == "read_file" and status == "succeeded":
+            path = _resolve_guard_path(workspace_dir, ((tr.get("args") or {}) if isinstance(tr.get("args"), dict) else {}).get("path"))
+            if path:
+                state["blocked_paths"].discard(path)
+    return state
+
+
+def _make_edit_guard_blocked_result(*, tool_name: str, args: Dict[str, Any], tool_call_id: str, trace_id: str, blocked_paths: List[str]) -> Tuple[str, Dict[str, Any]]:
+    started_at = now_ms()
+    msg = "EDIT_GUARD: apply_patch 在上次 CONFLICT 后必须先对同一文件成功执行 read_file，再生成新的 patch。"
+    if blocked_paths:
+        msg += " 受影响文件: " + ", ".join(blocked_paths)
+    tool_content = json.dumps({"ok": False, "error": msg}, ensure_ascii=False)
+    trace: Dict[str, Any] = {
+        "id": trace_id,
+        "toolCallId": tool_call_id,
+        "name": tool_name,
+        "status": "failed",
+        "startedAt": started_at,
+        "endedAt": started_at,
+        "durationMs": 0,
+        "argsPreview": preview_json(args, max_chars=800),
+        "error": {"message": msg},
+        "resultPreview": preview_tool_result(tool_content, max_chars=1200),
+    }
+    return tool_content, trace
+
+
+def _execute_tool_with_edit_guard(
+    *,
+    tool_name: str,
+    tool_args: Dict[str, Any],
+    tool_call_id: str,
+    workspace_dir: str,
+    composer: Dict[str, Any],
+    mcp_index: Dict[str, Dict[str, Any]],
+    trace_id: str,
+    edit_guard_state: Dict[str, set[str]],
+) -> Tuple[str, Dict[str, Any]]:
+    blocked_paths = edit_guard_state.setdefault("blocked_paths", set())
+    if tool_name == "apply_patch":
+        touched_paths = _extract_apply_patch_guard_paths(workspace_dir, tool_args)
+        pending_paths = [p for p in touched_paths if p in blocked_paths]
+        if pending_paths:
+            return _make_edit_guard_blocked_result(
+                tool_name=tool_name,
+                args=tool_args,
+                tool_call_id=tool_call_id,
+                trace_id=trace_id,
+                blocked_paths=pending_paths,
+            )
+        tool_content, trace = execute_tool(
+            tool_name,
+            tool_args,
+            tool_call_id=tool_call_id,
+            workspace_dir=workspace_dir,
+            composer=composer,
+            mcp_index=mcp_index,
+            trace_id=trace_id,
+        )
+        err = str(((trace.get("error") or {}) if isinstance(trace.get("error"), dict) else {}).get("message") or "")
+        if str(trace.get("status") or "") == "failed" and ("CONFLICT" in err or "source block occurrences" in err):
+            blocked_paths.update(touched_paths)
+        return tool_content, trace
+
+    tool_content, trace = execute_tool(
+        tool_name,
+        tool_args,
+        tool_call_id=tool_call_id,
+        workspace_dir=workspace_dir,
+        composer=composer,
+        mcp_index=mcp_index,
+        trace_id=trace_id,
+    )
+    if tool_name == "read_file" and str(trace.get("status") or "") == "succeeded":
+        path = _resolve_guard_path(workspace_dir, tool_args.get("path"))
+        if path:
+            blocked_paths.discard(path)
+    return tool_content, trace
 
 
 def _make_recovery_trace(*, reason: str, action: str, detail: str, step: int, index: int) -> Dict[str, Any]:
@@ -611,6 +737,7 @@ def _run_tool_loop(
     max_tokens: int,
     extra_body: Optional[Dict[str, Any]],
     emit_event: Optional[Callable[[Any], None]] = None,
+    existing_traces: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     def _emit(obj: Any) -> None:
         if not callable(emit_event):
@@ -618,13 +745,6 @@ def _run_tool_loop(
         emit_event(obj)
 
     tools, mcp_index, tool_choice = select_tools(settings_obj, composer)
-    try:
-        spec_obj = getattr(provider, "_spec", None)
-        if str(getattr(spec_obj, "provider_type", "") or "").strip().lower() == "openai_codex":
-            tools = []
-            tool_choice = None
-    except Exception:
-        pass
     mo = str(composer.get("modelOverride") or "").strip() or None
 
     cur, dropped_traces = sanitize_history_messages(prepared)
@@ -642,6 +762,16 @@ def _run_tool_loop(
     final_content = ""
     stop_reason = "completed"
     verification_required = bool(composer.get("verificationRequired"))
+    initial_workspace_dir = ""
+    cdir = str(composer.get("workspaceDir") or "").strip()
+    sdir = str(((settings_obj.get("settings") or {}) if isinstance(settings_obj, dict) else {}).get("workspaceDir") or "").strip()
+    initial_workspace_dir = cdir or sdir
+    try:
+        if initial_workspace_dir:
+            initial_workspace_dir = norm_abs(initial_workspace_dir)
+    except Exception:
+        initial_workspace_dir = ""
+    edit_guard_state = _build_edit_guard_state(existing_traces, initial_workspace_dir)
 
     def _append_reasoning(prev: str, nxt: str) -> str:
         p = str(prev or "").strip()
@@ -828,6 +958,8 @@ def _run_tool_loop(
                     _emit({"type": "model_delta", "content": content, "step": step})
                 except Exception:
                     pass
+            if not emitted_any_delta and not str(content or "").strip():
+                raise RuntimeError("Model returned no text and no tool calls")
             final_content = str(content or "")
             break
 
@@ -854,7 +986,6 @@ def _run_tool_loop(
                 workspace_dir = norm_abs(workspace_dir)
         except Exception:
             workspace_dir = ""
-
         for tc in tool_calls:
             tc_id = str(tc.get("id") or "")
             fn = (tc.get("function") or {}) if isinstance(tc.get("function"), dict) else {}
@@ -880,14 +1011,15 @@ def _run_tool_loop(
             except Exception:
                 pass
 
-            tool_content, trace = execute_tool(
-                fn_name,
-                fn_args,
+            tool_content, trace = _execute_tool_with_edit_guard(
+                tool_name=fn_name,
+                tool_args=fn_args,
                 tool_call_id=tc_id,
                 workspace_dir=workspace_dir,
                 composer=composer,
                 mcp_index=mcp_index,
                 trace_id=trace_id,
+                edit_guard_state=edit_guard_state,
             )
             try:
                 _emit({"type": "stage", "stage": f"tool_done:{fn_name}", "step": step})

@@ -52,6 +52,10 @@ _DEFAULT_TELEGRAM_TOOL_GUIDANCE = (
 _DEFAULT_HARD_RULES = [
     "结论必须有可检查依据；无法确认时明确不确定性。",
     "涉及代码、文件、命令时必须先执行工具再回答，禁止伪执行。",
+    "写文件优先使用 apply_patch；不要用 bash 重定向（>, >>, <, <<）生成文件。",
+    "使用 apply_patch 编辑文件前，必须先读取目标文件的当前完整内容；如果读取结果被截断，先继续读取完整，禁止基于截断内容直接生成 patch。",
+    "生成 apply_patch 时只修改当前必需的小范围片段，补丁必须以刚读取到的原文为依据，不要凭记忆复用旧 patch。",
+    "遇到 apply_patch 返回 CONFLICT 或 source block occurrences 错误时，必须先重新读取目标文件当前内容，再生成新的 patch；禁止连续重试旧 patch。",
     "未完成验证不得宣称任务完成。",
 ]
 

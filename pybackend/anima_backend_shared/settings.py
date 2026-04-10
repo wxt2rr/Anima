@@ -9,9 +9,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .constants import SCHEMA_VERSION
+from .codex_models import (
+    CODEX_MODEL_IDS,
+    DEFAULT_CODEX_SELECTED_MODEL,
+    build_openai_codex_models,
+)
 from .defaults import default_app_settings
 from .database import get_app_settings, set_app_settings
 from .paths import config_root_by_platform
+from .qwen_portal_oauth import QWEN_COMPATIBLE_BASE_URL
 
 
 _CONFIG_ROOT: Optional[Path] = None
@@ -86,7 +92,7 @@ def _migrate_codex_provider(existing: Dict[str, Any]) -> bool:
         providers.append(
             {
                 "id": "openai_codex",
-                "name": "OpenAI Codex (ChatGPT)",
+                "name": "Codex Auth",
                 "type": "openai_codex",
                 "isEnabled": False,
                 "auth": {"mode": "oauth_openai_codex", "profileId": "default"},
@@ -94,14 +100,8 @@ def _migrate_codex_provider(existing: Dict[str, Any]) -> bool:
                     "baseUrl": "https://chatgpt.com/backend-api",
                     "apiFormat": "responses",
                     "modelsFetched": True,
-                    "models": [
-                        {"id": "gpt-5.2-codex", "isEnabled": True, "config": {"id": "gpt-5.2-codex"}},
-                        {"id": "gpt-5.2-codex-low", "isEnabled": True, "config": {"id": "gpt-5.2-codex-low"}},
-                        {"id": "gpt-5.2-codex-medium", "isEnabled": True, "config": {"id": "gpt-5.2-codex-medium"}},
-                        {"id": "gpt-5.2-codex-high", "isEnabled": True, "config": {"id": "gpt-5.2-codex-high"}},
-                        {"id": "gpt-5.2-codex-xhigh", "isEnabled": True, "config": {"id": "gpt-5.2-codex-xhigh"}},
-                    ],
-                    "selectedModel": "gpt-5.2-codex",
+                    "models": build_openai_codex_models(),
+                    "selectedModel": DEFAULT_CODEX_SELECTED_MODEL,
                     "apiKey": "",
                 },
             }
@@ -116,6 +116,163 @@ def _migrate_codex_provider(existing: Dict[str, Any]) -> bool:
                 continue
             next_providers.append(p)
         existing["providers"] = next_providers
+
+    return changed
+
+
+def _migrate_qwen_provider(existing: Dict[str, Any]) -> bool:
+    changed = False
+    providers = existing.get("providers")
+    if not isinstance(providers, list):
+        existing["providers"] = []
+        providers = existing["providers"]
+        changed = True
+
+    has_qwen_provider = False
+    has_qwen_auth_provider = False
+    for p in providers:
+        if not isinstance(p, dict):
+            continue
+        pid = str(p.get("id") or "").strip().lower()
+        ptype = str(p.get("type") or "").strip().lower()
+        name = str(p.get("name") or "").strip().lower()
+        auth = p.get("auth") if isinstance(p.get("auth"), dict) else {}
+        auth_mode = str(auth.get("mode") or "").strip().lower()
+        is_qwen_auth = pid in ("qwen_auth", "qwen-portal") or (auth_mode == "oauth_device_code" and "qwen" in name and ptype != "acp")
+        if is_qwen_auth:
+            has_qwen_auth_provider = True
+            if pid != "qwen_auth":
+                p["id"] = "qwen_auth"
+                changed = True
+            if str(p.get("name") or "") != "Qwen Auth":
+                p["name"] = "Qwen Auth"
+                changed = True
+            if p.get("hiddenInSettings") is not True:
+                p["hiddenInSettings"] = True
+                changed = True
+            cfg = p.get("config")
+            if isinstance(cfg, dict):
+                base_url = str(cfg.get("baseUrl") or "").strip()
+                if base_url == "https://portal.qwen.ai/v1":
+                    cfg["baseUrl"] = QWEN_COMPATIBLE_BASE_URL
+                    changed = True
+            continue
+
+        is_plain_qwen = pid == "qwen" or (ptype == "openai_compatible" and auth_mode != "oauth_device_code" and name == "qwen")
+        if not is_plain_qwen:
+            continue
+        has_qwen_provider = True
+        if str(p.get("name") or "") != "Qwen":
+            p["name"] = "Qwen"
+            changed = True
+        if p.get("hiddenInSettings") is True:
+            p.pop("hiddenInSettings", None)
+            changed = True
+        cfg = p.get("config")
+        if not isinstance(cfg, dict):
+            p["config"] = {
+                "baseUrl": QWEN_COMPATIBLE_BASE_URL,
+                "apiFormat": "chat_completions",
+                "modelsFetched": False,
+                "models": [],
+                "selectedModel": "",
+                "apiKey": "",
+            }
+            changed = True
+            continue
+        if not str(cfg.get("baseUrl") or "").strip():
+            cfg["baseUrl"] = QWEN_COMPATIBLE_BASE_URL
+            changed = True
+
+    if not has_qwen_provider:
+        providers.append(
+            {
+                "id": "qwen",
+                "name": "Qwen",
+                "type": "openai_compatible",
+                "isEnabled": False,
+                "config": {
+                    "baseUrl": QWEN_COMPATIBLE_BASE_URL,
+                    "apiFormat": "chat_completions",
+                    "modelsFetched": False,
+                    "models": [],
+                    "selectedModel": "",
+                    "apiKey": "",
+                },
+            }
+        )
+        changed = True
+
+    if not has_qwen_auth_provider:
+        providers.append(
+            {
+                "id": "qwen_auth",
+                "name": "Qwen Auth",
+                "type": "openai_compatible",
+                "isEnabled": False,
+                "hiddenInSettings": True,
+                "auth": {"mode": "oauth_device_code", "profileId": "default"},
+                "config": {
+                    "baseUrl": QWEN_COMPATIBLE_BASE_URL,
+                    "apiFormat": "chat_completions",
+                    "modelsFetched": True,
+                    "models": [
+                        {"id": "coder-model", "isEnabled": True, "config": {"id": "coder-model", "contextWindow": DEFAULT_MODEL_CONTEXT_WINDOW}},
+                        {"id": "vision-model", "isEnabled": True, "config": {"id": "vision-model", "contextWindow": DEFAULT_MODEL_CONTEXT_WINDOW}},
+                    ],
+                    "selectedModel": "coder-model",
+                    "apiKey": "",
+                },
+            }
+        )
+        changed = True
+
+    return changed
+
+
+def _normalize_auth_provider_labels_and_order(existing: Dict[str, Any]) -> bool:
+    providers = existing.get("providers")
+    if not isinstance(providers, list):
+        return False
+
+    changed = False
+    qwen_idx = -1
+    codex_idx = -1
+
+    for idx, p in enumerate(providers):
+        if not isinstance(p, dict):
+            continue
+        pid = str(p.get("id") or "").strip().lower()
+        ptype = str(p.get("type") or "").strip().lower()
+        auth = p.get("auth") if isinstance(p.get("auth"), dict) else {}
+        auth_mode = str(auth.get("mode") or "").strip().lower()
+        name = str(p.get("name") or "").strip()
+
+        is_qwen_auth = pid in ("qwen_auth", "qwen-portal") or (auth_mode == "oauth_device_code" and ptype != "acp" and "qwen" in name.lower())
+        if is_qwen_auth:
+            qwen_idx = idx
+            if name != "Qwen Auth":
+                p["name"] = "Qwen Auth"
+                changed = True
+            if p.get("hiddenInSettings") is not True:
+                p["hiddenInSettings"] = True
+                changed = True
+            continue
+
+        is_codex_auth = pid == "openai_codex" or ptype == "openai_codex"
+        if is_codex_auth:
+            codex_idx = idx
+            if name != "Codex Auth":
+                p["name"] = "Codex Auth"
+                changed = True
+
+    if qwen_idx >= 0 and codex_idx >= 0 and codex_idx != qwen_idx + 1:
+        pair_indexes = {qwen_idx, codex_idx}
+        pair = [providers[qwen_idx], providers[codex_idx]]
+        keep = [p for idx, p in enumerate(providers) if idx not in pair_indexes]
+        insert_at = min(qwen_idx, codex_idx)
+        existing["providers"] = keep[:insert_at] + pair + keep[insert_at:]
+        changed = True
 
     return changed
 
@@ -137,6 +294,25 @@ def _normalize_provider_models(existing: Dict[str, Any]) -> bool:
             cfg = {}
             p["config"] = cfg
             changed = True
+        if str(p.get("type") or "").strip().lower() == "openai_codex":
+            models = cfg.get("models")
+            existing_ids = set()
+            if isinstance(models, list):
+                for m in models:
+                    if isinstance(m, str):
+                        mid = str(m).strip()
+                    elif isinstance(m, dict):
+                        mid = str(m.get("id") or "").strip()
+                    else:
+                        mid = ""
+                    if mid:
+                        existing_ids.add(mid)
+            missing_ids = [mid for mid in CODEX_MODEL_IDS if mid not in existing_ids]
+            if missing_ids:
+                next_models = list(models) if isinstance(models, list) else []
+                next_models.extend([m for m in build_openai_codex_models() if str(m.get("id") or "") in missing_ids])
+                cfg["models"] = next_models
+                changed = True
         models = cfg.get("models")
         if not isinstance(models, list):
             normalized.append(p)
@@ -213,7 +389,9 @@ def migrate_settings() -> Dict[str, Any]:
     elif not isinstance(existing, dict):
         raise RuntimeError("Failed to load settings from database")
 
+    changed = _migrate_qwen_provider(existing) or changed
     changed = _migrate_codex_provider(existing) or changed
+    changed = _normalize_auth_provider_labels_and_order(existing) or changed
     changed = _normalize_provider_models(existing) or changed
     if changed:
         set_app_settings(existing)

@@ -16,10 +16,13 @@ from http import HTTPStatus
 from typing import Any, Dict, List, Optional, Tuple
 
 from anima_backend_shared.http import json_response, read_body_json
+from anima_backend_shared.qwen_tts_local import ensure_qwen_tts_local_service
+from anima_backend_shared.codex_models import build_openai_codex_models
 from anima_backend_shared.settings import get_skills_content, list_skills, load_settings, open_folder, skills_dir
 from anima_backend_shared.tools import builtin_tools, mcp_tools
 
 DEFAULT_MODEL_CONTEXT_WINDOW = 128000
+CODEX_FETCH_MODELS = build_openai_codex_models()
 
 
 def _normalize_fetched_models(raw_models: Any) -> List[Dict[str, Any]]:
@@ -48,6 +51,29 @@ def _normalize_fetched_models(raw_models: Any) -> List[Dict[str, Any]]:
             next_mc["contextWindow"] = DEFAULT_MODEL_CONTEXT_WINDOW
         out.append({"id": mid, "isEnabled": bool(m.get("isEnabled", True)), "config": next_mc})
     return out
+
+
+def _configured_openai_codex_models(provider_id: str) -> List[Dict[str, Any]]:
+    settings_obj = load_settings()
+    providers = settings_obj.get("providers") if isinstance(settings_obj, dict) else None
+    if isinstance(providers, list):
+        target_id = str(provider_id or "").strip()
+        for p in providers:
+            if not isinstance(p, dict):
+                continue
+            pid = str(p.get("id") or "").strip()
+            ptype = str(p.get("type") or "").strip().lower()
+            if target_id:
+                if pid != target_id:
+                    continue
+            elif ptype != "openai_codex":
+                continue
+            cfg = p.get("config") if isinstance(p.get("config"), dict) else {}
+            models = cfg.get("models") if isinstance(cfg, dict) else None
+            normalized = _normalize_fetched_models(models)
+            if normalized:
+                return normalized
+    return _normalize_fetched_models(CODEX_FETCH_MODELS)
 
 
 def handle_get_settings(handler: Any) -> None:
@@ -524,12 +550,15 @@ def handle_post_providers_fetch_models(handler: Any) -> None:
             json_response(handler, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "baseUrl is required"})
             return
         use_qwen_oauth = bool(body.get("useQwenOAuth") is True)
+        use_codex_oauth = bool(body.get("useCodexOAuth") is True)
         profile_id = str(body.get("profileId") or "").strip() or "default"
-        if (provider_id and provider_id.startswith("qwen")) or use_qwen_oauth:
+        if provider_id in ("qwen_auth", "qwen-portal") or use_qwen_oauth:
             from anima_backend_shared.qwen_auth_runtime import resolve_qwen_access_token
 
             token = resolve_qwen_access_token(provider_id, profile_id)
             models = fetch_provider_models(base_url, token)
+        elif provider_id == "openai_codex" or use_codex_oauth:
+            models = _configured_openai_codex_models(provider_id)
         else:
             api_key = body.get("apiKey")
             try:
@@ -584,6 +613,9 @@ def handle_post_tts_preview(handler: Any) -> None:
         api_key = str(body.get("apiKey") or "").strip()
         qwen_model = str(body.get("qwenModel") or "").strip()
         qwen_language_type = str(body.get("qwenLanguageType") or "").strip()
+        qwen_mode = str(body.get("qwenMode") or "endpoint").strip().lower()
+        qwen_local_model_id = str(body.get("qwenLocalModelId") or "").strip()
+        qwen_local_endpoint = str(body.get("qwenLocalEndpoint") or "").strip()
         local_models = body.get("localModels")
         speed_raw = body.get("speed")
         try:
@@ -610,6 +642,15 @@ def handle_post_tts_preview(handler: Any) -> None:
                 payload={"text": text[:500], "model": model, "speed": speed, "provider": provider},
             )
         elif provider == "qwen_tts":
+            if qwen_mode == "local":
+                ensured = ensure_qwen_tts_local_service(
+                    model_id=qwen_local_model_id or (qwen_model or "qwen3-tts-flash"),
+                    endpoint=qwen_local_endpoint,
+                )
+                endpoint = str(ensured.get("endpoint") or endpoint).strip()
+                api_key = ""
+                if not endpoint:
+                    endpoint = "http://127.0.0.1:8000/v1/audio/speech"
             is_local = _is_local_endpoint(endpoint)
             if (not api_key) and (not is_local):
                 json_response(handler, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "apiKey is required for qwen_tts"})
@@ -735,11 +776,19 @@ def _is_local_endpoint(endpoint: str) -> bool:
     return ep.startswith("http://127.0.0.1") or ep.startswith("http://localhost") or ep.startswith("http://0.0.0.0")
 
 
+def _play_wav_bytes(audio_bytes: bytes) -> None:
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        tmp.write(audio_bytes)
+        wav_path = tmp.name
+    cmd = f"afplay {shlex.quote(wav_path)} >/dev/null 2>&1; rm -f {shlex.quote(wav_path)} >/dev/null 2>&1"
+    subprocess.Popen(["/bin/sh", "-c", cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def _tts_preview_qwen(*, text: str, voice: str, qwen_model: str, language_type: str, endpoint: str, api_key: str) -> None:
     if not shutil.which("afplay"):
         raise RuntimeError("`afplay` command not found on this system.")
     ep = str(endpoint or "").strip() or "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
-    payload = {
+    dashscope_payload = {
         "model": str(qwen_model or "qwen3-tts-flash"),
         "input": {
             "text": str(text or ""),
@@ -747,31 +796,41 @@ def _tts_preview_qwen(*, text: str, voice: str, qwen_model: str, language_type: 
             "language_type": str(language_type or "Auto"),
         },
     }
-    req = urllib.request.Request(ep, method="POST")
-    req.add_header("Accept", "application/json")
-    req.add_header("Content-Type", "application/json")
-    if str(api_key or "").strip():
-        req.add_header("Authorization", f"Bearer {api_key}")
-    raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    with urllib.request.urlopen(req, data=raw, timeout=20) as resp:
-        body = resp.read()
-        status = int(getattr(resp, "status", 200) or 200)
-        content_type = str(getattr(resp, "headers", {}).get("Content-Type") or "").lower()
-    if status >= 400:
-        raise RuntimeError(f"Upstream HTTP {status}")
-    if content_type.startswith("audio/") and body:
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            tmp.write(body)
-            wav_path = tmp.name
-        cmd = f"afplay {shlex.quote(wav_path)} >/dev/null 2>&1; rm -f {shlex.quote(wav_path)} >/dev/null 2>&1"
-        subprocess.Popen(["/bin/sh", "-c", cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return
-    data = json.loads(body.decode("utf-8")) if body else {}
-    audio_bytes = _extract_qwen_audio_bytes(data)
-    if not audio_bytes:
-        raise RuntimeError("qwen_tts returned no audio data")
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        tmp.write(audio_bytes)
-        wav_path = tmp.name
-    cmd = f"afplay {shlex.quote(wav_path)} >/dev/null 2>&1; rm -f {shlex.quote(wav_path)} >/dev/null 2>&1"
-    subprocess.Popen(["/bin/sh", "-c", cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    openai_payload = {
+        "model": str(qwen_model or "qwen3-tts-flash"),
+        "input": str(text or ""),
+        "voice": str(voice or "Cherry"),
+        "response_format": "wav",
+    }
+    payloads: List[Dict[str, Any]] = [dashscope_payload]
+    if _is_local_endpoint(ep):
+        payloads.append(openai_payload)
+
+    for idx, payload in enumerate(payloads):
+        req = urllib.request.Request(ep, method="POST")
+        req.add_header("Accept", "application/json")
+        req.add_header("Content-Type", "application/json")
+        if str(api_key or "").strip():
+            req.add_header("Authorization", f"Bearer {api_key}")
+        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        try:
+            with urllib.request.urlopen(req, data=raw, timeout=20) as resp:
+                body = resp.read()
+                status = int(getattr(resp, "status", 200) or 200)
+                content_type = str(getattr(resp, "headers", {}).get("Content-Type") or "").lower()
+            if status >= 400:
+                raise RuntimeError(f"Upstream HTTP {status}")
+            if content_type.startswith("audio/") and body:
+                _play_wav_bytes(body)
+                return
+            data = json.loads(body.decode("utf-8")) if body else {}
+            audio_bytes = _extract_qwen_audio_bytes(data)
+            if audio_bytes:
+                _play_wav_bytes(audio_bytes)
+                return
+            raise RuntimeError("qwen_tts returned no audio data")
+        except urllib.error.HTTPError as e:
+            status = int(getattr(e, "code", 0) or 0)
+            if idx < len(payloads) - 1 and status in (400, 404, 405, 415, 422):
+                continue
+            raise RuntimeError(f"Upstream HTTP {status}") from e

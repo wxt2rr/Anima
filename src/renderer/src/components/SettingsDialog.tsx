@@ -918,6 +918,10 @@ function TtsSettings({ t }: { t: any }) {
     apiKey: '',
     qwenModel: 'qwen3-tts-flash',
     qwenLanguageType: 'Auto',
+    qwenMode: 'endpoint',
+    qwenLocalModelId: 'qwen3-tts-flash',
+    qwenLocalEndpoint: 'http://127.0.0.1:8000/v1/audio/speech',
+    qwenLocalModelsInstalled: [],
     speed: 1,
     pitch: 1,
     volume: 1,
@@ -936,6 +940,17 @@ function TtsSettings({ t }: { t: any }) {
       model: 'Model / Voice',
       qwenModel: 'Qwen Model',
       qwenLanguageType: 'Qwen Language',
+      qwenMode: 'Qwen Mode',
+      qwenModeLocal: 'Local Managed',
+      qwenModeEndpoint: 'Endpoint',
+      qwenLocalModel: 'Local Model',
+      qwenDownload: 'Download Model',
+      qwenDownloaded: 'Installed',
+      qwenDownloading: 'Downloading…',
+      qwenServiceStatus: 'Local service status',
+      qwenServiceRunning: 'Running',
+      qwenServiceStopped: 'Stopped',
+      qwenRefresh: 'Refresh',
       endpoint: 'Endpoint',
       apiKey: 'API Key (Optional)',
       speed: 'Speed',
@@ -957,6 +972,17 @@ function TtsSettings({ t }: { t: any }) {
       model: '模型 / 音色',
       qwenModel: 'Qwen 模型',
       qwenLanguageType: 'Qwen 语言',
+      qwenMode: 'Qwen 模式',
+      qwenModeLocal: '本地托管',
+      qwenModeEndpoint: 'Endpoint',
+      qwenLocalModel: '本地模型',
+      qwenDownload: '下载模型',
+      qwenDownloaded: '已安装',
+      qwenDownloading: '下载中…',
+      qwenServiceStatus: '本地服务状态',
+      qwenServiceRunning: '运行中',
+      qwenServiceStopped: '未运行',
+      qwenRefresh: '刷新',
       endpoint: '服务地址',
       apiKey: 'API Key（可选）',
       speed: '语速',
@@ -978,6 +1004,17 @@ function TtsSettings({ t }: { t: any }) {
       model: 'モデル / 音声',
       qwenModel: 'Qwen モデル',
       qwenLanguageType: 'Qwen 言語',
+      qwenMode: 'Qwen モード',
+      qwenModeLocal: 'ローカル管理',
+      qwenModeEndpoint: 'Endpoint',
+      qwenLocalModel: 'ローカルモデル',
+      qwenDownload: 'モデルをダウンロード',
+      qwenDownloaded: 'インストール済み',
+      qwenDownloading: 'ダウンロード中…',
+      qwenServiceStatus: 'ローカルサービス状態',
+      qwenServiceRunning: '稼働中',
+      qwenServiceStopped: '停止中',
+      qwenRefresh: '更新',
       endpoint: 'エンドポイント',
       apiKey: 'API Key（任意）',
       speed: '速度',
@@ -993,6 +1030,10 @@ function TtsSettings({ t }: { t: any }) {
     }
   } as const
   const tt = (tx as any)[lang] || tx.en
+  const [qwenLocalCatalog, setQwenLocalCatalog] = useState<Array<{ id: string; name?: string }>>([])
+  const [qwenInstalledIds, setQwenInstalledIds] = useState<string[]>([])
+  const [qwenDownloadingId, setQwenDownloadingId] = useState('')
+  const [qwenServiceRunning, setQwenServiceRunning] = useState(false)
 
   const setTts = (patch: Record<string, any>) => {
     updateSettings({ tts: { ...tts, ...patch } } as any)
@@ -1011,6 +1052,9 @@ function TtsSettings({ t }: { t: any }) {
           apiKey: String(tts.apiKey || ''),
           qwenModel: String(tts.qwenModel || ''),
           qwenLanguageType: String(tts.qwenLanguageType || ''),
+          qwenMode: String(tts.qwenMode || 'endpoint'),
+          qwenLocalModelId: String(tts.qwenLocalModelId || ''),
+          qwenLocalEndpoint: String(tts.qwenLocalEndpoint || ''),
           speed: Number(tts.speed || 1),
           pitch: Number(tts.pitch || 1),
           volume: Number(tts.volume || 1),
@@ -1027,6 +1071,7 @@ function TtsSettings({ t }: { t: any }) {
   }
 
   const provider = String(tts.provider || 'macos_say')
+  const qwenMode = String(tts.qwenMode || 'endpoint') === 'local' ? 'local' : 'endpoint'
   const localModels = Array.isArray(tts.localModels) ? tts.localModels : []
   const defaultVoices: Record<string, string[]> = {
     macos_say: ['Samantha', 'Tingting', 'Alex', 'Victoria'],
@@ -1035,6 +1080,64 @@ function TtsSettings({ t }: { t: any }) {
     custom_http: []
   }
   const voiceOptions = defaultVoices[provider] || []
+
+  const refreshQwenLocalState = useCallback(async () => {
+    try {
+      const [catalogRes, installedRes, serviceRes] = await Promise.all([
+        fetchBackendJson<{ ok: boolean; models?: Array<{ id: string; name?: string }> }>('/api/tts/qwen/local/catalog', { method: 'GET' }),
+        fetchBackendJson<{ ok: boolean; models?: Array<{ id: string }> }>('/api/tts/qwen/local/installed', { method: 'GET' }),
+        fetchBackendJson<{ ok: boolean; running?: boolean }>('/api/tts/qwen/local/service/status', { method: 'GET' }),
+      ])
+      setQwenLocalCatalog(Array.isArray(catalogRes.models) ? catalogRes.models : [])
+      setQwenInstalledIds(
+        Array.isArray(installedRes.models)
+          ? installedRes.models.map((m: any) => String(m?.id || '').trim()).filter(Boolean)
+          : []
+      )
+      setQwenServiceRunning(Boolean(serviceRes.running))
+    } catch {
+      setQwenLocalCatalog([])
+      setQwenInstalledIds([])
+      setQwenServiceRunning(false)
+    }
+  }, [])
+
+  const handleDownloadQwenLocalModel = useCallback(async (modelId: string) => {
+    if (!modelId) return
+    setQwenDownloadingId(modelId)
+    try {
+      const res = await fetchBackendJson<{ ok: boolean; taskId?: string }>('/api/tts/qwen/local/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelId }),
+      })
+      const taskId = String(res.taskId || '').trim()
+      if (!taskId) throw new Error('taskId missing')
+      let done = false
+      while (!done) {
+        await new Promise((r) => setTimeout(r, 900))
+        const st = await fetchBackendJson<{ ok: boolean; task?: any }>(`/api/tts/qwen/local/download/status?taskId=${encodeURIComponent(taskId)}`, { method: 'GET' })
+        const status = String(st?.task?.status || '')
+        if (status === 'done') {
+          done = true
+        } else if (status === 'error' || status === 'canceled') {
+          const err = String(st?.task?.error || 'download failed')
+          throw new Error(err)
+        }
+      }
+      await refreshQwenLocalState()
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e || 'download failed')
+      alert(msg)
+    } finally {
+      setQwenDownloadingId('')
+    }
+  }, [refreshQwenLocalState])
+
+  useEffect(() => {
+    if (provider !== 'qwen_tts' || qwenMode !== 'local') return
+    void refreshQwenLocalState()
+  }, [provider, qwenMode, refreshQwenLocalState])
 
   return (
     <div className="p-6 space-y-5">
@@ -1081,6 +1184,16 @@ function TtsSettings({ t }: { t: any }) {
           {provider === 'qwen_tts' ? (
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
+                <Label>{tt.qwenMode}</Label>
+                <Select value={qwenMode} onValueChange={(v) => setTts({ qwenMode: v === 'local' ? 'local' : 'endpoint' })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="local">{tt.qwenModeLocal}</SelectItem>
+                    <SelectItem value="endpoint">{tt.qwenModeEndpoint}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
                 <Label>{tt.qwenModel}</Label>
                 <Input value={String(tts.qwenModel || '')} onChange={(e) => setTts({ qwenModel: e.target.value })} placeholder="qwen3-tts-flash" />
               </div>
@@ -1097,6 +1210,44 @@ function TtsSettings({ t }: { t: any }) {
               </div>
             </div>
           ) : null}
+          {(provider === 'qwen_tts' && qwenMode === 'local') ? (
+            <div className="space-y-3 rounded-md border border-border p-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label>{tt.qwenLocalModel}</Label>
+                  <Select value={String(tts.qwenLocalModelId || '')} onValueChange={(v) => setTts({ qwenLocalModelId: v, qwenModel: v })}>
+                    <SelectTrigger><SelectValue placeholder={tt.qwenLocalModel} /></SelectTrigger>
+                    <SelectContent>
+                      {(qwenLocalCatalog || []).map((m) => (
+                        <SelectItem key={m.id} value={m.id}>{m.name || m.id}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label>{tt.qwenServiceStatus}</Label>
+                  <div className="flex h-10 items-center justify-between rounded-md border border-border bg-background px-3 text-sm">
+                    <span>{qwenServiceRunning ? tt.qwenServiceRunning : tt.qwenServiceStopped}</span>
+                    <Button size="sm" variant="ghost" onClick={() => void refreshQwenLocalState()}>{tt.qwenRefresh}</Button>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  disabled={!String(tts.qwenLocalModelId || '').trim() || qwenDownloadingId === String(tts.qwenLocalModelId || '') || qwenInstalledIds.includes(String(tts.qwenLocalModelId || ''))}
+                  onClick={() => void handleDownloadQwenLocalModel(String(tts.qwenLocalModelId || ''))}
+                >
+                  {qwenInstalledIds.includes(String(tts.qwenLocalModelId || ''))
+                    ? tt.qwenDownloaded
+                    : qwenDownloadingId === String(tts.qwenLocalModelId || '')
+                      ? tt.qwenDownloading
+                      : tt.qwenDownload}
+                </Button>
+                <div className="text-xs text-muted-foreground">{String(tts.qwenLocalEndpoint || 'http://127.0.0.1:8000/v1/audio/speech')}</div>
+              </div>
+            </div>
+          ) : null}
           {(provider === 'custom_http' || provider === 'kokoro_onnx') ? (
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
@@ -1109,11 +1260,11 @@ function TtsSettings({ t }: { t: any }) {
               </div>
             </div>
           ) : null}
-          {provider === 'qwen_tts' ? (
+          {(provider === 'qwen_tts' && qwenMode === 'endpoint') ? (
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label>{tt.endpoint}</Label>
-                <Input value={String(tts.endpoint || '')} onChange={(e) => setTts({ endpoint: e.target.value })} placeholder="https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation" />
+                <Input value={String(tts.endpoint || '')} onChange={(e) => setTts({ endpoint: e.target.value })} placeholder="http://127.0.0.1:8000/v1/audio/speech 或 DashScope endpoint" />
               </div>
               <div className="space-y-1">
                 <Label>{tt.apiKey}</Label>
@@ -1190,10 +1341,16 @@ function TtsSettings({ t }: { t: any }) {
           <div className="text-xs text-muted-foreground">
             {provider === 'qwen_tts'
               ? (lang === 'zh'
-                  ? 'Qwen-TTS 本地部署请填写本地 HTTP endpoint（如 http://127.0.0.1:8000/...），本地模式可不填 API Key。'
+                  ? (qwenMode === 'local'
+                      ? '本地托管模式会自动拉起本地服务并使用所选模型；请先下载模型后试听。'
+                      : 'Endpoint 模式支持 DashScope 或自建服务地址。')
                   : lang === 'ja'
-                    ? 'Qwen-TTS をローカルで使う場合はローカル HTTP endpoint（例: http://127.0.0.1:8000/...）を設定してください。ローカルでは API Key は任意です。'
-                    : 'For local Qwen-TTS, set a local HTTP endpoint (e.g. http://127.0.0.1:8000/...). API key is optional for local mode.')
+                    ? (qwenMode === 'local'
+                        ? 'ローカル管理モードは選択モデルでローカルサービスを自動起動します。先にモデルをダウンロードしてください。'
+                        : 'Endpoint モードでは DashScope または自前 endpoint を利用できます。')
+                    : (qwenMode === 'local'
+                        ? 'Local managed mode auto-starts local TTS service with selected model. Download model before testing.'
+                        : 'Endpoint mode supports DashScope or your own endpoint.'))
               : tt.hint}
           </div>
         </CardContent>
@@ -3224,7 +3381,8 @@ function ProvidersSettings() {
   const loadRemoteConfig = useStore(s => s.loadRemoteConfig)
   const settings = settings0!
   const providers = providers0 ?? EMPTY_PROVIDERS
-  const [selectedProviderId, setSelectedProviderId] = useState<string>(() => providers[0]?.id || '')
+  const visibleProviders = providers.filter((p) => !p.hiddenInSettings)
+  const [selectedProviderId, setSelectedProviderId] = useState<string>(() => visibleProviders[0]?.id || providers[0]?.id || '')
   const [searchQuery, setSearchQuery] = useState('')
   const [showProxyEndpoints, setShowProxyEndpoints] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
@@ -3258,6 +3416,7 @@ function ProvidersSettings() {
     state: 'idle' | 'pending' | 'success' | 'error'
     error?: string
   }>({ open: false, providerRecordId: '', flowId: '', verificationUrl: '', expiresAt: 0, pollIntervalMs: 1000, state: 'idle' })
+  const [fetchModelsError, setFetchModelsError] = useState<{ open: boolean; message: string }>({ open: false, message: '' })
 
   useEffect(() => {
     if (selectedProviderId) return
@@ -3514,6 +3673,7 @@ function ProvidersSettings() {
   const hasFetchedModels = Boolean(activeProvider?.config?.modelsFetched)
   const activeProviderIdLower = String(activeProvider?.id || '').toLowerCase()
   const activeProviderNameLower = String(activeProvider?.name || '').toLowerCase()
+  const activeProviderAuthModeLower = String(activeProvider?.auth?.mode || '').toLowerCase()
   const isAcp = Boolean(activeProvider && String(activeProvider.type || '').toLowerCase() === 'acp')
   const isLocalProvider = Boolean(
     activeProvider &&
@@ -3522,9 +3682,11 @@ function ProvidersSettings() {
   const isQwen = Boolean(
     activeProvider &&
       (
-        ['qwen', 'qwen-portal', 'qwen-auth'].includes(activeProviderIdLower) ||
-        activeProviderIdLower.startsWith('qwen') ||
-        activeProviderNameLower.includes('qwen')
+        activeProviderAuthModeLower === 'oauth_device_code' &&
+        (
+          ['qwen_auth', 'qwen-portal', 'qwen-auth'].includes(activeProviderIdLower) ||
+          activeProviderNameLower.includes('qwen')
+        )
       )
   )
   const isCodex = Boolean(activeProvider && (String(activeProvider.type || '').toLowerCase() === 'openai_codex' || activeProviderNameLower.includes('codex')))
@@ -3533,9 +3695,20 @@ function ProvidersSettings() {
   const codexProfileId = String(activeProvider?.auth?.profileId || 'default').trim() || 'default'
   const acpConfig = ((activeProvider?.config as any)?.acp || {}) as any
   
-  const filteredProviders = providers.filter(p => 
+  const filteredProviders = visibleProviders.filter(p => 
     p.name.toLowerCase().includes(searchQuery.toLowerCase())
   )
+
+  useEffect(() => {
+    if (!selectedProviderId) {
+      if (visibleProviders[0]?.id) setSelectedProviderId(visibleProviders[0].id)
+      return
+    }
+    const selected = providers.find((p) => p.id === selectedProviderId)
+    if (!selected || selected.hiddenInSettings) {
+      if (visibleProviders[0]?.id) setSelectedProviderId(visibleProviders[0].id)
+    }
+  }, [providers, selectedProviderId, visibleProviders])
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text)
@@ -3570,11 +3743,12 @@ function ProvidersSettings() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          providerId: isQwen ? activeProvider.id : undefined,
-          profileId: isQwen ? qwenProfileId : undefined,
+          providerId: isOAuthProvider ? activeProvider.id : undefined,
+          profileId: isQwen ? qwenProfileId : (isCodex ? codexProfileId : undefined),
           useQwenOAuth: isQwen ? true : undefined,
+          useCodexOAuth: isCodex ? true : undefined,
           baseUrl: activeProvider.config.baseUrl || '',
-          apiKey: isQwen ? undefined : (activeProvider.config.apiKey || '')
+          apiKey: isOAuthProvider ? undefined : (activeProvider.config.apiKey || '')
         })
       })
       if (res.ok && Array.isArray(res.models)) {
@@ -3602,9 +3776,9 @@ function ProvidersSettings() {
       const raw = e instanceof Error ? e.message : String(e || 'Failed to fetch models')
       if (isLocalProvider) {
         const hint = t.detectLocalFailedHint
-        alert(`${raw}\n\n${hint}`)
+        setFetchModelsError({ open: true, message: `${raw}\n\n${hint}` })
       } else {
-        alert(raw)
+        setFetchModelsError({ open: true, message: raw })
       }
     } finally {
       setIsFetchingModels(false)
@@ -4647,6 +4821,30 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
         </DialogContent>
       </Dialog>
 
+      <Dialog
+        open={fetchModelsError.open}
+        onOpenChange={(open) => {
+          if (open) return
+          setFetchModelsError({ open: false, message: '' })
+        }}
+      >
+        <DialogContent className="sm:max-w-[560px] max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>{t.fetchModels}</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-auto rounded-lg bg-secondary px-4 py-3">
+            <pre className="whitespace-pre-wrap break-all text-[12px] leading-5 text-foreground font-mono">
+              {fetchModelsError.message}
+            </pre>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFetchModelsError({ open: false, message: '' })}>
+              {t.close}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <CustomProviderDialog 
         open={customProviderDialogOpen} 
         onOpenChange={setCustomProviderDialogOpen}
@@ -4913,6 +5111,8 @@ function ChatSettings() {
         creative: 'Creative',
         maxTokens: 'Max Tokens',
         maxTokensHint: 'Maximum length limit for single response (1-8192)',
+        orchestrationForce: 'Force Worker Orchestration',
+        orchestrationForceHint: 'Always enable multi-worker planning/execution for each chat request (for debugging and parallel runs).',
         commandBlacklist: 'Command Blacklist',
         commandBlacklistHint: 'Input command entries (e.g. rm, curl). Under default permission, matched commands require manual approval.',
         commandWhitelist: 'Command Whitelist',
@@ -5001,6 +5201,8 @@ function ChatSettings() {
         creative: '创意',
         maxTokens: '最大令牌数',
         maxTokensHint: '单次回复的最大长度限制 (1-8192)',
+        orchestrationForce: '强制多代理编排',
+        orchestrationForceHint: '为每次聊天请求都启用 worker 规划/执行（用于调试与并行任务验证）。',
         commandBlacklist: '命令黑名单',
         commandBlacklistHint: '输入命令词条（例如 rm、curl）。默认权限下命中会触发人工确认。',
         commandWhitelist: '命令白名单',
@@ -5089,6 +5291,8 @@ function ChatSettings() {
         creative: '創造的',
         maxTokens: '最大トークン数',
         maxTokensHint: '1回の応答の最大長制限 (1-8192)',
+        orchestrationForce: 'Worker 編成を強制',
+        orchestrationForceHint: '各チャット要求で常にマルチ worker の計画/実行を有効化します（デバッグ用）。',
         commandBlacklist: 'コマンドブラックリスト',
         commandBlacklistHint: 'コマンド項目（例: rm、curl）を入力します。既定権限では一致時に手動承認が必要です。',
         commandWhitelist: 'コマンドホワイトリスト',
@@ -5224,6 +5428,18 @@ function ChatSettings() {
                  onChange={(e) => updateSettings({ maxTokens: Number(e.target.value) })}
               />
               <p className="text-xs text-muted-foreground">{t.maxTokensHint}</p>
+           </div>
+
+           <div className="flex items-start gap-3">
+              <Checkbox
+                 id="orchestrationForce"
+                 checked={Boolean((settings as any).orchestrationForce)}
+                 onCheckedChange={(c) => updateSettings({ orchestrationForce: c as boolean } as any)}
+              />
+              <div className="grid gap-1.5 leading-none">
+                 <label htmlFor="orchestrationForce" className="text-[13px] font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">{t.orchestrationForce}</label>
+                 <p className="text-xs text-muted-foreground">{t.orchestrationForceHint}</p>
+              </div>
            </div>
 
            <div className="space-y-2">

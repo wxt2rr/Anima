@@ -16,7 +16,7 @@ from ..runtime.graph import inject_system_message
 from ..tools.executor import execute_tool, make_tool_message, select_tools
 from .runs_compression import apply_persistent_compression, apply_thinking_level, build_usage_state, normalize_or_estimate_usage
 from .runs_request import resolve_runtime_options
-from .runs_stream import _run_coordinator_workers, _run_tool_loop, handle_post_runs_non_stream_via_stream_executor
+from .runs_stream import _execute_tool_with_edit_guard, _build_edit_guard_state, _run_coordinator_workers, _run_tool_loop, handle_post_runs_non_stream_via_stream_executor
 
 
 def _isolate_worker_messages(messages: List[Dict[str, Any]], composer: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -256,14 +256,16 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
                             emit({"type": "trace", "trace": running_trace})
                         except Exception:
                             return
-                    tool_content, trace = execute_tool(
-                        tool_name,
-                        tool_args,
+                    edit_guard_state = _build_edit_guard_state(paused_traces, workspace_dir)
+                    tool_content, trace = _execute_tool_with_edit_guard(
+                        tool_name=tool_name,
+                        tool_args=tool_args,
                         tool_call_id=tool_call_id,
                         workspace_dir=workspace_dir,
                         composer=composer,
                         mcp_index=mcp_index,
                         trace_id=resume_trace_id,
+                        edit_guard_state=edit_guard_state,
                     )
 
                 traces_all.append(trace)
@@ -287,6 +289,7 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
                     max_tokens=max_tokens,
                     extra_body=extra_body,
                     emit_event=emit_event,
+                    existing_traces=traces_all,
                 )
 
                 traces_out = traces_all + list(out.get("traces") or [])

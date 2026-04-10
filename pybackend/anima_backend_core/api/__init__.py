@@ -26,6 +26,14 @@ from .qwen_auth import (
     handle_post_provider_auth_logout,
     handle_post_provider_auth_start,
 )
+from .qwen_tts import (
+    handle_get_tts_qwen_local_catalog,
+    handle_get_tts_qwen_local_download_status,
+    handle_get_tts_qwen_local_installed,
+    handle_get_tts_qwen_local_service_status,
+    handle_post_tts_qwen_local_download,
+    handle_post_tts_qwen_local_service_start,
+)
 from .memory import (
     handle_delete_memory_items,
     handle_get_memory_embedding_models_base_dir,
@@ -150,6 +158,12 @@ EXACT_ROUTES: Dict[Tuple[str, str], ExactHandler] = {
     ("POST", "/api/runs"): _handle_post_runs,
     ("POST", "/api/providers/fetch_models"): handle_post_providers_fetch_models,
     ("POST", "/api/tts/preview"): handle_post_tts_preview,
+    ("GET", "/api/tts/qwen/local/catalog"): handle_get_tts_qwen_local_catalog,
+    ("GET", "/api/tts/qwen/local/installed"): handle_get_tts_qwen_local_installed,
+    ("POST", "/api/tts/qwen/local/download"): handle_post_tts_qwen_local_download,
+    ("GET", "/api/tts/qwen/local/download/status"): handle_get_tts_qwen_local_download_status,
+    ("GET", "/api/tts/qwen/local/service/status"): handle_get_tts_qwen_local_service_status,
+    ("POST", "/api/tts/qwen/local/service/start"): handle_post_tts_qwen_local_service_start,
     ("POST", "/api/providers/auth/start"): handle_post_provider_auth_start,
     ("GET", "/api/providers/auth/status"): handle_get_provider_auth_status,
     ("POST", "/api/providers/auth/logout"): handle_post_provider_auth_logout,

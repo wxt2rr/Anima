@@ -163,6 +163,8 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         prompt = build_system_prompt_text(settings_obj, {"channel": "telegram"}, "hi")
         self.assertIn("你是Anima", prompt)
         self.assertIn("工具使用规则", prompt)
+        self.assertIn("编辑前必须先读取目标文件的当前完整内容", prompt)
+        self.assertIn("遇到 apply_patch 返回 CONFLICT", prompt)
 
         prompt2 = build_system_prompt_text(settings_obj, {}, "hi")
         self.assertIn("你是Anima", prompt2)
@@ -1004,6 +1006,185 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         self.assertTrue(isinstance((done or {}).get("verification"), dict))
         self.assertEqual(str(((done or {}).get("verification") or {}).get("status") or ""), "passed")
 
+    def test_runs_stream_openai_codex_keeps_tools_enabled(self) -> None:
+        from anima_backend_core.api.runs_stream import handle_post_runs_stream
+
+        class _FakeProvider:
+            def __init__(self) -> None:
+                self.calls = 0
+                self._spec = type("Spec", (), {"provider_type": "openai_codex"})()
+
+            def chat_completion_stream(self, _messages, **kwargs):
+                self.calls += 1
+                tools = kwargs.get("tools")
+                if self.calls == 1:
+                    if not tools:
+                        yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+                        return
+                    yield {
+                        "choices": [
+                            {
+                                "delta": {
+                                    "tool_calls": [
+                                        {
+                                            "index": 0,
+                                            "id": "tc1",
+                                            "type": "function",
+                                            "function": {"name": "list_dir", "arguments": '{"path":"","maxEntries":5}'},
+                                        }
+                                    ]
+                                },
+                                "finish_reason": None,
+                            }
+                        ]
+                    }
+                    yield {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}
+                    return
+                yield {"choices": [{"delta": {"content": "ok"}, "finish_reason": None}]}
+                yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+
+        def _fake_execute_tool(*_args, **_kwargs):
+            return json.dumps({"ok": True, "entries": ["a"]}, ensure_ascii=False), {
+                "id": "tr1",
+                "toolCallId": "tc1",
+                "name": "list_dir",
+                "status": "succeeded",
+                "startedAt": 1,
+                "endedAt": 2,
+                "durationMs": 1,
+            }
+
+        h = self._make_handler()
+        body = {"messages": [{"role": "user", "content": "hi"}], "composer": {"workspaceDir": "/tmp"}}
+        with patch("anima_backend_core.api.runs_stream.load_settings", return_value={"settings": {}}):
+            with patch("anima_backend_core.api.runs_stream.create_provider", return_value=_FakeProvider()):
+                with patch(
+                    "anima_backend_core.api.runs_stream.select_tools",
+                    return_value=(
+                        [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": "list_dir",
+                                    "description": "列目录",
+                                    "parameters": {"type": "object"},
+                                },
+                            }
+                        ],
+                        {},
+                        None,
+                    ),
+                ):
+                    with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
+                        with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
+                            with patch("anima_backend_core.api.runs_stream.execute_tool", side_effect=_fake_execute_tool):
+                                handle_post_runs_stream(h, body)
+
+        raw = h.wfile.buf.decode("utf-8")
+        self.assertIn('"stage": "tools"', raw)
+        self.assertIn('"content": "ok"', raw)
+
+    def test_runs_stream_empty_model_response_emits_error(self) -> None:
+        from anima_backend_core.api.runs_stream import handle_post_runs_stream
+
+        class _FakeProvider:
+            def chat_completion_stream(self, _messages, **_kwargs):
+                yield {"type": "response.completed", "choices": [{"delta": {}, "finish_reason": "stop"}]}
+
+        h = self._make_handler()
+        body = {"messages": [{"role": "user", "content": "hi"}], "composer": {"workspaceDir": "/tmp"}}
+        with patch("anima_backend_core.api.runs_stream.load_settings", return_value={"settings": {}}):
+            with patch("anima_backend_core.api.runs_stream.create_provider", return_value=_FakeProvider()):
+                with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
+                    with patch("anima_backend_core.api.runs_stream.create_run", return_value=None):
+                        with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
+                            handle_post_runs_stream(h, body)
+
+        raw = h.wfile.buf.decode("utf-8")
+        self.assertIn('"type": "error"', raw)
+        self.assertIn('Model returned no text and no tool calls', raw)
+
+    def test_openai_codex_stream_empty_with_events_reports_preview(self) -> None:
+        from anima_backend_shared.providers import OpenAICodexChatProvider, ProviderSpec
+
+        spec = ProviderSpec(
+            provider_id="codex1",
+            provider_type="openai_codex",
+            base_url="https://chatgpt.com/backend-api",
+            api_key="ACCESS",
+            model="gpt-5.2-codex",
+            proxy_url="",
+            thinking_enabled=False,
+            api_format="responses",
+            use_max_completion_tokens=False,
+            extra_headers={},
+        )
+        p = OpenAICodexChatProvider(spec)
+
+        class _StdIn:
+            def write(self, _b: bytes) -> None:
+                return
+
+            def close(self) -> None:
+                return
+
+        class _StdOut:
+            def __init__(self) -> None:
+                self._lines = [
+                    b"HTTP/1.1 200 OK\r\n",
+                    b"Content-Type: text/event-stream\r\n",
+                    b"\r\n",
+                    b'data: {"type":"response.completed","response":{"status":"completed"}}\n',
+                    b"\n",
+                ]
+                self._i = 0
+
+            def readline(self) -> bytes:
+                if self._i >= len(self._lines):
+                    return b""
+                line = self._lines[self._i]
+                self._i += 1
+                return line
+
+            def read(self, _n: int = -1) -> bytes:
+                return b""
+
+        class _StdErr:
+            def read(self) -> bytes:
+                return b""
+
+        class _P:
+            def __init__(self, *_args, **_kwargs) -> None:
+                self.stdin = _StdIn()
+                self.stdout = _StdOut()
+                self.stderr = _StdErr()
+
+            def poll(self):
+                return 0
+
+            def wait(self, timeout=None) -> int:
+                return 0
+
+        import anima_backend_shared.providers as prov_mod
+
+        def _select(_r, _w, _e, _t):
+            return (_r, _w, _e)
+
+        with patch.object(prov_mod.shutil, "which", return_value="curl"):
+            with patch.object(prov_mod.subprocess, "Popen", _P):
+                with patch.object(prov_mod.select, "select", side_effect=_select):
+                    with self.assertRaises(RuntimeError) as ctx:
+                        list(
+                            p.chat_completion_stream(
+                                [{"role": "user", "content": "hi"}],
+                                temperature=0.2,
+                                max_tokens=16,
+                            )
+                        )
+        self.assertIn("Model returned no text and no tool calls", str(ctx.exception))
+        self.assertIn("Upstream events:", str(ctx.exception))
+        self.assertIn("response.completed", str(ctx.exception))
+
     def test_runs_stream_verification_required_without_evidence_stops_as_failed(self) -> None:
         from anima_backend_core.api.runs_stream import handle_post_runs_stream
 
@@ -1405,6 +1586,255 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                                     handle_post_runs_stream(h, body)
 
         self.assertTrue(any(x == "worker-model-x" for x in seen_model_overrides))
+
+    def test_run_tool_loop_blocks_repeated_apply_patch_after_conflict_until_read_file(self) -> None:
+        from anima_backend_core.api.runs_stream import _run_tool_loop
+
+        class _FakeProvider:
+            def __init__(self) -> None:
+                self.last_rate_limit = None
+                self.calls = 0
+
+            def chat_completion(self, _messages, **_kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return {
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "",
+                                    "tool_calls": [
+                                        {
+                                            "id": "call_1",
+                                            "type": "function",
+                                            "function": {
+                                                "name": "apply_patch",
+                                                "arguments": json.dumps(
+                                                    {
+                                                        "patch": "*** Begin Patch\n*** Update File: src/options/OptionsApp.vue\n@@\n-old\n+new\n*** End Patch"
+                                                    }
+                                                ),
+                                            },
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                if self.calls == 2:
+                    return {
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "",
+                                    "tool_calls": [
+                                        {
+                                            "id": "call_2",
+                                            "type": "function",
+                                            "function": {
+                                                "name": "apply_patch",
+                                                "arguments": json.dumps(
+                                                    {
+                                                        "patch": "*** Begin Patch\n*** Update File: src/options/OptionsApp.vue\n@@\n-old2\n+new2\n*** End Patch"
+                                                    }
+                                                ),
+                                            },
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                return {"choices": [{"message": {"role": "assistant", "content": "done"}}]}
+
+        executed = []
+
+        def _fake_execute_tool(tool_name, args, **kwargs):
+            executed.append({"tool_name": tool_name, "args": args, "kwargs": kwargs})
+            return (
+                json.dumps({"ok": False, "error": "CONFLICT: source block occurrences 0 != 1"}),
+                {
+                    "id": "tr_fake_apply",
+                    "toolCallId": str(kwargs.get("tool_call_id") or ""),
+                    "name": tool_name,
+                    "status": "failed",
+                    "startedAt": 1,
+                    "endedAt": 2,
+                    "durationMs": 1,
+                    "error": {"message": "CONFLICT: source block occurrences 0 != 1"},
+                    "resultPreview": {"text": '{"ok":false,"error":"CONFLICT: source block occurrences 0 != 1"}', "truncated": False},
+                },
+            )
+
+        with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
+            with patch("anima_backend_core.api.runs_stream.execute_tool", side_effect=_fake_execute_tool):
+                out = _run_tool_loop(
+                    provider=_FakeProvider(),
+                    prepared=[{"role": "user", "content": "edit file"}],
+                    composer={"workspaceDir": "/tmp/workspace"},
+                    settings_obj={"settings": {}},
+                    temperature=0.2,
+                    max_tokens=64,
+                    extra_body=None,
+                )
+
+        self.assertEqual(len(executed), 1)
+        traces = out.get("traces") or []
+        self.assertGreaterEqual(len(traces), 2)
+        self.assertEqual(str((traces[0] or {}).get("status") or ""), "failed")
+        self.assertIn("CONFLICT", str((((traces[0] or {}).get("error") or {}).get("message") or "")))
+        self.assertEqual(str((traces[1] or {}).get("status") or ""), "failed")
+        self.assertIn("read_file", str((((traces[1] or {}).get("error") or {}).get("message") or "")))
+
+    def test_run_tool_loop_allows_apply_patch_after_successful_read_file(self) -> None:
+        from anima_backend_core.api.runs_stream import _run_tool_loop
+
+        class _FakeProvider:
+            def __init__(self) -> None:
+                self.last_rate_limit = None
+                self.calls = 0
+
+            def chat_completion(self, _messages, **_kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return {
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "",
+                                    "tool_calls": [
+                                        {
+                                            "id": "call_1",
+                                            "type": "function",
+                                            "function": {
+                                                "name": "apply_patch",
+                                                "arguments": json.dumps(
+                                                    {
+                                                        "patch": "*** Begin Patch\n*** Update File: src/options/OptionsApp.vue\n@@\n-old\n+new\n*** End Patch"
+                                                    }
+                                                ),
+                                            },
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                if self.calls == 2:
+                    return {
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "",
+                                    "tool_calls": [
+                                        {
+                                            "id": "call_2",
+                                            "type": "function",
+                                            "function": {
+                                                "name": "read_file",
+                                                "arguments": json.dumps({"path": "src/options/OptionsApp.vue"}),
+                                            },
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                if self.calls == 3:
+                    return {
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "",
+                                    "tool_calls": [
+                                        {
+                                            "id": "call_3",
+                                            "type": "function",
+                                            "function": {
+                                                "name": "apply_patch",
+                                                "arguments": json.dumps(
+                                                    {
+                                                        "patch": "*** Begin Patch\n*** Update File: src/options/OptionsApp.vue\n@@\n-old2\n+new2\n*** End Patch"
+                                                    }
+                                                ),
+                                            },
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                return {"choices": [{"message": {"role": "assistant", "content": "done"}}]}
+
+        executed = []
+
+        def _fake_execute_tool(tool_name, args, **kwargs):
+            executed.append(tool_name)
+            if tool_name == "read_file":
+                return (
+                    json.dumps({"meta": {"path": "/tmp/workspace/src/options/OptionsApp.vue", "truncated": False}, "text": "content"}, ensure_ascii=False),
+                    {
+                        "id": "tr_fake_read",
+                        "toolCallId": str(kwargs.get("tool_call_id") or ""),
+                        "name": tool_name,
+                        "status": "succeeded",
+                        "startedAt": 3,
+                        "endedAt": 4,
+                        "durationMs": 1,
+                        "resultPreview": {"text": "ok", "truncated": False},
+                    },
+                )
+            if tool_name == "apply_patch" and executed.count("apply_patch") == 1:
+                return (
+                    json.dumps({"ok": False, "error": "CONFLICT: source block occurrences 0 != 1"}),
+                    {
+                        "id": "tr_fake_apply_1",
+                        "toolCallId": str(kwargs.get("tool_call_id") or ""),
+                        "name": tool_name,
+                        "status": "failed",
+                        "startedAt": 1,
+                        "endedAt": 2,
+                        "durationMs": 1,
+                        "error": {"message": "CONFLICT: source block occurrences 0 != 1"},
+                        "resultPreview": {"text": '{"ok":false,"error":"CONFLICT: source block occurrences 0 != 1"}', "truncated": False},
+                    },
+                )
+            return (
+                json.dumps({"ok": True}, ensure_ascii=False),
+                {
+                    "id": "tr_fake_apply_2",
+                    "toolCallId": str(kwargs.get("tool_call_id") or ""),
+                    "name": tool_name,
+                    "status": "succeeded",
+                    "startedAt": 5,
+                    "endedAt": 6,
+                    "durationMs": 1,
+                    "resultPreview": {"text": '{"ok":true}', "truncated": False},
+                },
+            )
+
+        with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
+            with patch("anima_backend_core.api.runs_stream.execute_tool", side_effect=_fake_execute_tool):
+                out = _run_tool_loop(
+                    provider=_FakeProvider(),
+                    prepared=[{"role": "user", "content": "edit file"}],
+                    composer={"workspaceDir": "/tmp/workspace"},
+                    settings_obj={"settings": {}},
+                    temperature=0.2,
+                    max_tokens=64,
+                    extra_body=None,
+                )
+
+        self.assertEqual(executed, ["apply_patch", "read_file", "apply_patch"])
+        traces = out.get("traces") or []
+        self.assertEqual(str((traces[0] or {}).get("status") or ""), "failed")
+        self.assertEqual(str((traces[1] or {}).get("status") or ""), "succeeded")
+        self.assertEqual(str((traces[2] or {}).get("status") or ""), "succeeded")
 
     def test_runs_stream_returns_json_error_when_provider_not_configured(self) -> None:
         from anima_backend_core.api.runs_stream import handle_post_runs_stream
@@ -1891,6 +2321,211 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                         self.assertTrue(isinstance(models, list) and len(models) == 1)
                         self.assertEqual(str((models[0] or {}).get("id") or ""), "qwen3:8b")
 
+    def test_dispatch_fetch_models_openai_codex_uses_configured_models(self) -> None:
+        from anima_backend_core.api.settings_tools import handle_post_providers_fetch_models
+
+        h = self._make_handler(
+            {
+                "providerId": "openai_codex",
+                "profileId": "default",
+                "useCodexOAuth": True,
+                "baseUrl": "https://chatgpt.com/backend-api",
+                "apiKey": "",
+            }
+        )
+        with patch(
+            "anima_backend_core.api.settings_tools.load_settings",
+            return_value={
+                "providers": [
+                    {
+                        "id": "openai_codex",
+                        "name": "OpenAI Codex (ChatGPT)",
+                        "type": "openai_codex",
+                        "isEnabled": True,
+                        "config": {
+                            "baseUrl": "https://chatgpt.com/backend-api",
+                            "models": [{"id": "gpt-5.2-codex", "isEnabled": True, "config": {"id": "gpt-5.2-codex"}}],
+                        },
+                    }
+                ]
+            },
+        ):
+            with patch("anima_backend_shared.providers.fetch_provider_models") as fetch_mock:
+                handle_post_providers_fetch_models(h)
+        out = self._json_out(h)
+        self.assertTrue(bool(out.get("ok")))
+        self.assertFalse(fetch_mock.called)
+        models = out.get("models") or []
+        self.assertTrue(isinstance(models, list) and len(models) == 1)
+        self.assertEqual(str((models[0] or {}).get("id") or ""), "gpt-5.2-codex")
+
+    def test_dispatch_fetch_models_openai_codex_fallback_includes_new_models(self) -> None:
+        from anima_backend_core.api.settings_tools import handle_post_providers_fetch_models
+
+        h = self._make_handler(
+            {
+                "providerId": "openai_codex",
+                "profileId": "default",
+                "useCodexOAuth": True,
+                "baseUrl": "https://chatgpt.com/backend-api",
+                "apiKey": "",
+            }
+        )
+        with patch("anima_backend_core.api.settings_tools.load_settings", return_value={"providers": []}):
+            handle_post_providers_fetch_models(h)
+        out = self._json_out(h)
+        self.assertTrue(bool(out.get("ok")))
+        model_ids = [str((m or {}).get("id") or "") for m in (out.get("models") or [])]
+        self.assertIn("gpt-5.4", model_ids)
+        self.assertIn("gpt-5.3-codex", model_ids)
+        self.assertIn("gpt-5.2-codex", model_ids)
+
+    def test_dispatch_fetch_models_plain_qwen_uses_api_key_not_oauth(self) -> None:
+        from anima_backend_core.api.settings_tools import handle_post_providers_fetch_models
+
+        h = self._make_handler(
+            {
+                "providerId": "qwen",
+                "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "apiKey": "DASHSCOPE_KEY",
+            }
+        )
+        with patch("anima_backend_shared.qwen_auth_runtime.resolve_qwen_access_token") as resolve_mock:
+            with patch("anima_backend_shared.providers.fetch_provider_models", return_value=[{"id": "qwen-max"}]) as fetch_mock:
+                handle_post_providers_fetch_models(h)
+        out = self._json_out(h)
+        self.assertTrue(bool(out.get("ok")))
+        self.assertFalse(resolve_mock.called)
+        self.assertTrue(fetch_mock.called)
+        self.assertEqual(fetch_mock.call_args.args[0], "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        self.assertEqual(fetch_mock.call_args.args[1], "DASHSCOPE_KEY")
+
+    def test_load_settings_openai_codex_appends_missing_new_models(self) -> None:
+        from pathlib import Path
+
+        from anima_backend_shared.database import init_db, set_app_settings
+        from anima_backend_shared.settings import load_settings
+
+        td, env, db, settings_mod = self._with_temp_config_root()
+        with td:
+            with patch.dict(os.environ, env):
+                with patch.object(db, "_CONFIG_ROOT", None):
+                    with patch.object(db, "_DB_INITIALIZED", False):
+                        with patch.object(settings_mod, "_CONFIG_ROOT", None):
+                            with patch("anima_backend_shared.database.config_root", return_value=Path(td.name)):
+                                init_db()
+                                set_app_settings(
+                                    {
+                                        "settings": {},
+                                        "providers": [
+                                            {
+                                                "id": "openai_codex",
+                                                "name": "OpenAI Codex (ChatGPT)",
+                                                "type": "openai_codex",
+                                                "isEnabled": True,
+                                                "config": {
+                                                    "baseUrl": "https://chatgpt.com/backend-api",
+                                                    "apiFormat": "responses",
+                                                    "modelsFetched": True,
+                                                    "models": [
+                                                        {"id": "gpt-5.2-codex", "isEnabled": True, "config": {"id": "gpt-5.2-codex", "contextWindow": 128000}}
+                                                    ],
+                                                    "selectedModel": "gpt-5.2-codex",
+                                                },
+                                            }
+                                        ],
+                                    }
+                                )
+                                out = load_settings()
+        providers = out.get("providers") or []
+        codex_provider = next((p for p in providers if str((p or {}).get("id") or "") == "openai_codex"), {})
+        models = ((codex_provider or {}).get("config") or {}).get("models") or []
+        model_ids = [str((m or {}).get("id") or "") for m in models if isinstance(m, dict)]
+        self.assertIn("gpt-5.4", model_ids)
+        self.assertIn("gpt-5.3-codex", model_ids)
+        self.assertEqual(model_ids.count("gpt-5.2-codex"), 1)
+
+    def test_default_app_settings_include_qwen_provider_and_hidden_qwen_auth_provider(self) -> None:
+        from anima_backend_shared.defaults import default_app_settings
+
+        settings_obj = default_app_settings()
+        providers = settings_obj.get("providers") or []
+        qwen_provider = next((p for p in providers if str((p or {}).get("id") or "") == "qwen"), {})
+        qwen_auth_provider = next((p for p in providers if str((p or {}).get("id") or "") == "qwen_auth"), {})
+        codex_provider = next((p for p in providers if str((p or {}).get("id") or "") == "openai_codex"), {})
+        provider_ids = [str((p or {}).get("id") or "") for p in providers]
+        self.assertEqual(str((qwen_provider or {}).get("type") or ""), "openai_compatible")
+        self.assertEqual(str((qwen_provider or {}).get("name") or ""), "Qwen")
+        self.assertEqual(str((((qwen_provider or {}).get("auth") or {}).get("mode") or "")), "")
+        self.assertEqual(str((((qwen_provider or {}).get("config") or {}).get("baseUrl") or "")), "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        self.assertEqual(str((qwen_auth_provider or {}).get("name") or ""), "Qwen Auth")
+        self.assertEqual(str((((qwen_auth_provider or {}).get("auth") or {}).get("mode") or "")), "oauth_device_code")
+        self.assertTrue(bool((qwen_auth_provider or {}).get("hiddenInSettings")))
+        self.assertEqual(str((codex_provider or {}).get("name") or ""), "Codex Auth")
+        self.assertEqual(provider_ids.index("openai_codex"), provider_ids.index("qwen_auth") + 1)
+
+    def test_migrate_settings_appends_qwen_provider_and_hidden_qwen_auth_when_missing(self) -> None:
+        from anima_backend_shared import settings as settings_mod
+
+        existing = {"settings": {}, "providers": []}
+        saved = {}
+
+        def _fake_set_app_settings(obj):
+            saved["value"] = obj
+
+        with patch.object(settings_mod, "get_app_settings", return_value=existing):
+            with patch.object(settings_mod, "set_app_settings", side_effect=_fake_set_app_settings):
+                out = settings_mod.migrate_settings()
+
+        providers = out.get("providers") or []
+        qwen_provider = next((p for p in providers if str((p or {}).get("id") or "") == "qwen"), {})
+        qwen_auth_provider = next((p for p in providers if str((p or {}).get("id") or "") == "qwen_auth"), {})
+        self.assertEqual(str((qwen_provider or {}).get("name") or ""), "Qwen")
+        self.assertEqual(str((((qwen_provider or {}).get("auth") or {}).get("mode") or "")), "")
+        self.assertEqual(str((qwen_auth_provider or {}).get("name") or ""), "Qwen Auth")
+        self.assertEqual(str((((qwen_auth_provider or {}).get("auth") or {}).get("mode") or "")), "oauth_device_code")
+        self.assertTrue(bool((qwen_auth_provider or {}).get("hiddenInSettings")))
+        self.assertTrue("value" in saved)
+
+    def test_migrate_settings_renames_and_groups_auth_providers(self) -> None:
+        from anima_backend_shared import settings as settings_mod
+
+        existing = {
+            "settings": {},
+            "providers": [
+                {"id": "openai", "name": "OpenAI", "type": "openai", "config": {}},
+                {
+                    "id": "openai_codex",
+                    "name": "OpenAI Codex (ChatGPT)",
+                    "type": "openai_codex",
+                    "auth": {"mode": "oauth_openai_codex", "profileId": "default"},
+                    "config": {"baseUrl": "https://chatgpt.com/backend-api", "models": [], "selectedModel": "gpt-5.2-codex"},
+                },
+                {"id": "anthropic", "name": "Anthropic", "type": "anthropic", "config": {}},
+                {
+                    "id": "qwen",
+                    "name": "Qwen",
+                    "type": "openai_compatible",
+                    "auth": {"mode": "oauth_device_code", "profileId": "default"},
+                    "config": {"baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1", "models": [], "selectedModel": "coder-model"},
+                },
+            ],
+        }
+
+        with patch.object(settings_mod, "get_app_settings", return_value=existing):
+            with patch.object(settings_mod, "set_app_settings"):
+                out = settings_mod.migrate_settings()
+
+        providers = out.get("providers") or []
+        names = {str((p or {}).get("id") or ""): str((p or {}).get("name") or "") for p in providers}
+        ids = [str((p or {}).get("id") or "") for p in providers]
+        qwen_auth = next((p for p in providers if str((p or {}).get("id") or "") == "qwen_auth"), {})
+        self.assertEqual(names.get("qwen"), "Qwen")
+        self.assertEqual(names.get("qwen_auth"), "Qwen Auth")
+        self.assertTrue(bool((qwen_auth or {}).get("hiddenInSettings")))
+        self.assertEqual(names.get("openai_codex"), "Codex Auth")
+        self.assertEqual(ids.index("openai_codex"), ids.index("qwen_auth") + 1)
+
     def test_dispatch_tts_preview_macos_say(self) -> None:
         from anima_backend_core.api import dispatch
 
@@ -1966,6 +2601,83 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         out = self._json_out(h)
         self.assertTrue(bool(out.get("ok")))
         self.assertTrue(preview_qwen.called)
+
+    def test_dispatch_tts_preview_qwen_tts_local_mode_starts_local_service(self) -> None:
+        from anima_backend_core.api import dispatch
+
+        h = self._make_handler(
+            {
+                "provider": "qwen_tts",
+                "model": "Cherry",
+                "qwenModel": "qwen3-tts-flash",
+                "qwenMode": "local",
+                "qwenLocalModelId": "qwen3-tts-flash",
+                "qwenLocalEndpoint": "http://127.0.0.1:8000/v1/audio/speech",
+                "text": "你好",
+            }
+        )
+        with patch("anima_backend_core.api.settings_tools.ensure_qwen_tts_local_service", return_value={"endpoint": "http://127.0.0.1:8000/v1/audio/speech"}) as ensure_mock:
+            with patch("anima_backend_core.api.settings_tools._tts_preview_qwen") as preview_qwen:
+                self.assertTrue(dispatch(h, "POST", "/api/tts/preview"))
+        out = self._json_out(h)
+        self.assertTrue(bool(out.get("ok")))
+        self.assertTrue(bool(ensure_mock.called))
+        self.assertTrue(bool(preview_qwen.called))
+
+    def test_dispatch_tts_qwen_local_catalog(self) -> None:
+        from anima_backend_core.api import dispatch
+
+        h = self._make_handler(None)
+        with patch("anima_backend_core.api.qwen_tts.qwen_tts_model_catalog", return_value=[{"id": "qwen3-tts-flash"}]):
+            self.assertTrue(dispatch(h, "GET", "/api/tts/qwen/local/catalog"))
+        out = self._json_out(h)
+        self.assertTrue(bool(out.get("ok")))
+        self.assertEqual(str((out.get("models") or [{}])[0].get("id") or ""), "qwen3-tts-flash")
+
+    def test_tts_preview_qwen_local_endpoint_fallback_to_openai_payload(self) -> None:
+        import urllib.error
+        from anima_backend_core.api.settings_tools import _tts_preview_qwen
+
+        seen_payloads = []
+
+        class _Resp:
+            def __init__(self, body: bytes, content_type: str = "application/json") -> None:
+                self._body = body
+                self.status = 200
+                self.headers = {"Content-Type": content_type}
+
+            def read(self) -> bytes:
+                return self._body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        def _urlopen(req, data=None, timeout=0):
+            payload = json.loads((data or b"{}").decode("utf-8"))
+            seen_payloads.append(payload)
+            if len(seen_payloads) == 1:
+                raise urllib.error.HTTPError(req.full_url, 404, "Not Found", hdrs=None, fp=None)
+            return _Resp(b"RIFFfakewav", "audio/wav")
+
+        with patch("anima_backend_core.api.settings_tools.shutil.which", return_value="/usr/bin/afplay"):
+            with patch("anima_backend_core.api.settings_tools.urllib.request.urlopen", side_effect=_urlopen):
+                with patch("anima_backend_core.api.settings_tools.subprocess.Popen") as popen_mock:
+                    _tts_preview_qwen(
+                        text="你好",
+                        voice="Cherry",
+                        qwen_model="qwen3-tts-flash",
+                        language_type="Auto",
+                        endpoint="http://127.0.0.1:8000/v1/audio/speech",
+                        api_key="",
+                    )
+        self.assertEqual(len(seen_payloads), 2)
+        self.assertTrue(isinstance(seen_payloads[0].get("input"), dict))
+        self.assertEqual(str(seen_payloads[1].get("input") or ""), "你好")
+        self.assertEqual(str(seen_payloads[1].get("response_format") or ""), "wav")
+        self.assertTrue(popen_mock.called)
 
     def test_dispatch_cron_jobs_upsert_and_list(self) -> None:
         from anima_backend_core.api import dispatch
@@ -2447,6 +3159,8 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                             self.assertTrue(rel.lower().endswith((".mp4", ".webm", ".mov")))
 
     def test_qwen_oauth_device_flow_stores_credentials_and_resolves_provider_spec(self) -> None:
+        from pathlib import Path
+
         from anima_backend_shared import database as db
         from anima_backend_shared import provider_credentials as cred_store
         from anima_backend_shared import providers as shared_providers
@@ -2456,55 +3170,56 @@ class BackendCoreIntegrationTests(unittest.TestCase):
             with patch.dict(os.environ, env):
                 with patch.object(db_mod, "_CONFIG_ROOT", None):
                     with patch.object(db_mod, "_DB_INITIALIZED", False):
-                        db.init_db()
-                        db.set_app_settings(
-                            {
-                                "settings": {"defaultToolMode": "all"},
-                                "providers": [
-                                    {
-                                        "id": "qwen",
-                                        "name": "Qwen",
-                                        "type": "openai_compatible",
-                                        "isEnabled": True,
-                                        "auth": {"mode": "oauth_device_code", "profileId": "default"},
-                                        "config": {"baseUrl": "https://portal.qwen.ai/v1", "models": [], "selectedModel": "coder-model"},
-                                    }
-                                ],
+                        with patch("anima_backend_shared.database.config_root", return_value=Path(td.name)):
+                            db.init_db()
+                            db.set_app_settings(
+                                {
+                                    "settings": {"defaultToolMode": "all"},
+                                    "providers": [
+                                        {
+                                            "id": "qwen",
+                                            "name": "Qwen",
+                                            "type": "openai_compatible",
+                                            "isEnabled": True,
+                                            "auth": {"mode": "oauth_device_code", "profileId": "default"},
+                                            "config": {"baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1", "models": [], "selectedModel": "coder-model"},
+                                        }
+                                    ],
+                                }
+                            )
+
+                            from anima_backend_core.api import qwen_auth as api_qwen_auth
+
+                            fake_device = {
+                                "device_code": "dc",
+                                "user_code": "UCODE",
+                                "verification_uri": "https://chat.qwen.ai/verify",
+                                "verification_uri_complete": "https://chat.qwen.ai/verify?code=UCODE",
+                                "expires_in": 600,
+                                "interval": 1,
                             }
-                        )
+                            fake_token_result = {
+                                "status": "success",
+                                "token": {
+                                    "accessToken": "ACCESS",
+                                    "refreshToken": "REFRESH",
+                                    "expiresAt": int(time.time() * 1000) + 3600 * 1000,
+                                    "resourceUrl": "https://portal.qwen.ai",
+                                },
+                            }
 
-                        from anima_backend_core.api import qwen_auth as api_qwen_auth
+                            with patch.object(api_qwen_auth, "qwen_generate_pkce_verifier_challenge", return_value=("v", "c")):
+                                with patch.object(api_qwen_auth, "request_device_code", return_value=fake_device):
+                                    h1 = self._make_handler({"providerId": "qwen", "profileId": "default"})
+                                    api_qwen_auth.handle_post_provider_auth_start(h1)
+                                    out1 = self._json_out(h1)
+                                    self.assertTrue(out1.get("ok") is True)
+                                    flow_id = str(out1.get("flowId") or "")
+                                    self.assertTrue(flow_id)
 
-                        fake_device = {
-                            "device_code": "dc",
-                            "user_code": "UCODE",
-                            "verification_uri": "https://chat.qwen.ai/verify",
-                            "verification_uri_complete": "https://chat.qwen.ai/verify?code=UCODE",
-                            "expires_in": 600,
-                            "interval": 1,
-                        }
-                        fake_token_result = {
-                            "status": "success",
-                            "token": {
-                                "accessToken": "ACCESS",
-                                "refreshToken": "REFRESH",
-                                "expiresAt": int(time.time() * 1000) + 3600 * 1000,
-                                "resourceUrl": "https://portal.qwen.ai",
-                            },
-                        }
-
-                        with patch.object(api_qwen_auth, "qwen_generate_pkce_verifier_challenge", return_value=("v", "c")):
-                            with patch.object(api_qwen_auth, "request_device_code", return_value=fake_device):
-                                h1 = self._make_handler({"providerId": "qwen", "profileId": "default"})
-                                api_qwen_auth.handle_post_provider_auth_start(h1)
-                                out1 = self._json_out(h1)
-                                self.assertTrue(out1.get("ok") is True)
-                                flow_id = str(out1.get("flowId") or "")
-                                self.assertTrue(flow_id)
-
-                        with patch.object(api_qwen_auth, "poll_device_token", return_value=fake_token_result):
-                            h2 = self._make_handler(query={"flowId": flow_id})
-                            api_qwen_auth.handle_get_provider_auth_status(h2)
+                            with patch.object(api_qwen_auth, "poll_device_token", return_value=fake_token_result):
+                                h2 = self._make_handler(query={"flowId": flow_id})
+                                api_qwen_auth.handle_get_provider_auth_status(h2)
                             out2 = self._json_out(h2)
                             self.assertTrue(out2.get("ok") is True)
                             self.assertEqual(str(out2.get("state")), "success")
@@ -2517,6 +3232,7 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                         self.assertTrue(spec is not None)
                         self.assertEqual(spec.provider_id, "qwen")
                         self.assertEqual(spec.api_key, "ACCESS")
+                        self.assertEqual(str(spec.base_url), "https://dashscope.aliyuncs.com/compatible-mode/v1")
 
     def test_openai_codex_oauth_resolves_provider_spec(self) -> None:
         from anima_backend_shared import database as db
@@ -2615,6 +3331,33 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         out = p.chat_completion([{"role": "user", "content": "x"}], temperature=0, max_tokens=16)
         msg = ((out.get("choices") or [{}])[0] or {}).get("message") or {}
         self.assertEqual(str(msg.get("content") or ""), "hi")
+
+    def test_openai_compatible_chat_completion_aggregates_stream(self) -> None:
+        from anima_backend_shared.providers import OpenAIChatProvider, ProviderSpec
+
+        spec = ProviderSpec(
+            provider_id="qwen1",
+            provider_type="openai_compatible",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            api_key="ACCESS",
+            model="qwen-max",
+            proxy_url="",
+            thinking_enabled=False,
+            api_format="chat_completions",
+            use_max_completion_tokens=False,
+            extra_headers={},
+        )
+        p = OpenAIChatProvider(spec)
+
+        def _fake_stream(*_args, **_kwargs):
+            yield {"choices": [{"delta": {"content": "he"}, "finish_reason": None}]}
+            yield {"choices": [{"delta": {"content": "llo"}, "finish_reason": None}]}
+            yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+
+        p.chat_completion_stream = _fake_stream
+        out = p.chat_completion([{"role": "user", "content": "x"}], temperature=0, max_tokens=16)
+        msg = ((out.get("choices") or [{}])[0] or {}).get("message") or {}
+        self.assertEqual(str(msg.get("content") or ""), "hello")
 
     def test_openai_codex_stream_falls_back_when_upstream_empty(self) -> None:
         from anima_backend_shared.providers import OpenAICodexChatProvider, ProviderSpec
@@ -2737,6 +3480,368 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         self.assertTrue("temperature" not in payload2)
         self.assertTrue("max_tokens" not in payload2)
         self.assertTrue("max_output_tokens" not in payload2)
+
+    def test_openai_codex_payload_maps_tool_history_and_tools(self) -> None:
+        from anima_backend_shared.providers import OpenAICodexChatProvider, ProviderSpec
+
+        spec = ProviderSpec(
+            provider_id="codex1",
+            provider_type="openai_codex",
+            base_url="https://chatgpt.com/backend-api",
+            api_key="ACCESS",
+            model="gpt-5.2-codex",
+            proxy_url="",
+            thinking_enabled=False,
+            api_format="responses",
+            use_max_completion_tokens=False,
+            extra_headers={},
+        )
+        p = OpenAICodexChatProvider(spec)
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_dir",
+                    "description": "列目录",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}},
+                    },
+                },
+            }
+        ]
+        payload = p._codex_payload(  # type: ignore[attr-defined]
+            [
+                {"role": "system", "content": "SYS"},
+                {"role": "user", "content": "hi"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "list_dir", "arguments": '{"path":"","maxEntries":5}'},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": '{"entries":["a"]}'},
+                {"role": "tool", "tool_call_id": "missing_call", "content": "孤儿工具结果"},
+                {"role": "assistant", "content": "done"},
+            ],
+            temperature=0.2,
+            max_tokens=16,
+            tools=tools,
+            tool_choice={"type": "function", "function": {"name": "list_dir"}},
+            model_override=None,
+            extra_body=None,
+        )
+        self.assertEqual(
+            payload.get("tools"),
+            [
+                {
+                    "type": "function",
+                    "name": "list_dir",
+                    "description": "列目录",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}},
+                    },
+                    "strict": False,
+                }
+            ],
+        )
+        self.assertEqual(payload.get("tool_choice"), {"type": "function", "name": "list_dir"})
+        self.assertEqual(
+            payload.get("input"),
+            [
+                {"role": "user", "content": "hi"},
+                {"type": "function_call", "call_id": "call_1", "name": "list_dir", "arguments": '{"path":"","maxEntries":5}'},
+                {"type": "function_call_output", "call_id": "call_1", "output": '{"entries":["a"]}'},
+                {"role": "assistant", "content": "done"},
+            ],
+        )
+
+    def test_openai_codex_chat_completion_stream_emits_tool_call_deltas(self) -> None:
+        from anima_backend_shared.providers import OpenAICodexChatProvider, ProviderSpec
+
+        spec = ProviderSpec(
+            provider_id="codex1",
+            provider_type="openai_codex",
+            base_url="https://chatgpt.com/backend-api",
+            api_key="ACCESS",
+            model="gpt-5.2-codex",
+            proxy_url="",
+            thinking_enabled=False,
+            api_format="responses",
+            use_max_completion_tokens=False,
+            extra_headers={},
+        )
+        p = OpenAICodexChatProvider(spec)
+
+        class _StdIn:
+            def write(self, _b: bytes) -> None:
+                return
+
+            def close(self) -> None:
+                return
+
+        class _StdOut:
+            def __init__(self) -> None:
+                self._lines = [
+                    b"HTTP/1.1 200 OK\r\n",
+                    b"Content-Type: text/event-stream\r\n",
+                    b"\r\n",
+                    b'data: {"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"list_dir","arguments":""}}\n',
+                    b"\n",
+                    b'data: {"type":"response.function_call_arguments.delta","output_index":0,"item_id":"fc_1","delta":"{\\"path\\":\\"\\""}\n',
+                    b"\n",
+                    b'data: {"type":"response.function_call_arguments.delta","output_index":0,"item_id":"fc_1","delta":",\\"maxEntries\\":5}"}\n',
+                    b"\n",
+                    b'data: {"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"list_dir","arguments":"{\\"path\\":\\"\\",\\"maxEntries\\":5}"}}\n',
+                    b"\n",
+                    b'data: {"type":"response.done","response":{"output":[{"id":"fc_1","type":"function_call","call_id":"call_1","name":"list_dir","arguments":"{\\"path\\":\\"\\",\\"maxEntries\\":5}"}]}}\n',
+                    b"\n",
+                ]
+                self._i = 0
+
+            def readline(self) -> bytes:
+                if self._i >= len(self._lines):
+                    return b""
+                line = self._lines[self._i]
+                self._i += 1
+                return line
+
+            def read(self, _n: int = -1) -> bytes:
+                return b""
+
+        class _StdErr:
+            def read(self) -> bytes:
+                return b""
+
+        class _P:
+            def __init__(self, *_args, **_kwargs) -> None:
+                self.stdin = _StdIn()
+                self.stdout = _StdOut()
+                self.stderr = _StdErr()
+
+            def poll(self):
+                return 0
+
+            def wait(self, timeout=None) -> int:
+                return 0
+
+        import anima_backend_shared.providers as prov_mod
+
+        def _select(_r, _w, _e, _t):
+            return (_r, _w, _e)
+
+        with patch.object(prov_mod.shutil, "which", return_value="curl"):
+            with patch.object(prov_mod.subprocess, "Popen", _P):
+                with patch.object(prov_mod.select, "select", side_effect=_select):
+                    events = list(
+                        p.chat_completion_stream(
+                            [{"role": "user", "content": "hi"}],
+                            temperature=0.2,
+                            max_tokens=16,
+                            tools=[
+                                {
+                                    "type": "function",
+                                    "function": {
+                                        "name": "list_dir",
+                                        "description": "列目录",
+                                        "parameters": {"type": "object"},
+                                    },
+                                }
+                            ],
+                        )
+                    )
+        tool_deltas = []
+        for evt in events:
+            choice = ((evt.get("choices") or [{}])[0]) if isinstance(evt, dict) else {}
+            delta = (choice.get("delta") or {}) if isinstance(choice, dict) else {}
+            tc_list = delta.get("tool_calls")
+            if isinstance(tc_list, list):
+                tool_deltas.extend(tc_list)
+        self.assertEqual(
+            tool_deltas,
+            [
+                {"index": 0, "id": "call_1", "type": "function", "function": {"name": "list_dir", "arguments": ""}},
+                {"index": 0, "function": {"arguments": '{"path":""'}},
+                {"index": 0, "function": {"arguments": ',"maxEntries":5}'}},
+            ],
+        )
+
+    def test_openai_codex_stream_does_not_stop_on_reasoning_item_done(self) -> None:
+        from anima_backend_shared.providers import OpenAICodexChatProvider, ProviderSpec
+
+        spec = ProviderSpec(
+            provider_id="codex1",
+            provider_type="openai_codex",
+            base_url="https://chatgpt.com/backend-api",
+            api_key="ACCESS",
+            model="gpt-5.2-codex",
+            proxy_url="",
+            thinking_enabled=False,
+            api_format="responses",
+            use_max_completion_tokens=False,
+            extra_headers={},
+        )
+        p = OpenAICodexChatProvider(spec)
+
+        class _StdIn:
+            def write(self, _b: bytes) -> None:
+                return
+
+            def close(self) -> None:
+                return
+
+        class _StdOut:
+            def __init__(self) -> None:
+                self._lines = [
+                    b"HTTP/1.1 200 OK\r\n",
+                    b"Content-Type: text/event-stream\r\n",
+                    b"\r\n",
+                    b'data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}\n',
+                    b"\n",
+                    b'data: {"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[]}}\n',
+                    b"\n",
+                    b'data: {"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[]}}\n',
+                    b"\n",
+                    b'data: {"type":"response.output_item.added","output_index":1,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"list_dir","arguments":""}}\n',
+                    b"\n",
+                    b'data: {"type":"response.function_call_arguments.delta","output_index":1,"item_id":"fc_1","delta":"{\\"path\\":\\"\\"}"}\n',
+                    b"\n",
+                    b'data: {"type":"response.completed","response":{"id":"resp_1","status":"completed"}}\n',
+                    b"\n",
+                ]
+                self._i = 0
+
+            def readline(self) -> bytes:
+                if self._i >= len(self._lines):
+                    return b""
+                line = self._lines[self._i]
+                self._i += 1
+                return line
+
+            def read(self, _n: int = -1) -> bytes:
+                return b""
+
+        class _StdErr:
+            def read(self) -> bytes:
+                return b""
+
+        class _P:
+            def __init__(self, *_args, **_kwargs) -> None:
+                self.stdin = _StdIn()
+                self.stdout = _StdOut()
+                self.stderr = _StdErr()
+
+            def poll(self):
+                return 0
+
+            def wait(self, timeout=None) -> int:
+                return 0
+
+        import anima_backend_shared.providers as prov_mod
+
+        def _select(_r, _w, _e, _t):
+            return (_r, _w, _e)
+
+        with patch.object(prov_mod.shutil, "which", return_value="curl"):
+            with patch.object(prov_mod.subprocess, "Popen", _P):
+                with patch.object(prov_mod.select, "select", side_effect=_select):
+                    events = list(
+                        p.chat_completion_stream(
+                            [{"role": "user", "content": "hi"}],
+                            temperature=0.2,
+                            max_tokens=16,
+                            tools=[
+                                {
+                                    "type": "function",
+                                    "function": {
+                                        "name": "list_dir",
+                                        "description": "列目录",
+                                        "parameters": {"type": "object"},
+                                    },
+                                }
+                            ],
+                        )
+                    )
+        tool_deltas = []
+        for evt in events:
+            choice = ((evt.get("choices") or [{}])[0]) if isinstance(evt, dict) else {}
+            delta = (choice.get("delta") or {}) if isinstance(choice, dict) else {}
+            tc_list = delta.get("tool_calls")
+            if isinstance(tc_list, list):
+                tool_deltas.extend(tc_list)
+        self.assertEqual(
+            tool_deltas,
+            [
+                {"index": 1, "id": "call_1", "type": "function", "function": {"name": "list_dir", "arguments": ""}},
+                {"index": 1, "function": {"arguments": '{"path":""}'}},
+            ],
+        )
+
+    def test_openai_codex_chat_completion_aggregates_tool_calls(self) -> None:
+        from anima_backend_shared.providers import OpenAICodexChatProvider, ProviderSpec
+
+        spec = ProviderSpec(
+            provider_id="codex1",
+            provider_type="openai_codex",
+            base_url="https://chatgpt.com/backend-api",
+            api_key="ACCESS",
+            model="gpt-5.2-codex",
+            proxy_url="",
+            thinking_enabled=False,
+            api_format="responses",
+            use_max_completion_tokens=False,
+            extra_headers={},
+        )
+        p = OpenAICodexChatProvider(spec)
+
+        def _fake_stream(*_args, **_kwargs):
+            yield {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {"index": 0, "id": "call_1", "type": "function", "function": {"name": "list_dir", "arguments": ""}}
+                            ]
+                        }
+                    }
+                ]
+            }
+            yield {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": '{"path":""}'}}]}}]}
+            yield {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}
+
+        p.chat_completion_stream = _fake_stream
+        out = p.chat_completion(
+            [{"role": "user", "content": "x"}],
+            temperature=0,
+            max_tokens=16,
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "list_dir",
+                        "description": "列目录",
+                        "parameters": {"type": "object"},
+                    },
+                }
+            ],
+        )
+        msg = ((out.get("choices") or [{}])[0] or {}).get("message") or {}
+        self.assertEqual(
+            msg.get("tool_calls"),
+            [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "list_dir", "arguments": '{"path":""}'},
+                }
+            ],
+        )
 
     def test_openai_codex_extracts_output_text_delta_events(self) -> None:
         from anima_backend_shared.providers import OpenAICodexChatProvider, ProviderSpec
@@ -3015,6 +4120,16 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         self.assertIn("memory_graph_query", names)
         self.assertNotIn("write_file", names)
         self.assertNotIn("edit_file", names)
+
+    def test_system_prompt_includes_write_rule(self) -> None:
+        from anima_backend_core.runtime.graph import build_system_prompt_text
+
+        settings_obj = {"settings": {}}
+        prompt = build_system_prompt_text(settings_obj, {}, "帮我写文件")
+        self.assertIn("apply_patch", prompt)
+        self.assertIn("使用 apply_patch 编辑文件前，必须先读取目标文件的当前完整内容", prompt)
+        self.assertIn("如果读取结果被截断", prompt)
+        self.assertIn("遇到 apply_patch 返回 CONFLICT", prompt)
 
     def test_memory_add_blocked_without_evidence_when_policy_enabled(self) -> None:
         import anima_backend_shared.tools as shared_tools

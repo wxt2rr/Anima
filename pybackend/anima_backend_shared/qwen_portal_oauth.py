@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional, Tuple
 
 
 QWEN_OAUTH_BASE_URL = "https://chat.qwen.ai"
+QWEN_COMPATIBLE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 QWEN_OAUTH_DEVICE_CODE_ENDPOINT = f"{QWEN_OAUTH_BASE_URL}/api/v1/oauth2/device/code"
 QWEN_OAUTH_TOKEN_ENDPOINT = f"{QWEN_OAUTH_BASE_URL}/api/v1/oauth2/token"
 QWEN_OAUTH_CLIENT_ID = "f0304373b74a44d2b584a3fb70ca9e56"
@@ -157,7 +158,17 @@ def normalize_qwen_resource_url(resource_url: Optional[str]) -> Optional[str]:
     if not raw:
         return None
     with_protocol = raw if raw.startswith("http") else f"https://{raw}"
-    base = with_protocol.rstrip("/")
-    if base.endswith("/v1"):
-        return base
-    return f"{base}/v1"
+    parsed = urllib.parse.urlsplit(with_protocol)
+    host = str(parsed.hostname or "").strip().lower()
+    if "dashscope" not in host:
+        return None
+    scheme = parsed.scheme or "https"
+    netloc = parsed.netloc or host
+    path = parsed.path.rstrip("/")
+    if path.endswith("/compatible-mode/v1"):
+        return urllib.parse.urlunsplit((scheme, netloc, path, "", ""))
+    if path.endswith("/compatible-mode"):
+        return urllib.parse.urlunsplit((scheme, netloc, f"{path}/v1", "", ""))
+    if not path:
+        return urllib.parse.urlunsplit((scheme, netloc, "/compatible-mode/v1", "", ""))
+    return None

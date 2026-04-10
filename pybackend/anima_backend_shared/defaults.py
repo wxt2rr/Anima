@@ -3,7 +3,9 @@ from __future__ import annotations
 import copy
 from typing import Any, Dict, List
 
+from .codex_models import build_openai_codex_models, DEFAULT_CODEX_SELECTED_MODEL
 from .constants import SCHEMA_VERSION
+from .qwen_portal_oauth import QWEN_COMPATIBLE_BASE_URL
 
 DEFAULT_MODEL_CONTEXT_WINDOW = 128000
 
@@ -38,6 +40,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "mcpEnabledServerIds": [],
     "defaultSkillMode": "auto",
     "skillsEnabledIds": [],
+    "orchestrationForce": False,
     "enableStreamingSoundEffects": False,
     "enableAutoCompression": True,
     "compressionThreshold": 80,
@@ -94,6 +97,14 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "apiKey": "",
         "qwenModel": "qwen3-tts-flash",
         "qwenLanguageType": "Auto",
+        "qwenMode": "endpoint",
+        "qwenLocalModelId": "qwen3-tts-flash",
+        "qwenLocalEndpoint": "http://127.0.0.1:8000/v1/audio/speech",
+        "qwenLocalCommand": "qwen-tts",
+        "qwenLocalArgs": ["serve", "--model", "{model_id}", "--host", "{host}", "--port", "{port}"],
+        "qwenLocalInstallCommand": "qwen-tts",
+        "qwenLocalInstallArgs": ["download", "{model_id}"],
+        "qwenLocalModelsInstalled": [],
         "speed": 1.0,
         "pitch": 1.0,
         "volume": 1.0,
@@ -255,8 +266,41 @@ DEFAULT_PROVIDERS: List[Dict[str, Any]] = [
         },
     },
     {
+        "id": "qwen",
+        "name": "Qwen",
+        "type": "openai_compatible",
+        "isEnabled": False,
+        "config": {
+            "baseUrl": QWEN_COMPATIBLE_BASE_URL,
+            "apiFormat": "chat_completions",
+            "modelsFetched": False,
+            "models": [],
+            "selectedModel": "",
+            "apiKey": "",
+        },
+    },
+    {
+        "id": "qwen_auth",
+        "name": "Qwen Auth",
+        "type": "openai_compatible",
+        "isEnabled": False,
+        "hiddenInSettings": True,
+        "auth": {"mode": "oauth_device_code", "profileId": "default"},
+        "config": {
+            "baseUrl": QWEN_COMPATIBLE_BASE_URL,
+            "apiFormat": "chat_completions",
+            "modelsFetched": True,
+            "models": [
+                {"id": "coder-model", "isEnabled": True, "config": {"id": "coder-model", "contextWindow": DEFAULT_MODEL_CONTEXT_WINDOW}},
+                {"id": "vision-model", "isEnabled": True, "config": {"id": "vision-model", "contextWindow": DEFAULT_MODEL_CONTEXT_WINDOW}},
+            ],
+            "selectedModel": "coder-model",
+            "apiKey": "",
+        },
+    },
+    {
         "id": "openai_codex",
-        "name": "OpenAI Codex (ChatGPT)",
+        "name": "Codex Auth",
         "type": "openai_codex",
         "isEnabled": False,
         "auth": {"mode": "oauth_openai_codex", "profileId": "default"},
@@ -264,14 +308,8 @@ DEFAULT_PROVIDERS: List[Dict[str, Any]] = [
             "baseUrl": "https://chatgpt.com/backend-api",
             "apiFormat": "responses",
             "modelsFetched": True,
-            "models": [
-                {"id": "gpt-5.2-codex", "isEnabled": True, "config": {"id": "gpt-5.2-codex", "contextWindow": DEFAULT_MODEL_CONTEXT_WINDOW}},
-                {"id": "gpt-5.2-codex-low", "isEnabled": True, "config": {"id": "gpt-5.2-codex-low", "contextWindow": DEFAULT_MODEL_CONTEXT_WINDOW}},
-                {"id": "gpt-5.2-codex-medium", "isEnabled": True, "config": {"id": "gpt-5.2-codex-medium", "contextWindow": DEFAULT_MODEL_CONTEXT_WINDOW}},
-                {"id": "gpt-5.2-codex-high", "isEnabled": True, "config": {"id": "gpt-5.2-codex-high", "contextWindow": DEFAULT_MODEL_CONTEXT_WINDOW}},
-                {"id": "gpt-5.2-codex-xhigh", "isEnabled": True, "config": {"id": "gpt-5.2-codex-xhigh", "contextWindow": DEFAULT_MODEL_CONTEXT_WINDOW}},
-            ],
-            "selectedModel": "gpt-5.2-codex",
+            "models": build_openai_codex_models(),
+            "selectedModel": DEFAULT_CODEX_SELECTED_MODEL,
             "apiKey": "",
         },
     },
