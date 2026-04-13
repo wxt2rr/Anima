@@ -50,6 +50,7 @@ from .memory import (
 from .runs import handle_get_run, handle_post_run_resume, handle_post_runs_non_stream
 from .runs_stream import handle_post_runs_stream
 from .settings_tools import (
+    handle_get_commands_list,
     handle_get_artifact_file,
     handle_get_attachment_file,
     handle_get_settings,
@@ -140,6 +141,7 @@ EXACT_ROUTES: Dict[Tuple[str, str], ExactHandler] = {
     ("POST", "/api/chats/sync"): handle_post_chats_sync,
     ("GET", "/settings"): handle_get_settings,
     ("PATCH", "/settings"): handle_patch_settings,
+    ("GET", "/commands/list"): handle_get_commands_list,
     ("GET", "/skills/list"): handle_get_skills_list,
     ("POST", "/skills/content"): handle_post_skills_content,
     ("POST", "/skills/openDir"): handle_post_skills_open_dir,

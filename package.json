@@ -46,6 +46,10 @@
         "to": "skills"
       },
       {
+        "from": "expand_command",
+        "to": "skills/commands"
+      },
+      {
         "from": "images/logo_padded.png",
         "to": "images/logo_padded.png"
       }

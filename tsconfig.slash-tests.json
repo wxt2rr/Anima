@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": ".tmp/slash-tests",
+    "rootDir": ".",
+    "types": ["node"]
+  },
+  "include": ["tests/slashCommands.test.ts", "src/renderer/src/lib/slashCommands.ts"]
+}

@@ -29,6 +29,13 @@ import { useUpdateStore } from './store/useUpdateStore'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { SHORTCUTS, isMacLike, matchShortcut, normalizeBinding, type ShortcutId } from '@/lib/shortcuts'
 import { useLeftPaneLayout } from './hooks/useLeftPaneLayout'
+import {
+  filterSlashCommands,
+  parseProjectSlashCommandFile,
+  parseSlashInput,
+  renderSlashCommandTemplate,
+  type SlashCommandEntry
+} from './lib/slashCommands'
 
 type BackendUsage = {
   prompt_tokens?: number
@@ -53,6 +60,15 @@ type SkillEntry = {
   isValid?: boolean
   errors?: string[]
   updatedAt?: number
+}
+
+type BundledSlashCommandEntry = {
+  id?: string
+  name?: string
+  title?: string
+  description?: string
+  template?: string
+  file?: string
 }
 
 type DangerousCommandApprovalPayload = {
@@ -486,6 +502,8 @@ function AppLoaded(): JSX.Element {
   const [chatIsAtBottom, setChatIsAtBottom] = useState(true)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const [imageDragActive, setImageDragActive] = useState(false)
+  const [bundledSlashCommands, setBundledSlashCommands] = useState<SlashCommandEntry[]>([])
+  const [projectSlashCommands, setProjectSlashCommands] = useState<SlashCommandEntry[]>([])
   const imageDragDepthRef = useRef(0)
   const showComposerToolSkillEntrances = false
   const wasLoadingRef = useRef(false)
@@ -1775,16 +1793,86 @@ function AppLoaded(): JSX.Element {
     }
   }
 
-  const resolveWorkspaceDir = () => {
-    const st = useStore.getState()
-    const s = st.settings as any
-    const projects = Array.isArray(s?.projects) ? s.projects : []
-    const pid = String(st.ui?.activeProjectId || '').trim()
-    const p = pid ? projects.find((x: any) => String(x?.id || '').trim() === pid) : null
-    const dir = String(p?.dir || '').trim()
+  const activeWorkspaceDir = useMemo(() => {
+    const dir = String(activeProjectDir || '').trim()
     if (dir) return dir
-    return String(s?.workspaceDir || '').trim()
-  }
+    return String((settings as any)?.workspaceDir || '').trim()
+  }, [activeProjectDir, settings.workspaceDir])
+
+  const resolveWorkspaceDir = () => activeWorkspaceDir
+
+  const loadBundledSlashCommands = useCallback(async () => {
+    try {
+      const res = await fetchBackendJson<{ ok: boolean; commands?: BundledSlashCommandEntry[] }>(
+        `/commands/list?t=${Date.now()}`,
+        { method: 'GET', cache: 'no-store' }
+      )
+      const loaded = Array.isArray(res.commands) ? res.commands : []
+      const next = loaded
+        .map((item): SlashCommandEntry | null => {
+          const name = String(item?.name || '').trim()
+          const template = String(item?.template || '').trim()
+          if (!name || !template) return null
+          return {
+            id: String(item?.id || `bundled:${name}`).trim() || `bundled:${name}`,
+            name,
+            title: String(item?.title || `/${name}`),
+            description: String(item?.description || `Run /${name}`),
+            source: 'builtin',
+            kind: 'prompt',
+            template,
+            filePath: String(item?.file || '').trim() || undefined
+          }
+        })
+        .filter((item): item is SlashCommandEntry => Boolean(item))
+        .sort((a, b) => a.name.localeCompare(b.name))
+      setBundledSlashCommands(next)
+    } catch {
+      setBundledSlashCommands([])
+    }
+  }, [])
+
+  const loadProjectSlashCommands = useCallback(async () => {
+    const workspaceDir = String(activeWorkspaceDir || '').trim()
+    if (!workspaceDir || !window.anima?.fs?.readDir || !window.anima?.fs?.readFile) {
+      setProjectSlashCommands([])
+      return
+    }
+    const commandsDir = `${workspaceDir.replace(/\/$/, '')}/.anima/commands`
+    const listRes = await window.anima.fs.readDir(commandsDir)
+    if (!listRes?.ok || !Array.isArray(listRes.files)) {
+      setProjectSlashCommands([])
+      return
+    }
+    const markdownFiles = listRes.files.filter((file) => !file.isDirectory && /\.md$/i.test(String(file.name || '')))
+    const loaded = await Promise.all(markdownFiles.map(async (file) => {
+      const contentRes = await window.anima.fs.readFile(String(file.path || ''))
+      if (!contentRes?.ok) return null
+      return parseProjectSlashCommandFile(String(file.path || ''), String(contentRes.content || ''))
+    }))
+    setProjectSlashCommands(
+      loaded
+        .filter((item): item is SlashCommandEntry => Boolean(item))
+        .sort((a, b) => a.name.localeCompare(b.name))
+    )
+  }, [activeWorkspaceDir])
+
+  useEffect(() => {
+    void loadBundledSlashCommands()
+  }, [loadBundledSlashCommands])
+
+  useEffect(() => {
+    void loadProjectSlashCommands()
+  }, [loadProjectSlashCommands])
+
+  useEffect(() => {
+    const handleFocus = () => {
+      void loadBundledSlashCommands()
+      void loadProjectSlashCommands()
+    }
+    window.addEventListener('focus', handleFocus)
+    return () => window.removeEventListener('focus', handleFocus)
+  }, [loadBundledSlashCommands, loadProjectSlashCommands])
 
   const normalizeAttachmentPath = (filePath: string, workspaceDir: string) => {
     const fp = String(filePath || '').trim()
@@ -2201,6 +2289,144 @@ function AppLoaded(): JSX.Element {
           result: '結果',
           error: 'エラー'
         }
+      }
+    } as const
+    return dict[settings.language as keyof typeof dict] || dict.en
+  })()
+
+  const slashText = (() => {
+    const dict = {
+      en: {
+        empty: 'No matching commands',
+        builtIn: 'Built-in',
+        project: 'Project',
+        menuTitle: 'Slash Commands',
+        menuHint: 'Up/Down Select · Enter Apply',
+        newDesc: 'Create a new chat',
+        statusDesc: 'Show current workspace and model status',
+        reviewDesc: 'Send a code review prompt',
+        planDesc: 'Send a planning prompt',
+        summarizeDesc: 'Summarize the current context',
+        mcpDesc: 'Show MCP and tool summary',
+        coderStatusDesc: 'Show current coder status',
+        coderStartDesc: 'Start the configured coder',
+        coderStopDesc: 'Stop the running coder',
+        statusTitle: '# Current Session Status',
+        statusProject: 'Project',
+        statusWorkspace: 'Workspace',
+        statusProvider: 'Provider',
+        statusModel: 'Model',
+        statusTools: 'Tool mode',
+        statusPermission: 'Permission',
+        statusSkills: 'Skill mode',
+        statusMcp: 'Enabled MCP servers',
+        mcpTitle: '# MCP Summary',
+        mcpEnabled: 'Enabled servers',
+        mcpDisabled: 'Disabled servers',
+        mcpNone: 'No MCP servers configured',
+        coderTitle: '# Coder Status',
+        coderName: 'Profile',
+        coderRunning: 'Running',
+        coderPid: 'PID',
+        coderTransport: 'Transport',
+        coderEndpoint: 'Endpoint',
+        coderError: 'Last error',
+        coderDebugPort: 'Debug port ready',
+        coderStarted: 'Coder start requested.',
+        coderStopped: 'Coder stopped.',
+        coderStartFailed: (msg: string) => `Failed to start coder: ${msg}`,
+        coderStopFailed: (msg: string) => `Failed to stop coder: ${msg}`,
+        reviewPrompt: (args: string) => `Please review the current workspace changes with a code-review mindset.${args ? ` Focus on: ${args}` : ''}`,
+        planPrompt: (args: string) => `Please produce a minimal executable plan before implementation.${args ? ` Requirement: ${args}` : ''}`,
+        summarizePrompt: (args: string) => `Please summarize the current context and preserve the details needed for follow-up work.${args ? ` Extra focus: ${args}` : ''}`
+      },
+      zh: {
+        empty: '没有匹配的命令',
+        builtIn: '内建',
+        project: '项目',
+        menuTitle: 'Slash 命令',
+        menuHint: '上下键切换 · 回车选中',
+        newDesc: '新建一个对话',
+        statusDesc: '显示当前工作区和模型状态',
+        reviewDesc: '发送代码审查提示词',
+        planDesc: '发送计划提示词',
+        summarizeDesc: '总结当前上下文',
+        mcpDesc: '显示 MCP 与工具摘要',
+        coderStatusDesc: '查看当前 coder 状态',
+        coderStartDesc: '启动当前配置的 coder',
+        coderStopDesc: '停止正在运行的 coder',
+        statusTitle: '# 当前会话状态',
+        statusProject: '项目',
+        statusWorkspace: '工作区',
+        statusProvider: '提供商',
+        statusModel: '模型',
+        statusTools: '工具模式',
+        statusPermission: '权限',
+        statusSkills: '技能模式',
+        statusMcp: '已启用 MCP 服务器',
+        mcpTitle: '# MCP 摘要',
+        mcpEnabled: '已启用服务器',
+        mcpDisabled: '未启用服务器',
+        mcpNone: '当前没有配置 MCP 服务器',
+        coderTitle: '# Coder 状态',
+        coderName: '配置',
+        coderRunning: '运行中',
+        coderPid: '进程号',
+        coderTransport: '传输方式',
+        coderEndpoint: '端点',
+        coderError: '最近错误',
+        coderDebugPort: '调试端口就绪',
+        coderStarted: '已请求启动 coder。',
+        coderStopped: '已停止 coder。',
+        coderStartFailed: (msg: string) => `启动 coder 失败：${msg}`,
+        coderStopFailed: (msg: string) => `停止 coder 失败：${msg}`,
+        reviewPrompt: (args: string) => `请按代码审查模式检查当前工作区改动，优先指出 bug、风险、行为回归和缺失测试。${args ? ` 重点关注：${args}` : ''}`,
+        planPrompt: (args: string) => `请先给出最小可执行计划，再开始实现。${args ? ` 当前目标：${args}` : ''}`,
+        summarizePrompt: (args: string) => `请总结当前上下文，并保留后续执行所需的关键信息。${args ? ` 额外关注：${args}` : ''}`
+      },
+      ja: {
+        empty: '一致するコマンドがありません',
+        builtIn: '内蔵',
+        project: 'プロジェクト',
+        menuTitle: 'Slash コマンド',
+        menuHint: '上下キーで選択 · Enter で適用',
+        newDesc: '新しいチャットを作成',
+        statusDesc: '現在のワークスペースとモデル状態を表示',
+        reviewDesc: 'コードレビュー用のプロンプトを送信',
+        planDesc: '計画用のプロンプトを送信',
+        summarizeDesc: '現在のコンテキストを要約',
+        mcpDesc: 'MCP とツールの概要を表示',
+        coderStatusDesc: '現在の coder 状態を表示',
+        coderStartDesc: '設定済み coder を起動',
+        coderStopDesc: '実行中の coder を停止',
+        statusTitle: '# 現在のセッション状態',
+        statusProject: 'プロジェクト',
+        statusWorkspace: 'ワークスペース',
+        statusProvider: 'プロバイダー',
+        statusModel: 'モデル',
+        statusTools: 'ツールモード',
+        statusPermission: '権限',
+        statusSkills: 'スキルモード',
+        statusMcp: '有効な MCP サーバー',
+        mcpTitle: '# MCP サマリー',
+        mcpEnabled: '有効なサーバー',
+        mcpDisabled: '無効なサーバー',
+        mcpNone: 'MCP サーバーが設定されていません',
+        coderTitle: '# Coder 状態',
+        coderName: 'プロファイル',
+        coderRunning: '実行中',
+        coderPid: 'PID',
+        coderTransport: '転送方式',
+        coderEndpoint: 'エンドポイント',
+        coderError: '最新エラー',
+        coderDebugPort: 'デバッグポート準備完了',
+        coderStarted: 'Coder の起動を要求しました。',
+        coderStopped: 'Coder を停止しました。',
+        coderStartFailed: (msg: string) => `Coder の起動に失敗しました: ${msg}`,
+        coderStopFailed: (msg: string) => `Coder の停止に失敗しました: ${msg}`,
+        reviewPrompt: (args: string) => `コードレビューの観点で現在のワークスペース変更を確認してください。バグ、リスク、回帰、不足テストを優先してください。${args ? ` 注目点: ${args}` : ''}`,
+        planPrompt: (args: string) => `実装前に最小実行可能な計画を提示してください。${args ? ` 要件: ${args}` : ''}`,
+        summarizePrompt: (args: string) => `現在のコンテキストを要約し、次の作業に必要な情報を残してください。${args ? ` 追加の焦点: ${args}` : ''}`
       }
     } as const
     return dict[settings.language as keyof typeof dict] || dict.en
@@ -3485,6 +3711,178 @@ function AppLoaded(): JSX.Element {
     void runSend()
     return true
   }
+
+  const builtinSlashCommands = useMemo<SlashCommandEntry[]>(() => {
+    return [
+      { id: 'builtin:new', name: 'new', title: '/new', description: slashText.newDesc, source: 'builtin', kind: 'action' },
+      { id: 'builtin:status', name: 'status', title: '/status', description: slashText.statusDesc, source: 'builtin', kind: 'action' },
+      { id: 'builtin:mcp', name: 'mcp', title: '/mcp', description: slashText.mcpDesc, source: 'builtin', kind: 'action' },
+      { id: 'builtin:coder-status', name: 'coder-status', title: '/coder-status', description: slashText.coderStatusDesc, source: 'builtin', kind: 'action' },
+      { id: 'builtin:coder-start', name: 'coder-start', title: '/coder-start', description: slashText.coderStartDesc, source: 'builtin', kind: 'action' },
+      { id: 'builtin:coder-stop', name: 'coder-stop', title: '/coder-stop', description: slashText.coderStopDesc, source: 'builtin', kind: 'action' }
+    ]
+  }, [slashText])
+
+  const slashCommands = useMemo(() => {
+    const merged = new Map<string, SlashCommandEntry>()
+    for (const command of builtinSlashCommands) merged.set(command.name, command)
+    for (const command of bundledSlashCommands) merged.set(command.name, command)
+    for (const command of projectSlashCommands) merged.set(command.name, command)
+    return Array.from(merged.values()).sort((a, b) => a.name.localeCompare(b.name))
+  }, [builtinSlashCommands, bundledSlashCommands, projectSlashCommands])
+
+  const appendSlashAssistantMessage = useCallback(async (content: string) => {
+    const pid = String(useStore.getState().ui.activeProjectId || '').trim()
+    if (!pid) {
+      alert(t.noProject)
+      return false
+    }
+    const chatId = String(await ensureActiveChatInProject(pid)).trim()
+    if (!chatId) {
+      alert(t.noProject)
+      return false
+    }
+    addMessage({
+      role: 'assistant',
+      content,
+      meta: { slashCommand: true }
+    } as any)
+    return true
+  }, [addMessage, ensureActiveChatInProject, t.noProject])
+
+  const handleExecuteSlashCommand = useCallback(async (rawInput: string) => {
+    const parsed = parseSlashInput(rawInput)
+    if (!parsed?.name) return { handled: false as const }
+    const command = slashCommands.find((item) => item.name === parsed.name)
+    if (!command) return { handled: false as const }
+
+    const sendPrompt = async (text: string) => {
+      const ok = await handleSend(text)
+      return ok ? { handled: true as const, clearValue: true as const } : { handled: true as const, clearValue: false as const }
+    }
+
+    if (command.kind === 'prompt' && command.template) {
+      const rendered = renderSlashCommandTemplate(command.template, {
+        args: parsed.args,
+        workspace: activeWorkspaceDir
+      }).trim()
+      const prompt =
+        parsed.args && !command.template.includes('{{args}}')
+          ? `${rendered}\n\n${parsed.args}`.trim()
+          : rendered
+      if (!prompt) return { handled: true as const, clearValue: false as const }
+      return await sendPrompt(prompt)
+    }
+
+    if (command.name === 'new') {
+      await createChat()
+      return { handled: true as const, clearValue: true as const }
+    }
+
+    if (command.name === 'status') {
+      const enabledMcpServerIds = composer.enabledMcpServerIds.length ? composer.enabledMcpServerIds : settings.mcpEnabledServerIds
+      const enabledMcpNames = (Array.isArray(settings.mcpServers) ? settings.mcpServers : [])
+        .filter((item: any) => enabledMcpServerIds.includes(String(item?.id || '')))
+        .map((item: any) => String(item?.name || item?.id || '').trim())
+        .filter(Boolean)
+      const lines = [
+        slashText.statusTitle,
+        `- ${slashText.statusProject}: ${activeProjectName || '-'}`,
+        `- ${slashText.statusWorkspace}: ${activeWorkspaceDir || '-'}`,
+        `- ${slashText.statusProvider}: ${String(activeProvider?.name || effectiveProviderId || '-').trim() || '-'}`,
+        `- ${slashText.statusModel}: ${String(effectiveModel || '-').trim() || '-'}`,
+        `- ${slashText.statusTools}: ${composer.toolMode || settings.defaultToolMode || '-'}`,
+        `- ${slashText.statusPermission}: ${permissionMode || '-'}`,
+        `- ${slashText.statusSkills}: ${composer.skillMode || settings.defaultSkillMode || '-'}`,
+        `- ${slashText.statusMcp}: ${enabledMcpNames.length ? enabledMcpNames.join(', ') : '-'}`
+      ]
+      const ok = await appendSlashAssistantMessage(lines.join('\n'))
+      return { handled: true as const, clearValue: ok as boolean }
+    }
+
+    if (command.name === 'mcp') {
+      const enabledIds = composer.enabledMcpServerIds.length ? composer.enabledMcpServerIds : settings.mcpEnabledServerIds
+      const servers = Array.isArray(settings.mcpServers) ? settings.mcpServers : []
+      if (!servers.length) {
+        const ok = await appendSlashAssistantMessage(`${slashText.mcpTitle}\n\n${slashText.mcpNone}`)
+        return { handled: true as const, clearValue: ok as boolean }
+      }
+      const enabled = servers
+        .filter((item: any) => enabledIds.includes(String(item?.id || '')))
+        .map((item: any) => String(item?.name || item?.id || '').trim())
+        .filter(Boolean)
+      const disabled = servers
+        .filter((item: any) => !enabledIds.includes(String(item?.id || '')))
+        .map((item: any) => String(item?.name || item?.id || '').trim())
+        .filter(Boolean)
+      const message = [
+        slashText.mcpTitle,
+        '',
+        `- ${slashText.mcpEnabled}: ${enabled.length ? enabled.join(', ') : '-'}`,
+        `- ${slashText.mcpDisabled}: ${disabled.length ? disabled.join(', ') : '-'}`
+      ].join('\n')
+      const ok = await appendSlashAssistantMessage(message)
+      return { handled: true as const, clearValue: ok as boolean }
+    }
+
+    if (command.name === 'coder-status') {
+      const res = await window.anima?.coder?.status?.()
+      const status = res?.ok ? res : { ok: false, error: 'Unavailable' }
+      const message = [
+        slashText.coderTitle,
+        `- ${slashText.coderName}: ${String(status.settings?.name || '-').trim() || '-'}`,
+        `- ${slashText.coderRunning}: ${status.running ? 'true' : 'false'}`,
+        `- ${slashText.coderPid}: ${status.pid ?? '-'}`,
+        `- ${slashText.coderTransport}: ${String(status.settings?.transport || '-').trim() || '-'}`,
+        `- ${slashText.coderEndpoint}: ${String(status.settings?.endpointType || '-').trim() || '-'}`,
+        `- ${slashText.coderDebugPort}: ${status.debugPortReady ? 'true' : 'false'}`,
+        `- ${slashText.coderError}: ${String(status.lastError || status.error || '-').trim() || '-'}`
+      ].join('\n')
+      const ok = await appendSlashAssistantMessage(message)
+      return { handled: true as const, clearValue: ok as boolean }
+    }
+
+    if (command.name === 'coder-start') {
+      const currentCoder = (useStore.getState().settings as any)?.coder
+      const res = await window.anima?.coder?.start?.({ settings: currentCoder })
+      const ok = await appendSlashAssistantMessage(
+        res?.ok ? slashText.coderStarted : slashText.coderStartFailed(String(res?.error || 'unknown error'))
+      )
+      return { handled: true as const, clearValue: ok as boolean }
+    }
+
+    if (command.name === 'coder-stop') {
+      const res = await window.anima?.coder?.stop?.()
+      const ok = await appendSlashAssistantMessage(
+        res?.ok ? slashText.coderStopped : slashText.coderStopFailed(String(res?.error || 'unknown error'))
+      )
+      return { handled: true as const, clearValue: ok as boolean }
+    }
+
+    return { handled: false as const }
+  }, [
+    activeProjectName,
+    activeProvider?.name,
+    activeWorkspaceDir,
+    addMessage,
+    appendSlashAssistantMessage,
+    composer.enabledMcpServerIds,
+    composer.skillMode,
+    composer.toolMode,
+    createChat,
+    effectiveModel,
+    effectiveProviderId,
+    ensureActiveChatInProject,
+    handleSend,
+    permissionMode,
+    settings.defaultSkillMode,
+    settings.defaultToolMode,
+    settings.mcpEnabledServerIds,
+    settings.mcpServers,
+    slashCommands,
+    slashText,
+    t.noProject
+  ])
 
   return (
     <div
@@ -5159,6 +5557,12 @@ function AppLoaded(): JSX.Element {
                     placeholder={t.typeMessage}
                     isLoading={isLoading}
                     onSend={handleSend}
+                    slashCommands={slashCommands}
+                    slashEmptyLabel={slashText.empty}
+                    slashMenuTitle={slashText.menuTitle}
+                    slashMenuHint={slashText.menuHint}
+                    slashSourceLabels={{ builtin: slashText.builtIn, project: slashText.project }}
+                    onExecuteSlashCommand={handleExecuteSlashCommand}
                     onStop={handleStop}
                     onPasteImage={handleComposerPaste}
                     onApi={(api) => {
@@ -5597,6 +6001,12 @@ function ChatComposer({
   placeholder,
   isLoading,
   onSend,
+  slashCommands,
+  slashEmptyLabel,
+  slashMenuTitle,
+  slashMenuHint,
+  slashSourceLabels,
+  onExecuteSlashCommand,
   onStop,
   onPasteImage,
   onApi,
@@ -5608,6 +6018,12 @@ function ChatComposer({
   placeholder: string
   isLoading: boolean
   onSend: (text: string) => Promise<boolean>
+  slashCommands: SlashCommandEntry[]
+  slashEmptyLabel: string
+  slashMenuTitle: string
+  slashMenuHint: string
+  slashSourceLabels: { builtin: string; project: string }
+  onExecuteSlashCommand: (rawInput: string) => Promise<{ handled: boolean; clearValue?: boolean; nextValue?: string }>
   onStop: () => void
   onPasteImage?: (e: ClipboardEvent<HTMLTextAreaElement>) => void
   onApi?: (api: {
@@ -5622,9 +6038,49 @@ function ChatComposer({
   leftControls: ReactNode
 }): JSX.Element {
   const [value, setValue] = useState('')
+  const [slashIndex, setSlashIndex] = useState(0)
+  const [slashDismissed, setSlashDismissed] = useState(false)
   const voiceAnchorRef = useRef<number | null>(null)
+  const inputRef = useRef<HTMLTextAreaElement | null>(null)
+  const slashMenuRef = useRef<HTMLDivElement | null>(null)
+  const slashItemRefs = useRef<Array<HTMLButtonElement | null>>([])
   const reduceMotion = useReducedMotion()
   const actionButtonSizeClass = 'h-8 w-8 p-0 rounded-full'
+
+  const slashInput = useMemo(() => parseSlashInput(value), [value])
+  const exactSlashCommand = useMemo(
+    () => (slashInput?.name ? slashCommands.find((item) => item.name === slashInput.name) || null : null),
+    [slashCommands, slashInput?.name]
+  )
+  const slashSuggestions = useMemo(() => {
+    if (!slashInput?.shouldSuggest) return []
+    return filterSlashCommands(slashCommands, slashInput.query)
+  }, [slashCommands, slashInput])
+  const slashMenuOpen = Boolean(slashInput?.shouldSuggest && !slashDismissed)
+  const activeSlashSuggestion = slashSuggestions[Math.min(slashIndex, Math.max(0, slashSuggestions.length - 1))] || null
+  const selectedSlashCommand = useMemo(() => {
+    if (!slashDismissed || !exactSlashCommand || !slashInput?.name) return null
+    return exactSlashCommand
+  }, [exactSlashCommand, slashDismissed, slashInput?.name])
+  const selectedSlashPrefix = selectedSlashCommand ? `/${selectedSlashCommand.name}` : ''
+  const inputDisplayValue = useMemo(() => {
+    if (!selectedSlashCommand) return value
+    if (value === selectedSlashPrefix) return ''
+    if (value.startsWith(`${selectedSlashPrefix} `)) return value.slice(selectedSlashPrefix.length + 1)
+    return value
+  }, [selectedSlashCommand, selectedSlashPrefix, value])
+
+  useEffect(() => {
+    setSlashIndex(0)
+  }, [value, slashCommands])
+
+  useEffect(() => {
+    if (!slashMenuOpen || !slashSuggestions.length) return
+    const nextIndex = Math.min(slashIndex, Math.max(0, slashSuggestions.length - 1))
+    const node = slashItemRefs.current[nextIndex]
+    if (!node) return
+    node.scrollIntoView({ block: 'nearest' })
+  }, [slashIndex, slashMenuOpen, slashSuggestions.length])
 
   const api = useMemo(() => {
     const ensureAnchor = (prev: string) => {
@@ -5685,6 +6141,18 @@ function ChatComposer({
     if (onApi) onApi(api)
   }, [onApi, api])
 
+  const focusInput = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      inputRef.current?.focus()
+    })
+  }, [])
+
+  const applySlashSuggestion = useCallback((command: SlashCommandEntry) => {
+    setSlashDismissed(true)
+    setValue(`/${command.name}`)
+    focusInput()
+  }, [focusInput])
+
   const onSubmit = useCallback(async () => {
     if (isLoading) {
       onStop()
@@ -5692,27 +6160,154 @@ function ChatComposer({
     }
     const text = String(value || '').trim()
     if (!text) return
+    if (slashInput) {
+      if (!exactSlashCommand && activeSlashSuggestion) {
+        applySlashSuggestion(activeSlashSuggestion)
+        return
+      }
+      const result = await onExecuteSlashCommand(text)
+      if (result.handled) {
+        if (typeof result.nextValue === 'string') setValue(result.nextValue)
+        else if (result.clearValue !== false) setValue('')
+        focusInput()
+        return
+      }
+      return
+    }
     const ok = await onSend(text)
     if (ok) setValue('')
-  }, [isLoading, onStop, onSend, value])
+  }, [
+    activeSlashSuggestion,
+    applySlashSuggestion,
+    exactSlashCommand,
+    focusInput,
+    isLoading,
+    onExecuteSlashCommand,
+    onSend,
+    onStop,
+    slashInput,
+    value
+  ])
 
   return (
-    <div className="w-full">
+    <div className="relative w-full">
+      {slashMenuOpen ? (
+        <div className="absolute left-0 bottom-full z-40 mb-2 w-[300px] max-w-[min(100vw-2.5rem,300px)] overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-md">
+          <div className="flex items-center justify-between border-b px-3 py-2">
+            <div className="text-xs font-medium leading-none">
+              {slashMenuTitle}
+            </div>
+            <div className="text-[11px] text-muted-foreground">{slashMenuHint}</div>
+          </div>
+          {slashSuggestions.length > 0 ? (
+            <div ref={slashMenuRef} className="h-[240px] overflow-y-auto p-1.5 custom-scrollbar">
+              {slashSuggestions.map((command, index) => {
+                const selected = index === Math.min(slashIndex, Math.max(0, slashSuggestions.length - 1))
+                return (
+                  <button
+                    key={`${command.source}:${command.name}`}
+                    ref={(node) => {
+                      slashItemRefs.current[index] = node
+                    }}
+                    type="button"
+                    aria-selected={selected}
+                    className={`group flex w-full items-start gap-2 rounded-md border px-2 py-2 text-left transition-colors ${
+                      selected
+                        ? 'border-border bg-accent text-accent-foreground'
+                        : 'border-transparent hover:bg-black/5'
+                    }`}
+                    onMouseEnter={() => setSlashIndex(index)}
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      applySlashSuggestion(command)
+                    }}
+                  >
+                    <div className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full transition-colors ${selected ? 'bg-primary' : 'bg-muted-foreground/35'}`} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[13px] font-medium leading-none">{command.title}</span>
+                        <Badge variant="outline" className="h-5 rounded-full px-2 text-[10px] font-normal">
+                          {command.source === 'project' ? slashSourceLabels.project : slashSourceLabels.builtin}
+                        </Badge>
+                      </div>
+                      <div className="mt-1 line-clamp-1 text-xs text-muted-foreground">{command.description}</div>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="px-4 py-4 text-xs text-muted-foreground">{slashEmptyLabel}</div>
+          )}
+        </div>
+      ) : null}
       <div className="px-2">
-        <InputAnimation
-          className="w-full bg-transparent border-0 resize-none shadow-none text-[13px] leading-relaxed text-foreground placeholder:text-muted-foreground/70 px-0"
-          placeholder={placeholder}
-          rows={2}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onPaste={onPasteImage}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              void onSubmit()
-            }
-          }}
-        />
+        <div className="flex items-start gap-2">
+          {selectedSlashCommand ? (
+            <div
+              className="mt-0.5 inline-flex h-7 items-center rounded-lg border border-border bg-white px-2.5 text-[13px] text-foreground shrink-0"
+              title={selectedSlashCommand.title}
+            >
+              <span>{selectedSlashCommand.name}</span>
+            </div>
+          ) : null}
+          <div className="min-w-0 flex-1">
+            <InputAnimation
+              ref={inputRef}
+              className="w-full bg-transparent border-0 resize-none shadow-none text-[13px] leading-relaxed text-foreground placeholder:text-muted-foreground/70 px-0"
+              placeholder={placeholder}
+              rows={2}
+              value={inputDisplayValue}
+              onChange={(e) => {
+                const next = e.target.value
+                if (selectedSlashCommand) {
+                  const normalized = String(next || '')
+                  setValue(normalized ? `${selectedSlashPrefix} ${normalized}` : selectedSlashPrefix)
+                  return
+                }
+                setSlashDismissed(false)
+                setValue(next)
+              }}
+              onPaste={onPasteImage}
+              onKeyDown={(e) => {
+                if (slashMenuOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+                  e.preventDefault()
+                  if (!slashSuggestions.length) return
+                  setSlashIndex((prev) => {
+                    if (e.key === 'ArrowDown') return (prev + 1) % slashSuggestions.length
+                    return (prev - 1 + slashSuggestions.length) % slashSuggestions.length
+                  })
+                  return
+                }
+                if (slashMenuOpen && e.key === 'Tab') {
+                  if (!activeSlashSuggestion) return
+                  e.preventDefault()
+                  applySlashSuggestion(activeSlashSuggestion)
+                  return
+                }
+                if (slashMenuOpen && e.key === 'Escape') {
+                  e.preventDefault()
+                  setSlashDismissed(true)
+                  return
+                }
+                if (
+                  selectedSlashCommand &&
+                  !String(inputDisplayValue || '').trim() &&
+                  (e.key === 'Backspace' || e.key === 'Delete')
+                ) {
+                  e.preventDefault()
+                  setSlashDismissed(false)
+                  setValue('')
+                  return
+                }
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  void onSubmit()
+                }
+              }}
+            />
+          </div>
+        </div>
       </div>
       <div className="flex justify-between items-end px-2 pt-1.5 pb-0 mt-0.5 gap-2.5">
         {leftControls}

@@ -71,6 +71,23 @@ def bundled_skills_dir() -> Optional[Path]:
     return Path(raw).expanduser()
 
 
+def bundled_commands_dir() -> Optional[Path]:
+    raw = str(os.environ.get("ANIMA_BUNDLED_COMMANDS_DIR") or "").strip()
+    if not raw:
+        return None
+    return Path(raw).expanduser()
+
+
+def commands_dir() -> Path:
+    raw = str(os.environ.get("ANIMA_COMMANDS_DIR") or "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    bundled = bundled_commands_dir()
+    if bundled is not None:
+        return bundled
+    return config_root() / "commands"
+
+
 def _migrate_codex_provider(existing: Dict[str, Any]) -> bool:
     changed = False
     providers = existing.get("providers")
@@ -454,6 +471,100 @@ def extract_description(markdown: str) -> str:
             s = s.replace(ch, "")
         return s.strip()
     return ""
+
+
+def _normalize_command_name(raw: str) -> str:
+    name = str(raw or "").strip().lower()
+    if name.endswith(".md"):
+        name = name[:-3]
+    name = re.sub(r"[\s_]+", "-", name)
+    name = re.sub(r"[^a-z0-9-]", "", name)
+    name = re.sub(r"-+", "-", name)
+    return name.strip("-")
+
+
+def _compact_markdown_line(raw: str) -> str:
+    s = str(raw or "").strip()
+    s = re.sub(r"^#+\s*", "", s)
+    s = re.sub(r"^[-*]\s+", "", s)
+    s = re.sub(r"^>\s*", "", s)
+    return s.strip()
+
+
+def _parse_command_markdown(file_path: Path, content: str) -> Optional[Dict[str, Any]]:
+    name = _normalize_command_name(file_path.name)
+    if not name:
+        return None
+
+    text = str(content or "").lstrip("\ufeff").strip()
+    if not text:
+        return None
+
+    _meta, body = parse_skill_frontmatter(text)
+    lines = body.splitlines()
+    template = body.strip()
+    description = ""
+
+    first_non_empty_index = -1
+    for i, line in enumerate(lines):
+        if _compact_markdown_line(line):
+            first_non_empty_index = i
+            break
+
+    if first_non_empty_index >= 0:
+        first_line = _compact_markdown_line(lines[first_non_empty_index])
+        if str(lines[first_non_empty_index] or "").strip().startswith("#"):
+            remaining = lines[first_non_empty_index + 1 :]
+            template = "\n".join(remaining).strip()
+            for line in remaining:
+                desc = _compact_markdown_line(line)
+                if desc:
+                    description = desc
+                    break
+        else:
+            description = first_line
+
+    if not template:
+        return None
+
+    if not description:
+        description = f"Run /{name}"
+
+    stat = file_path.stat()
+    return {
+        "id": f"bundled:{name}",
+        "name": name,
+        "title": f"/{name}",
+        "description": description,
+        "template": template,
+        "file": str(file_path),
+        "updatedAt": int(stat.st_mtime * 1000),
+    }
+
+
+def list_commands() -> Tuple[str, List[Dict[str, Any]]]:
+    dir_path = commands_dir()
+    if not dir_path.exists() or not dir_path.is_dir():
+        return str(dir_path), []
+
+    seen: Dict[str, Dict[str, Any]] = {}
+    for entry in dir_path.iterdir():
+        if not entry.is_file() or entry.suffix.lower() != ".md":
+            continue
+        try:
+            content = entry.read_text(encoding="utf-8")
+            item = _parse_command_markdown(entry, content)
+            if not item:
+                continue
+            prev = seen.get(item["name"])
+            if not prev or int(item["updatedAt"]) >= int(prev.get("updatedAt") or 0):
+                seen[item["name"]] = item
+        except Exception:
+            continue
+
+    commands = list(seen.values())
+    commands.sort(key=lambda x: str(x.get("name") or ""))
+    return str(dir_path), commands
 
 
 def list_skills() -> Tuple[str, List[Dict[str, Any]]]:

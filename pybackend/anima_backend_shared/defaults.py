@@ -77,10 +77,6 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "memoryGlobalRetrieveCount": 3,
     "memoryScopeAutoEnabled": False,
     "memoryDefaultWriteScope": "workspace",
-    "openclaw": {
-        "heartbeatEnabled": True,
-        "heartbeatTelegramChatId": "",
-    },
     "voice": {
         "enabled": True,
         "model": "openai/whisper-large-v3-turbo",

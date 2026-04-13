@@ -13,10 +13,11 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from anima_backend_shared.database import close_db_connection, close_runs_db_connection
 from anima_backend_shared.http import json_response, read_body_json
 from anima_backend_shared.settings import config_root
-from anima_backend_shared.util import is_within, norm_abs, now_ms, read_text_file
+from anima_backend_shared.util import norm_abs, now_ms
 
 
 _STORE_LOCK = threading.Lock()
+_MAX_RUN_HISTORY = 20
 
 
 def _cron_dir() -> Path:
@@ -256,6 +257,27 @@ def _upsert_job(job: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         payload = {}
     out["payload"] = payload
+    if str(payload.get("kind") or "run").strip() == "run":
+        run = payload.get("run")
+        if not isinstance(run, dict):
+            run = {}
+        payload["run"] = run
+        thread_mode = str(run.get("threadMode") or "fixed").strip().lower()
+        if thread_mode not in ("fixed", "new_chat"):
+            thread_mode = "fixed"
+        run["threadMode"] = thread_mode
+        thread_id = str(run.get("threadId") or payload.get("threadId") or "").strip()
+        if thread_mode == "fixed" and not thread_id:
+            thread_id = f"cron_thread_{jid}"
+        run["threadId"] = thread_id if thread_mode == "fixed" else ""
+        composer = run.get("composer")
+        if not isinstance(composer, dict):
+            composer = {}
+        run["composer"] = composer
+        messages = run.get("messages")
+        if not isinstance(messages, list):
+            messages = []
+        run["messages"] = [m for m in messages if isinstance(m, dict)]
 
     delivery = out.get("delivery")
     if delivery is not None and not isinstance(delivery, dict):
@@ -271,19 +293,74 @@ def _upsert_job(job: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _execute_job_payload(job: Dict[str, Any]) -> Tuple[bool, str, Optional[str]]:
+def _preserve_runtime_fields(existing: Dict[str, Any], job_norm: Dict[str, Any]) -> None:
+    for key in (
+        "lastRunStartedAtMs",
+        "lastRunEndedAtMs",
+        "lastRunAtMs",
+        "lastStatus",
+        "lastError",
+        "lastOutputPreview",
+        "runHistory",
+    ):
+        if key in existing and key not in job_norm:
+            job_norm[key] = json.loads(json.dumps(existing.get(key)))
+
+
+def _automation_chat_patch(job: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+    composer = body.get("composer")
+    composer = composer if isinstance(composer, dict) else {}
+    patch: Dict[str, Any] = {
+        "automationJobId": str(job.get("id") or "").strip(),
+        "automationJobName": str(job.get("name") or "").strip(),
+    }
+    project_id = str(composer.get("projectId") or "").strip()
+    if project_id:
+        patch["projectId"] = project_id
+    provider_override_id = str(composer.get("providerOverrideId") or "").strip()
+    if provider_override_id:
+        patch["providerOverrideId"] = provider_override_id
+    model_override = str(composer.get("modelOverride") or "").strip()
+    if model_override:
+        patch["modelOverride"] = model_override
+    return patch
+
+
+def _maybe_update_automation_chat_title(thread_id: str, job_name: str) -> None:
+    if not thread_id:
+        return
+    title = str(job_name or "").strip()
+    if not title:
+        return
+    from anima_backend_shared.database import get_chat, update_chat
+
+    chat = get_chat(thread_id)
+    current_title = str((chat or {}).get("title") or "").strip()
+    if current_title and current_title != "New Chat":
+        return
+    update_chat(thread_id, {"title": f"Automation · {title}"})
+
+
+def _append_run_history(job: Dict[str, Any], entry: Dict[str, Any]) -> None:
+    history = job.get("runHistory")
+    items = [x for x in history if isinstance(x, dict)] if isinstance(history, list) else []
+    items.insert(0, entry)
+    job["runHistory"] = items[:_MAX_RUN_HISTORY]
+
+
+def _execute_job_payload(job: Dict[str, Any]) -> Dict[str, Any]:
     payload = job.get("payload")
     if not isinstance(payload, dict):
-        return False, "", "Invalid payload"
+        return {"ok": False, "output": "", "error": "Invalid payload"}
     kind = str(payload.get("kind") or "run").strip() or "run"
 
     if kind == "telegramMessage":
         chat_id = str(payload.get("chatId") or "").strip()
         text = str(payload.get("text") or "")
         if not chat_id:
-            return False, "", "chatId is required"
+            return {"ok": False, "output": "", "error": "chatId is required"}
         if bool(payload.get("ifNonEmpty")) and not text.strip():
-            return True, "", None
+            return {"ok": True, "output": "", "error": None}
         settings_obj = {}
         try:
             from anima_backend_shared.settings import load_settings
@@ -304,21 +381,18 @@ def _execute_job_payload(job: Dict[str, Any]) -> Tuple[bool, str, Optional[str]]
         except Exception:
             token = ""
         if not token:
-            return False, "", "Telegram bot token not configured"
+            return {"ok": False, "output": "", "error": "Telegram bot token not configured"}
 
         try:
             from anima_backend_core.telegram_integration import _tg_send_message
 
             _tg_send_message(token, chat_id, text)
-            return True, "ok", None
+            return {"ok": True, "output": "ok", "error": None}
         except Exception as e:
-            return False, "", str(e)
+            return {"ok": False, "output": "", "error": str(e)}
 
     if kind != "run":
-        return False, "", "Unsupported payload kind"
-
-    heartbeat = payload.get("heartbeat")
-    hb: Dict[str, Any] = heartbeat if isinstance(heartbeat, dict) else {}
+        return {"ok": False, "output": "", "error": "Unsupported payload kind"}
 
     body: Dict[str, Any] = {}
     if isinstance(payload.get("run"), dict):
@@ -328,46 +402,13 @@ def _execute_job_payload(job: Dict[str, Any]) -> Tuple[bool, str, Optional[str]]
 
     run_id = str(body.get("runId") or "").strip() or str(uuid.uuid4())
     body["runId"] = run_id
-    if "threadId" not in body:
-        body["threadId"] = str(payload.get("threadId") or "").strip() or run_id
-
-    if hb:
-        composer = body.get("composer")
-        if not isinstance(composer, dict):
-            composer = {}
-            body["composer"] = composer
-        workspace_dir = str(composer.get("workspaceDir") or "").strip()
-        if workspace_dir:
-            try:
-                workspace_dir = norm_abs(workspace_dir)
-            except Exception:
-                workspace_dir = ""
-
-        hb_path = ""
-        if workspace_dir:
-            try:
-                base = Path(workspace_dir)
-                hb_base = base if base.name == ".anima" else Path(norm_abs(str(base / ".anima")))
-                if is_within(workspace_dir, str(hb_base)):
-                    target = norm_abs(str(hb_base / "HEARTBEAT.md"))
-                    if is_within(str(hb_base), target):
-                        hb_path = target
-            except Exception:
-                hb_path = ""
-
-        if hb_path and Path(hb_path).exists():
-            try:
-                text, _ = read_text_file(hb_path, max_bytes=200_000)
-            except Exception:
-                text = ""
-            if _is_effectively_empty_heartbeat_md(str(text or "")):
-                return True, "", None
-
-        prompt = str(
-            hb.get("prompt")
-            or "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK."
-        )
-        body["messages"] = [{"role": "user", "content": prompt}]
+    run_cfg = payload.get("run") if isinstance(payload.get("run"), dict) else {}
+    thread_mode = str(run_cfg.get("threadMode") or "fixed").strip().lower()
+    if thread_mode not in ("fixed", "new_chat"):
+        thread_mode = "fixed"
+    configured_thread_id = str(body.get("threadId") or payload.get("threadId") or "").strip()
+    thread_id = run_id if thread_mode == "new_chat" else (configured_thread_id or run_id)
+    body["threadId"] = thread_id
 
     from anima_backend_core.api.runs import handle_post_runs_non_stream
 
@@ -376,14 +417,16 @@ def _execute_job_payload(job: Dict[str, Any]) -> Tuple[bool, str, Optional[str]]
         err = ""
         if isinstance(resp, dict):
             err = str(resp.get("error") or "").strip()
-        return False, "", err or "Run failed"
+        return {"ok": False, "output": "", "error": err or "Run failed", "runId": run_id, "threadId": thread_id}
 
     content = str(resp.get("content") or "")
+    try:
+        from anima_backend_shared.database import merge_chat_meta
 
-    if hb:
-        ack_max_chars = int(hb.get("ackMaxChars") or 300)
-        if _should_suppress_heartbeat_delivery(content, ack_max_chars=ack_max_chars):
-            return True, content, None
+        merge_chat_meta(thread_id, _automation_chat_patch(job, body))
+        _maybe_update_automation_chat_title(thread_id, str(job.get("name") or "").strip())
+    except Exception:
+        pass
 
     delivery = job.get("delivery")
     if isinstance(delivery, dict) and str(delivery.get("kind") or "").strip() == "telegram":
@@ -415,39 +458,18 @@ def _execute_job_payload(job: Dict[str, Any]) -> Tuple[bool, str, Optional[str]]
                 except Exception:
                     pass
 
-    return True, content, None
-
-
-def _is_effectively_empty_heartbeat_md(text: str) -> bool:
-    for raw in (text or "").splitlines():
-        s = str(raw or "").strip()
-        if not s:
-            continue
-        if s.startswith("#"):
-            continue
-        if s.startswith("<!--") and s.endswith("-->"):
-            continue
-        return False
-    return True
-
-
-def _should_suppress_heartbeat_delivery(content: str, ack_max_chars: int) -> bool:
-    s = str(content or "")
-    if not s:
-        return False
-    stripped = s.strip()
-    if not stripped:
-        return False
-
-    token = "HEARTBEAT_OK"
-    remaining = stripped
-    if remaining.startswith(token):
-        remaining = remaining[len(token) :].strip()
-    elif remaining.endswith(token):
-        remaining = remaining[: -len(token)].strip()
-    else:
-        return False
-    return len(remaining) <= max(0, int(ack_max_chars))
+    composer = body.get("composer")
+    composer = composer if isinstance(composer, dict) else {}
+    return {
+        "ok": True,
+        "output": content,
+        "error": None,
+        "runId": run_id,
+        "threadId": thread_id,
+        "projectId": str(composer.get("projectId") or "").strip(),
+        "providerOverrideId": str(composer.get("providerOverrideId") or "").strip(),
+        "modelOverride": str(composer.get("modelOverride") or "").strip(),
+    }
 
 
 class CronService:
@@ -588,11 +610,16 @@ class CronService:
                 snapshot = json.loads(json.dumps(job)) if isinstance(job, dict) else None
 
             if isinstance(snapshot, dict):
-                ok, out, err = _execute_job_payload(snapshot)
+                result = _execute_job_payload(snapshot)
+                ok = bool(result.get("ok"))
+                out = str(result.get("output") or "")
+                err = str(result.get("error") or "").strip() or None
             else:
                 ok, out, err = False, "", "Job not found"
+                result = {"threadId": "", "runId": ""}
         except Exception as e:
             ok, out, err = False, "", str(e)
+            result = {"threadId": "", "runId": ""}
         finally:
             ended = now_ms()
             try:
@@ -607,6 +634,23 @@ class CronService:
                         job["lastOutputPreview"] = str(out or "")[:2000]
                         job["updatedAtMs"] = ended
                         job["nextRunAtMs"] = _compute_next_run(job, ended)
+                        _append_run_history(
+                            job,
+                            {
+                                "id": f"cjr_{uuid.uuid4().hex}",
+                                "runId": str(result.get("runId") or "").strip(),
+                                "threadId": str(result.get("threadId") or "").strip(),
+                                "projectId": str(result.get("projectId") or "").strip(),
+                                "providerOverrideId": str(result.get("providerOverrideId") or "").strip(),
+                                "modelOverride": str(result.get("modelOverride") or "").strip(),
+                                "status": "succeeded" if ok else "failed",
+                                "startedAtMs": started,
+                                "endedAtMs": ended,
+                                "durationMs": max(0, ended - started),
+                                "error": str(err or "").strip(),
+                                "outputPreview": str(out or "")[:2000],
+                            },
+                        )
                         if job.get("schedule", {}).get("kind") == "at":
                             job["enabled"] = False
                         _save_store(store)
@@ -625,88 +669,8 @@ class CronService:
 
 _CRON_SERVICE = CronService()
 
-_OPENCLAW_HEARTBEAT_JOB_ID = "cj_openclaw_heartbeat"
-
-
-def _reconcile_openclaw_heartbeat_job(settings_obj: Dict[str, Any]) -> None:
-    s = settings_obj.get("settings")
-    if not isinstance(s, dict):
-        return
-    openclaw = s.get("openclaw")
-    if not isinstance(openclaw, dict):
-        openclaw = {}
-    enabled = bool(openclaw.get("heartbeatEnabled"))
-
-    interval_ms = int(openclaw.get("heartbeatEveryMs") or 1_800_000)
-    interval_ms = max(60_000, min(24 * 60 * 60 * 1000, interval_ms))
-    ack_max_chars = int(openclaw.get("heartbeatAckMaxChars") or 300)
-    ack_max_chars = max(0, min(2000, ack_max_chars))
-
-    workspace_dir = str(s.get("workspaceDir") or "").strip()
-    if workspace_dir:
-        try:
-            workspace_dir = norm_abs(workspace_dir)
-        except Exception:
-            workspace_dir = ""
-
-    tg_chat_id = str(openclaw.get("heartbeatTelegramChatId") or "").strip()
-
-    job: Dict[str, Any] = {
-        "id": _OPENCLAW_HEARTBEAT_JOB_ID,
-        "name": "OpenClaw Heartbeat",
-        "enabled": bool(enabled),
-        "schedule": {"kind": "every", "everyMs": interval_ms},
-        "payload": {
-            "kind": "run",
-            "run": {"threadId": "openclaw-heartbeat", "composer": {"workspaceDir": workspace_dir, "isMainSession": True}},
-            "heartbeat": {"ackMaxChars": ack_max_chars},
-        },
-        "delivery": {"kind": "telegram", "chatId": tg_chat_id, "ifNonEmpty": True},
-    }
-
-    with _STORE_LOCK:
-        store = _load_store()
-        job_norm = _upsert_job(job)
-        existing = _find_job(store, _OPENCLAW_HEARTBEAT_JOB_ID)
-        if existing is None:
-            jobs = store.get("jobs")
-            if not isinstance(jobs, list):
-                jobs = []
-                store["jobs"] = jobs
-            jobs.append(job_norm)
-        else:
-            existing.clear()
-            existing.update(job_norm)
-        store["version"] = int(store.get("version") or 1)
-        if store["version"] <= 0:
-            store["version"] = 1
-        _save_store(store)
-
-
 def reconcile_cron_from_settings(settings_obj: Dict[str, Any]) -> None:
-    try:
-        if isinstance(settings_obj, dict):
-            _reconcile_openclaw_heartbeat_job(settings_obj)
-    except Exception:
-        pass
-    effective = settings_obj
-    try:
-        s = settings_obj.get("settings")
-        if isinstance(s, dict):
-            openclaw = s.get("openclaw")
-            if isinstance(openclaw, dict) and bool(openclaw.get("heartbeatEnabled")):
-                patched = json.loads(json.dumps(settings_obj))
-                ps = patched.get("settings")
-                if isinstance(ps, dict):
-                    cron = ps.get("cron")
-                    if not isinstance(cron, dict):
-                        cron = {}
-                        ps["cron"] = cron
-                    cron["enabled"] = True
-                effective = patched
-    except Exception:
-        effective = settings_obj
-    _CRON_SERVICE.reconcile(effective)
+    _CRON_SERVICE.reconcile(settings_obj)
 
 
 def stop_cron_service() -> None:
@@ -767,6 +731,7 @@ def handle_post_cron_jobs(handler: Any) -> None:
                     store["jobs"] = jobs
                 jobs.append(job_norm)
             else:
+                _preserve_runtime_fields(existing, job_norm)
                 existing.clear()
                 existing.update(job_norm)
 

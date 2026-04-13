@@ -321,7 +321,6 @@ class BackendCoreIntegrationTests(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(base, "USER.md")))
             self.assertTrue(os.path.isfile(os.path.join(base, "TOOLS.md")))
             self.assertTrue(os.path.isfile(os.path.join(base, "IDENTITY.md")))
-            self.assertTrue(os.path.isfile(os.path.join(base, "HEARTBEAT.md")))
 
     def test_openclaw_prompt_does_not_include_memory_md_when_not_main_session(self) -> None:
         from anima_backend_core.runtime.graph import build_system_prompt_text
@@ -470,67 +469,6 @@ class BackendCoreIntegrationTests(unittest.TestCase):
             ]
             picked2 = tg._extract_image_from_traces(traces2, td)
             self.assertEqual(os.path.realpath(str(picked2)), os.path.realpath(str(img)))
-
-    def test_heartbeat_md_empty_skips_model_call(self) -> None:
-        from anima_backend_core.cron import _execute_job_payload
-
-        with tempfile.TemporaryDirectory() as td:
-            os.makedirs(os.path.join(td, ".anima"), exist_ok=True)
-            with open(os.path.join(td, ".anima", "HEARTBEAT.md"), "w", encoding="utf-8") as f:
-                f.write("# Heartbeat\n")
-
-            job = {
-                "id": "cj_hb",
-                "enabled": True,
-                "schedule": {"kind": "every", "everyMs": 60000},
-                "payload": {
-                    "kind": "run",
-                    "run": {"composer": {"workspaceDir": td}},
-                    "heartbeat": {"ackMaxChars": 300},
-                },
-            }
-
-            with patch("anima_backend_core.api.runs.handle_post_runs_non_stream") as mocked:
-                ok, out, err = _execute_job_payload(job)
-                self.assertTrue(ok)
-                self.assertEqual(out, "")
-                self.assertIsNone(err)
-                mocked.assert_not_called()
-
-    def test_heartbeat_ok_suppresses_telegram_delivery(self) -> None:
-        from anima_backend_core.cron import _execute_job_payload
-        import anima_backend_shared.database as db
-        import anima_backend_shared.settings as settings
-
-        td = tempfile.TemporaryDirectory()
-        env = {"ANIMA_CONFIG_ROOT": td.name, "ANIMA_SKILLS_DIR": os.path.join(td.name, "skills")}
-        with td:
-            with patch.dict(os.environ, env):
-                with patch.object(db, "_CONFIG_ROOT", None):
-                    with patch.object(settings, "_CONFIG_ROOT", None):
-                        from anima_backend_shared.database import set_app_settings
-
-                        set_app_settings({"settings": {"im": {"telegram": {"botToken": "t"}}, "workspaceDir": td.name}})
-
-                        job = {
-                            "id": "cj_hb2",
-                            "enabled": True,
-                            "schedule": {"kind": "every", "everyMs": 60000},
-                            "payload": {
-                                "kind": "run",
-                                "run": {"composer": {"workspaceDir": td.name}},
-                                "heartbeat": {"ackMaxChars": 300},
-                            },
-                            "delivery": {"kind": "telegram", "chatId": "123"},
-                        }
-
-                        with patch("anima_backend_core.api.runs.handle_post_runs_non_stream", return_value=(200, {"ok": True, "content": "HEARTBEAT_OK"})):
-                            with patch("anima_backend_core.telegram_integration._tg_send_message") as send_mock:
-                                ok, out, err = _execute_job_payload(job)
-                                self.assertTrue(ok)
-                                self.assertEqual(out.strip(), "HEARTBEAT_OK")
-                                self.assertIsNone(err)
-                                send_mock.assert_not_called()
 
     def test_run_resume_stream_emits_done(self) -> None:
         from anima_backend_core.api.runs import handle_post_run_resume
@@ -2155,6 +2093,13 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                             self.assertTrue(bool(out3.get("ok")))
                             self.assertTrue(isinstance(out3.get("skills"), list))
 
+                        with patch.object(settings, "list_commands", return_value=("/tmp", [{"id": "bundled:review", "name": "review"}])):
+                            h_commands = self._make_handler()
+                            self.assertTrue(dispatch(h_commands, "GET", "/commands/list"))
+                            out_cmd = self._json_out(h_commands)
+                            self.assertTrue(bool(out_cmd.get("ok")))
+                            self.assertTrue(isinstance(out_cmd.get("commands"), list))
+
                         with patch.object(settings, "get_skills_content", return_value=[{"id": "s1", "content": "c"}]):
                             h_content = self._make_handler({"ids": ["s1"]})
                             self.assertTrue(dispatch(h_content, "POST", "/skills/content"))
@@ -2199,6 +2144,23 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                         persisted = get_app_settings()
                         self.assertTrue(isinstance(persisted, dict))
                         self.assertTrue(isinstance((persisted or {}).get("settings"), dict))
+
+    def test_list_commands_reads_bundled_expand_command_markdown(self) -> None:
+        from anima_backend_shared import settings as settings_mod
+
+        td, env, _db, _settings = self._with_temp_config_root()
+        with td:
+            commands_dir = os.path.join(td.name, "bundled_commands")
+            os.makedirs(commands_dir, exist_ok=True)
+            with open(os.path.join(commands_dir, "review.md"), "w", encoding="utf-8") as f:
+                f.write("# review\n请按代码审查模式检查当前工作区改动。\n")
+            with patch.dict(os.environ, {**env, "ANIMA_BUNDLED_COMMANDS_DIR": commands_dir}, clear=False):
+                with patch.object(settings_mod, "_CONFIG_ROOT", None):
+                    dir_path, commands = settings_mod.list_commands()
+                    self.assertEqual(dir_path, commands_dir)
+                    self.assertEqual(len(commands), 1)
+                    self.assertEqual(str(commands[0].get("name") or ""), "review")
+                    self.assertTrue(str(commands[0].get("template") or "").startswith("请按代码审查模式"))
 
     def test_dispatch_db_export_import_clear(self) -> None:
         from anima_backend_core.api import dispatch
@@ -2449,11 +2411,14 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         from anima_backend_shared.defaults import default_app_settings
 
         settings_obj = default_app_settings()
+        openclaw = settings_obj.get("settings", {}).get("openclaw") or {}
         providers = settings_obj.get("providers") or []
         qwen_provider = next((p for p in providers if str((p or {}).get("id") or "") == "qwen"), {})
         qwen_auth_provider = next((p for p in providers if str((p or {}).get("id") or "") == "qwen_auth"), {})
         codex_provider = next((p for p in providers if str((p or {}).get("id") or "") == "openai_codex"), {})
         provider_ids = [str((p or {}).get("id") or "") for p in providers]
+        self.assertFalse("heartbeatEnabled" in openclaw)
+        self.assertFalse("heartbeatTelegramChatId" in openclaw)
         self.assertEqual(str((qwen_provider or {}).get("type") or ""), "openai_compatible")
         self.assertEqual(str((qwen_provider or {}).get("name") or ""), "Qwen")
         self.assertEqual(str((((qwen_provider or {}).get("auth") or {}).get("mode") or "")), "")
@@ -2525,6 +2490,176 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         self.assertTrue(bool((qwen_auth or {}).get("hiddenInSettings")))
         self.assertEqual(names.get("openai_codex"), "Codex Auth")
         self.assertEqual(ids.index("openai_codex"), ids.index("qwen_auth") + 1)
+
+    def test_reconcile_cron_from_settings_does_not_create_openclaw_heartbeat_job(self) -> None:
+        from pathlib import Path
+
+        import anima_backend_core.cron as cron_mod
+
+        td, env, db, settings_mod = self._with_temp_config_root()
+        with td:
+            with patch.dict(os.environ, env):
+                with patch.object(db, "_CONFIG_ROOT", None):
+                    with patch.object(settings_mod, "_CONFIG_ROOT", None):
+                        with patch("anima_backend_shared.settings.config_root", return_value=Path(td.name)):
+                            with patch("anima_backend_core.cron.config_root", return_value=Path(td.name)):
+                                cron_mod.reconcile_cron_from_settings(
+                                    {
+                                        "settings": {
+                                            "cron": {"enabled": False},
+                                            "openclaw": {
+                                                "heartbeatEnabled": True,
+                                                "heartbeatTelegramChatId": "123456",
+                                            },
+                                        }
+                                    }
+                                )
+                                store = cron_mod._load_store()
+
+        jobs = store.get("jobs") or []
+        self.assertTrue(isinstance(jobs, list))
+        self.assertFalse(any(str((job or {}).get("id") or "") == "cj_openclaw_heartbeat" for job in jobs))
+
+    def test_cron_upsert_run_job_assigns_stable_thread_id(self) -> None:
+        import anima_backend_core.cron as cron_mod
+
+        out = cron_mod._upsert_job(
+            {
+                "id": "cj_daily_bug_scan",
+                "name": "Daily bug scan",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3600000},
+                "payload": {
+                    "kind": "run",
+                    "run": {
+                        "composer": {"projectId": "p1", "workspaceDir": "/tmp/project"},
+                        "messages": [{"role": "user", "content": "scan"}],
+                    },
+                },
+            }
+        )
+
+        run = ((out.get("payload") or {}).get("run") or {})
+        self.assertEqual(str(run.get("threadMode") or ""), "fixed")
+        self.assertEqual(str(run.get("threadId") or ""), "cron_thread_cj_daily_bug_scan")
+
+    def test_execute_job_payload_new_chat_uses_run_id_as_thread(self) -> None:
+        import anima_backend_core.cron as cron_mod
+
+        job = {
+            "id": "cj_bug_scan_new_chat",
+            "name": "Daily bug scan",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3600000},
+            "payload": {
+                "kind": "run",
+                "run": {
+                    "threadMode": "new_chat",
+                    "threadId": "cron_thread_cj_bug_scan_new_chat",
+                    "composer": {"projectId": "p1"},
+                    "messages": [{"role": "user", "content": "scan"}],
+                },
+            },
+        }
+
+        seen_bodies = []
+
+        def _fake_handle(body):
+            seen_bodies.append(body)
+            return 200, {"ok": True, "content": "done"}
+
+        with patch("anima_backend_core.api.runs.handle_post_runs_non_stream", side_effect=_fake_handle):
+            with patch("anima_backend_shared.database.merge_chat_meta"):
+                with patch("anima_backend_shared.database.get_chat", return_value={"id": "run_new_1", "title": "New Chat"}):
+                    with patch("anima_backend_shared.database.update_chat"):
+                        result = cron_mod._execute_job_payload(job)
+
+        self.assertTrue(bool(result.get("ok")))
+        self.assertEqual(str(result.get("runId") or ""), str(result.get("threadId") or ""))
+        self.assertEqual(str(seen_bodies[0].get("threadId") or ""), str(result.get("runId") or ""))
+
+    def test_execute_job_payload_run_updates_chat_meta(self) -> None:
+        import anima_backend_core.cron as cron_mod
+
+        job = {
+            "id": "cj_bug_scan",
+            "name": "Daily bug scan",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3600000},
+            "payload": {
+                "kind": "run",
+                "run": {
+                    "threadId": "cron_thread_cj_bug_scan",
+                    "composer": {
+                        "projectId": "p1",
+                        "workspaceDir": "/tmp/project",
+                        "providerOverrideId": "openai_codex",
+                        "modelOverride": "gpt-5.4",
+                    },
+                    "messages": [{"role": "user", "content": "scan"}],
+                },
+            },
+        }
+
+        with patch("anima_backend_core.api.runs.handle_post_runs_non_stream", return_value=(200, {"ok": True, "content": "done"})):
+            with patch("anima_backend_shared.database.merge_chat_meta") as merge_meta_mock:
+                with patch("anima_backend_shared.database.get_chat", return_value={"id": "cron_thread_cj_bug_scan", "title": "New Chat"}):
+                    with patch("anima_backend_shared.database.update_chat") as update_chat_mock:
+                        result = cron_mod._execute_job_payload(job)
+
+        self.assertTrue(bool(result.get("ok")))
+        self.assertEqual(str(result.get("threadId") or ""), "cron_thread_cj_bug_scan")
+        merge_meta_mock.assert_called_once()
+        self.assertEqual(
+            merge_meta_mock.call_args.args,
+            (
+                "cron_thread_cj_bug_scan",
+                {
+                    "automationJobId": "cj_bug_scan",
+                    "automationJobName": "Daily bug scan",
+                    "projectId": "p1",
+                    "providerOverrideId": "openai_codex",
+                    "modelOverride": "gpt-5.4",
+                },
+            ),
+        )
+        update_chat_mock.assert_called_once_with("cron_thread_cj_bug_scan", {"title": "Automation · Daily bug scan"})
+
+    def test_cron_run_thread_appends_run_history(self) -> None:
+        from pathlib import Path
+
+        import anima_backend_core.cron as cron_mod
+
+        td, env, db, settings_mod = self._with_temp_config_root()
+        with td:
+            with patch.dict(os.environ, env):
+                with patch.object(db, "_CONFIG_ROOT", None):
+                    with patch.object(settings_mod, "_CONFIG_ROOT", None):
+                        with patch("anima_backend_shared.settings.config_root", return_value=Path(td.name)):
+                            with patch("anima_backend_core.cron.config_root", return_value=Path(td.name)):
+                                with patch.object(cron_mod, "_execute_job_payload", return_value={"ok": True, "output": "scan done", "error": None, "runId": "run_1", "threadId": "cron_thread_cj_hist", "projectId": "p1", "providerOverrideId": "openai_codex", "modelOverride": "gpt-5.4"}):
+                                    job = cron_mod._upsert_job(
+                                        {
+                                            "id": "cj_hist",
+                                            "name": "History test",
+                                            "enabled": True,
+                                            "schedule": {"kind": "every", "everyMs": 60000},
+                                            "payload": {"kind": "run", "run": {"messages": [{"role": "user", "content": "scan"}]}},
+                                        }
+                                    )
+                                    cron_mod._save_store({"version": 1, "jobs": [job]})
+
+                                    service = cron_mod.CronService()
+                                    service._run_job_thread("cj_hist")
+                                    store = cron_mod._load_store()
+
+        saved = next((j for j in (store.get("jobs") or []) if str((j or {}).get("id") or "") == "cj_hist"), {})
+        history = saved.get("runHistory") or []
+        self.assertEqual(len(history), 1)
+        self.assertEqual(str(history[0].get("runId") or ""), "run_1")
+        self.assertEqual(str(history[0].get("threadId") or ""), "cron_thread_cj_hist")
+        self.assertEqual(str(history[0].get("status") or ""), "succeeded")
+        self.assertEqual(str(history[0].get("outputPreview") or ""), "scan done")
 
     def test_dispatch_tts_preview_macos_say(self) -> None:
         from anima_backend_core.api import dispatch

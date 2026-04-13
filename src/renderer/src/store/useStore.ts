@@ -303,9 +303,10 @@ export interface Settings {
   memoryDefaultWriteScope?: 'workspace' | 'global'
   memoryEmbeddingLocalModels?: Array<{ id: string; name: string; path: string; updatedAt?: number }>
 
-  openclaw?: {
-    heartbeatEnabled?: boolean
-    heartbeatTelegramChatId?: string
+  cron?: {
+    enabled?: boolean
+    pollIntervalMs?: number
+    allowAgentManage?: boolean
   }
 
   voice?: {

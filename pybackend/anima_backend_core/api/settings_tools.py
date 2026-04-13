@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from anima_backend_shared.http import json_response, read_body_json
 from anima_backend_shared.qwen_tts_local import ensure_qwen_tts_local_service
 from anima_backend_shared.codex_models import build_openai_codex_models
-from anima_backend_shared.settings import get_skills_content, list_skills, load_settings, open_folder, skills_dir
+from anima_backend_shared.settings import get_skills_content, list_commands, list_skills, load_settings, open_folder, skills_dir
 from anima_backend_shared.tools import builtin_tools, mcp_tools
 
 DEFAULT_MODEL_CONTEXT_WINDOW = 128000
@@ -149,6 +149,14 @@ def handle_get_skills_list(handler: Any) -> None:
     try:
         dir_path, skills = list_skills()
         json_response(handler, HTTPStatus.OK, {"ok": True, "dir": dir_path, "skills": skills})
+    except Exception as e:
+        json_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(e)})
+
+
+def handle_get_commands_list(handler: Any) -> None:
+    try:
+        dir_path, commands = list_commands()
+        json_response(handler, HTTPStatus.OK, {"ok": True, "dir": dir_path, "commands": commands})
     except Exception as e:
         json_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(e)})
 

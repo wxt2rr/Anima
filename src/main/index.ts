@@ -213,6 +213,9 @@ function startBackend(port: number): ChildProcessWithoutNullStreams {
     : join(app.getAppPath(), 'pybackend', 'server.py')
   const python = resolvePythonExecutable()
   const bundledSkillsDir = process.env.ANIMA_BUNDLED_SKILLS_DIR || (app.isPackaged ? join(process.resourcesPath, 'skills') : join(app.getAppPath(), 'skills'))
+  const bundledCommandsDir =
+    process.env.ANIMA_BUNDLED_COMMANDS_DIR ||
+    (app.isPackaged ? join(process.resourcesPath, 'skills', 'commands') : join(app.getAppPath(), 'expand_command'))
   const homeDir = app.getPath('home')
   const userSkillsDir = process.env.ANIMA_SKILLS_DIR || join(homeDir, '.config', 'anima', 'skills')
 
@@ -278,6 +281,7 @@ function startBackend(port: number): ChildProcessWithoutNullStreams {
 
   const extraEnv: Record<string, string> = { PYTHONUNBUFFERED: '1' }
   extraEnv.ANIMA_SKILLS_DIR = userSkillsDir
+  extraEnv.ANIMA_BUNDLED_COMMANDS_DIR = bundledCommandsDir
   if (is.dev) {
     if (!process.env.ANIMA_VOICE_DEBUG) extraEnv.ANIMA_VOICE_DEBUG = '1'
     if (!process.env.ANIMA_TG_DEBUG) extraEnv.ANIMA_TG_DEBUG = '1'

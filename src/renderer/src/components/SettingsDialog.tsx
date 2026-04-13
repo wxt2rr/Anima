@@ -1,7 +1,7 @@
 import { 
   Settings, MessageSquare, Database, Globe, 
   Cpu, Search, Plus, Trash2, CheckCircle2, XCircle, RefreshCw,
-  Copy, ChevronDown, ChevronRight, Eye, EyeOff, ExternalLink, Wand2, FolderOpen, Sparkles, Mic, Info, Keyboard, X, Bell
+  Copy, ChevronDown, ChevronRight, Eye, EyeOff, ExternalLink, Wand2, FolderOpen, Sparkles, Mic, Info, Keyboard, X, Bell, Clock3, Play
 } from 'lucide-react'
 import { resolveBackendBaseUrl, useStore, type Provider, type ProviderModel, type VoiceModelEntry } from '../store/useStore'
 import { THEMES, ThemeColor } from '../lib/themes'
@@ -1668,6 +1668,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           providers: 'Providers',
           chat: 'Chat',
           coder: 'Coder',
+          automation: 'Automation',
           im: 'IM',
           memory: 'Memory',
           skills: 'Skills',
@@ -1774,6 +1775,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           providers: '提供商',
           chat: '聊天',
           coder: 'Coder',
+          automation: '自动化',
           im: 'IM',
           memory: '记忆',
           skills: '技能',
@@ -1880,6 +1882,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           providers: 'プロバイダー',
           chat: 'チャット',
           coder: 'Coder',
+          automation: '自動化',
           im: 'IM',
           memory: 'メモリー',
           skills: 'スキル',
@@ -2098,6 +2101,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           providers: 'Providers',
           chat: 'Chat',
           coder: 'Coder',
+          automation: 'Automation',
           im: 'IM',
           memory: 'Memory',
           skills: 'Skills',
@@ -2133,6 +2137,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           providers: '提供商',
           chat: '聊天',
           coder: 'Coder',
+          automation: '自动化',
           im: 'IM',
           memory: '记忆',
           skills: '技能',
@@ -2168,6 +2173,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           providers: 'プロバイダー',
           chat: 'チャット',
           coder: 'Coder',
+          automation: '自動化',
           im: 'IM',
           memory: 'メモリー',
           skills: 'スキル',
@@ -2238,6 +2244,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
     { id: 'providers', label: t.tabs.providers, icon: Cpu },
     { id: 'chat', label: t.tabs.chat, icon: MessageSquare },
     { id: 'coder', label: t.tabs.coder, icon: Sparkles },
+    { id: 'automation', label: t.tabs.automation, icon: Clock3 },
     { id: 'memory', label: t.tabs.memory, icon: Search },
     { id: 'im', label: t.tabs.im, icon: ExternalLink },
     { id: 'skills', label: t.tabs.skills, icon: Wand2 },
@@ -2255,6 +2262,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
     if (activeTab === 'general') return <GeneralSettings />
     if (activeTab === 'chat') return <ChatSettings />
     if (activeTab === 'coder') return <CoderSettings />
+    if (activeTab === 'automation') return <AutomationSettings />
     if (activeTab === 'memory') return <MemorySettings />
     if (activeTab === 'im') return <ImSettings />
     if (activeTab === 'skills') return <SkillsSettings />
@@ -5758,6 +5766,1175 @@ function ChatSettings() {
   )
 }
 
+function AutomationSettings() {
+  const { settings: settings0, updateSettings } = useStore()
+  const settings = settings0!
+  const providers = useStore((s) => s.providers)
+  const activeProjectId = useStore((s) => s.ui.activeProjectId)
+  const setActiveProject = useStore((s) => s.setActiveProject)
+  const setActiveChat = useStore((s) => s.setActiveChat)
+  const setSettingsOpen = useStore((s) => s.setSettingsOpen)
+  const [jobs, setJobs] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [selectedJobId, setSelectedJobId] = useState('')
+  const [status, setStatus] = useState<{ type: 'idle' | 'ok' | 'error'; text?: string }>({ type: 'idle' })
+  const [draft, setDraft] = useState<any>({
+    id: '',
+    name: '',
+    enabled: true,
+    schedule: { kind: 'every', everyMs: 3600000, expr: '0 9 * * *', tz: 'Asia/Shanghai', atMs: 0 },
+    payload: {
+      kind: 'run',
+      run: {
+        threadId: '',
+        threadMode: 'fixed',
+        composer: { projectId: '', workspaceDir: '', providerOverrideId: '', modelOverride: '' },
+        messages: [{ role: 'user', content: '' }]
+      },
+      chatId: '',
+      text: '',
+      ifNonEmpty: true
+    },
+    delivery: { kind: '', chatId: '', ifNonEmpty: true }
+  })
+
+  const t = (() => {
+    const dict = {
+      en: {
+        title: 'Automation',
+        desc: 'Create scheduled AI tasks around projects, prompts, and models.',
+        serviceTitle: 'Cron Service',
+        serviceDesc: 'This service drives all local scheduled jobs.',
+        serviceCompactHint: 'Disable to stop all local automation. Default check interval: 500ms.',
+        cronEnable: 'Enable Cron Service',
+        cronEnableHint: 'When disabled, local scheduled jobs will not run.',
+        pollInterval: 'Check Interval (ms)',
+        pollIntervalHint: 'How often Cron checks whether any task is due. Default 500ms.',
+        allowAgentManage: 'Allow Agent Manage Cron',
+        allowAgentManageHint: 'Enables cron_list / cron_upsert / cron_delete / cron_run tools for agents.',
+        jobsTitle: 'Scheduled Jobs',
+        refresh: 'Refresh',
+        newJob: 'New Job',
+        edit: 'Edit',
+        saveJob: 'Save Job',
+        deleteJob: 'Delete Job',
+        deleteShort: 'Delete',
+        runNow: 'Run Now',
+        empty: 'No scheduled jobs yet.',
+        jobName: 'Job Name',
+        enabled: 'Enabled',
+        disabled: 'Disabled',
+        close: 'Close',
+        scheduleKind: 'Schedule Type',
+        scheduleAt: 'At',
+        scheduleEvery: 'Every',
+        scheduleCron: 'Cron',
+        atTime: 'Run At',
+        everyMs: 'Every (ms)',
+        cronExpr: 'Cron Expression',
+        cronTz: 'Cron Timezone',
+        payloadKind: 'Payload Type',
+        payloadRun: 'Run Task',
+        payloadTelegram: 'Telegram Message',
+        threadMode: 'Conversation Mode',
+        threadModeFixed: 'Fixed thread',
+        threadModeNewChat: 'New chat every run',
+        project: 'Project',
+        noProject: 'No project',
+        provider: 'Provider',
+        model: 'Model',
+        followDefault: 'Follow default',
+        prompt: 'Prompt',
+        telegramChatId: 'Telegram Chat ID',
+        telegramText: 'Telegram Text',
+        ifNonEmpty: 'Only send when non-empty',
+        deliveryTitle: 'Run Result Delivery',
+        deliveryKind: 'Delivery Type',
+        deliveryNone: 'None',
+        deliveryTelegram: 'Telegram',
+        saved: 'Saved.',
+        deleted: 'Deleted.',
+        triggered: 'Triggered.',
+        failedLoad: 'Failed to load jobs.',
+        failedSave: 'Failed to save job.',
+        failedDelete: 'Failed to delete job.',
+        failedRun: 'Failed to run job.',
+        nextRun: 'Next Run',
+        lastStatus: 'Last Status',
+        historyTitle: 'Execution History',
+        historyEmpty: 'No execution records yet.',
+        historyStarted: 'Started',
+        historyDuration: 'Duration',
+        historyOutput: 'Output',
+        historyError: 'Error',
+        openThread: 'Open thread',
+        listTitle: 'Tasks',
+        listHint: 'Review status, next run, and schedule at a glance. Click a task to edit it.',
+        editorEmpty: 'Select a task on the left to edit it.',
+        sectionTask: '1. Task',
+        sectionContext: '2. Context',
+        sectionSchedule: '3. Schedule',
+        sectionDelivery: '4. Delivery',
+        sectionHistory: '5. Recent runs',
+        promptHint: 'Describe the outcome you want the model to produce each time this task runs.',
+        projectHint: 'Bind the task to a project so the run can reuse its workspace and conversations.',
+        threadModeHint: 'Fixed thread keeps context across runs. New chat creates a fresh conversation each time.',
+        scheduleHint: 'Choose when this task should run.',
+        telegramHint: 'Send the result summary to Telegram after the run completes.',
+        taskTypeHint: 'Run task is the main flow. Telegram message is kept for simple message-only jobs.',
+        lastRunEmpty: 'Never run'
+      },
+      zh: {
+        title: '自动化',
+        desc: '围绕项目、提示词和模型创建定时 AI 任务。',
+        serviceTitle: 'Cron 服务',
+        serviceDesc: '这个服务负责驱动所有本地定时任务。',
+        serviceCompactHint: '关闭后将停止所有本地自动执行。默认检查间隔为 500 毫秒。',
+        cronEnable: '启用 Cron 服务',
+        cronEnableHint: '关闭后，本地定时任务不会自动执行。',
+        pollInterval: '检查间隔（毫秒）',
+        pollIntervalHint: 'Cron 服务每隔多久检查一次是否有到期任务。默认 500 毫秒。',
+        allowAgentManage: '允许 Agent 管理 Cron',
+        allowAgentManageHint: '开启后，Agent 可使用 cron_list / cron_upsert / cron_delete / cron_run 工具。',
+        jobsTitle: '定时任务',
+        refresh: '刷新',
+        newJob: '新建任务',
+        edit: '编辑',
+        saveJob: '保存任务',
+        deleteJob: '删除任务',
+        deleteShort: '删除',
+        runNow: '立即执行',
+        empty: '暂无定时任务。',
+        jobName: '任务名称',
+        enabled: '启用',
+        disabled: '停用',
+        close: '关闭',
+        scheduleKind: '调度类型',
+        scheduleAt: '单次',
+        scheduleEvery: '间隔',
+        scheduleCron: 'Cron',
+        atTime: '执行时间',
+        everyMs: '间隔（毫秒）',
+        cronExpr: 'Cron 表达式',
+        cronTz: 'Cron 时区',
+        payloadKind: '任务类型',
+        payloadRun: '运行任务',
+        payloadTelegram: '发送 Telegram 消息',
+        threadMode: '对话模式',
+        threadModeFixed: '固定线程',
+        threadModeNewChat: '每次新建对话',
+        project: '项目',
+        noProject: '不绑定项目',
+        provider: 'Provider',
+        model: '模型',
+        followDefault: '跟随默认',
+        prompt: '提示词',
+        telegramChatId: 'Telegram Chat ID',
+        telegramText: 'Telegram 文本',
+        ifNonEmpty: '仅在内容非空时发送',
+        deliveryTitle: '运行结果投递',
+        deliveryKind: '投递方式',
+        deliveryNone: '不投递',
+        deliveryTelegram: 'Telegram',
+        saved: '已保存。',
+        deleted: '已删除。',
+        triggered: '已触发执行。',
+        failedLoad: '加载任务失败。',
+        failedSave: '保存任务失败。',
+        failedDelete: '删除任务失败。',
+        failedRun: '执行任务失败。',
+        nextRun: '下次执行',
+        lastStatus: '最近状态',
+        historyTitle: '执行记录',
+        historyEmpty: '暂无执行记录。',
+        historyStarted: '开始时间',
+        historyDuration: '耗时',
+        historyOutput: '输出摘要',
+        historyError: '错误',
+        openThread: '打开对话',
+        listTitle: '任务列表',
+        listHint: '这里展示最近状态、下次执行和调度摘要。点击任务后再编辑。',
+        editorEmpty: '先在左侧选择一个任务。',
+        sectionTask: '1. 任务内容',
+        sectionContext: '2. 执行上下文',
+        sectionSchedule: '3. 调度',
+        sectionDelivery: '4. 结果处理',
+        sectionHistory: '5. 最近执行',
+        promptHint: '写清楚每次定时执行时，希望模型完成什么结果。',
+        projectHint: '绑定项目后，任务会复用该项目的工作区和对话。',
+        threadModeHint: '固定线程会延续上下文；每次新建对话会为每次执行创建新会话。',
+        scheduleHint: '设置这个任务何时自动运行。',
+        telegramHint: '任务完成后，把结果摘要投递到 Telegram。',
+        taskTypeHint: '运行任务是主流程；发送 Telegram 消息保留给简单的消息类任务。',
+        lastRunEmpty: '尚未执行'
+      },
+      ja: {
+        title: '自動化',
+        desc: 'プロジェクト・プロンプト・モデルを軸に定期 AI タスクを管理します。',
+        serviceTitle: 'Cron サービス',
+        serviceDesc: 'このサービスがローカル定期ジョブを動かします。',
+        serviceCompactHint: '無効化するとローカル自動実行を停止します。既定の確認間隔は 500ms です。',
+        cronEnable: 'Cron サービスを有効化',
+        cronEnableHint: '無効時はローカル定期ジョブが実行されません。',
+        pollInterval: '確認間隔（ms）',
+        pollIntervalHint: 'Cron が実行時刻に達したタスクを確認する間隔です。既定値は 500ms です。',
+        allowAgentManage: 'Agent に Cron 管理を許可',
+        allowAgentManageHint: '有効時、Agent が cron_list / cron_upsert / cron_delete / cron_run を使えます。',
+        jobsTitle: '定期ジョブ',
+        refresh: '更新',
+        newJob: '新規ジョブ',
+        edit: '編集',
+        saveJob: '保存',
+        deleteJob: '削除',
+        deleteShort: '削除',
+        runNow: '今すぐ実行',
+        empty: '定期ジョブはまだありません。',
+        jobName: 'ジョブ名',
+        enabled: '有効',
+        disabled: '無効',
+        close: '閉じる',
+        scheduleKind: 'スケジュール種別',
+        scheduleAt: '単発',
+        scheduleEvery: '間隔',
+        scheduleCron: 'Cron',
+        atTime: '実行時刻',
+        everyMs: '間隔（ms）',
+        cronExpr: 'Cron 式',
+        cronTz: 'Cron タイムゾーン',
+        payloadKind: '処理種別',
+        payloadRun: 'Run タスク',
+        payloadTelegram: 'Telegram メッセージ',
+        threadMode: '会話モード',
+        threadModeFixed: '固定スレッド',
+        threadModeNewChat: '毎回新しい会話',
+        project: 'プロジェクト',
+        noProject: 'プロジェクトなし',
+        provider: 'Provider',
+        model: 'モデル',
+        followDefault: '既定に従う',
+        prompt: 'プロンプト',
+        telegramChatId: 'Telegram Chat ID',
+        telegramText: 'Telegram テキスト',
+        ifNonEmpty: '非空時のみ送信',
+        deliveryTitle: '実行結果の配送',
+        deliveryKind: '配送方式',
+        deliveryNone: 'なし',
+        deliveryTelegram: 'Telegram',
+        saved: '保存しました。',
+        deleted: '削除しました。',
+        triggered: '実行を開始しました。',
+        failedLoad: 'ジョブの読み込みに失敗しました。',
+        failedSave: 'ジョブの保存に失敗しました。',
+        failedDelete: 'ジョブの削除に失敗しました。',
+        failedRun: 'ジョブの実行に失敗しました。',
+        nextRun: '次回実行',
+        lastStatus: '前回状態',
+        historyTitle: '実行履歴',
+        historyEmpty: '実行履歴はまだありません。',
+        historyStarted: '開始時刻',
+        historyDuration: '所要時間',
+        historyOutput: '出力概要',
+        historyError: 'エラー',
+        openThread: 'スレッドを開く',
+        listTitle: 'タスク一覧',
+        listHint: '状態・次回実行・スケジュール概要を確認できます。クリックすると編集します。',
+        editorEmpty: '左側でタスクを選択してください。',
+        sectionTask: '1. タスク内容',
+        sectionContext: '2. 実行コンテキスト',
+        sectionSchedule: '3. スケジュール',
+        sectionDelivery: '4. 配送',
+        sectionHistory: '5. 最近の実行',
+        promptHint: '毎回の実行でモデルに達成してほしい結果を記述します。',
+        projectHint: 'プロジェクトに紐付けると、ワークスペースと会話を再利用します。',
+        threadModeHint: '固定スレッドは文脈を維持し、毎回新しい会話は毎回新規スレッドを作成します。',
+        scheduleHint: 'このタスクをいつ実行するか設定します。',
+        telegramHint: '実行完了後に結果概要を Telegram に送ります。',
+        taskTypeHint: 'Run タスクが主な用途です。Telegram メッセージは単純な通知向けです。',
+        lastRunEmpty: '未実行'
+      }
+    } as const
+    return dict[settings.language as keyof typeof dict] || dict.en
+  })()
+
+  const cron = (settings as any).cron || {}
+  const projects = Array.isArray(settings.projects) ? settings.projects : []
+
+  const availableProviders = useMemo(() => {
+    const list = Array.isArray(providers) ? providers.filter((p) => p && p.isEnabled) : []
+    list.sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)))
+    return list
+  }, [providers])
+
+  const selectedProvider = useMemo(() => {
+    const providerId = String(draft.payload?.run?.composer?.providerOverrideId || '').trim()
+    if (!providerId) return undefined
+    return availableProviders.find((p) => p.id === providerId)
+  }, [availableProviders, draft.payload?.run?.composer?.providerOverrideId])
+
+  const availableModels = useMemo(() => {
+    const models = Array.isArray(selectedProvider?.config?.models) ? selectedProvider?.config?.models : []
+    return models
+      .map((m: any) => (typeof m === 'string' ? m : m?.id))
+      .filter((id: any) => typeof id === 'string' && id.trim())
+  }, [selectedProvider])
+
+  const selectedJob = useMemo(
+    () => jobs.find((job) => String(job?.id || '') === String(selectedJobId || draft.id || '').trim()),
+    [draft.id, jobs, selectedJobId]
+  )
+  const runHistory = Array.isArray((selectedJob as any)?.runHistory) ? (selectedJob as any).runHistory : []
+  const currentJobId = String(draft.id || selectedJobId || '').trim()
+  const payloadKind = String(draft.payload?.kind || 'run')
+  const scheduleKind = String(draft.schedule?.kind || 'every')
+
+  const resolveProjectDir = useCallback(
+    (projectId: string) => {
+      const pid = String(projectId || '').trim()
+      if (!pid) return String(settings.workspaceDir || '').trim()
+      const found = projects.find((p: any) => String(p?.id || '').trim() === pid)
+      return String(found?.dir || settings.workspaceDir || '').trim()
+    },
+    [projects, settings.workspaceDir]
+  )
+
+  const loadJobs = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetchBackendJson<{ ok: boolean; store?: { jobs?: any[] } }>('/api/cron/jobs', { method: 'GET' })
+      const nextJobs = Array.isArray(res?.store?.jobs) ? res.store.jobs : []
+      setJobs(nextJobs)
+      setStatus((prev) => (prev.type === 'error' ? { type: 'idle' } : prev))
+    } catch (e) {
+      setStatus({ type: 'error', text: e instanceof Error ? e.message : t.failedLoad })
+    } finally {
+      setLoading(false)
+    }
+  }, [t.failedLoad])
+
+  useEffect(() => {
+    void loadJobs()
+  }, [loadJobs])
+
+  useEffect(() => {
+    if (status.type !== 'ok') return
+    const timer = window.setTimeout(() => {
+      setStatus((prev) => (prev.type === 'ok' ? { type: 'idle' } : prev))
+    }, 2500)
+    return () => window.clearTimeout(timer)
+  }, [status.type])
+
+  useEffect(() => {
+    if (!selectedJobId) return
+    const selected = jobs.find((job) => String(job?.id || '') === selectedJobId)
+    if (!selected) {
+      setSelectedJobId('')
+      return
+    }
+    const schedule = selected.schedule && typeof selected.schedule === 'object' ? selected.schedule : {}
+    const payload = selected.payload && typeof selected.payload === 'object' ? selected.payload : {}
+    const run = payload.run && typeof payload.run === 'object' ? payload.run : {}
+    const composer = run.composer && typeof run.composer === 'object' ? run.composer : {}
+    const messages = Array.isArray(run.messages) ? run.messages : []
+    const firstMessage = messages.find((m: any) => m && String(m.role || '') === 'user')
+    const delivery = selected.delivery && typeof selected.delivery === 'object' ? selected.delivery : {}
+    setDraft({
+      id: String(selected.id || ''),
+      name: String(selected.name || ''),
+      enabled: Boolean(selected.enabled),
+      schedule: {
+        kind: String(schedule.kind || 'every'),
+        everyMs: Number(schedule.everyMs || 3600000),
+        expr: String(schedule.expr || '0 9 * * *'),
+        tz: String(schedule.tz || 'Asia/Shanghai'),
+        atMs: Number(schedule.atMs || 0)
+      },
+      payload: {
+        kind: String(payload.kind || 'run'),
+        run: {
+          threadId: String(run.threadId || ''),
+          threadMode: String(run.threadMode || 'fixed'),
+          composer: {
+            projectId: String(composer.projectId || ''),
+            workspaceDir: String(composer.workspaceDir || ''),
+            providerOverrideId: String(composer.providerOverrideId || ''),
+            modelOverride: String(composer.modelOverride || '')
+          },
+          messages: [{ role: 'user', content: String((firstMessage as any)?.content || '') }]
+        },
+        chatId: String(payload.chatId || ''),
+        text: String(payload.text || ''),
+        ifNonEmpty: Boolean(payload.ifNonEmpty)
+      },
+      delivery: {
+        kind: String(delivery.kind || ''),
+        chatId: String(delivery.chatId || ''),
+        ifNonEmpty: delivery.ifNonEmpty !== false
+      }
+    })
+  }, [jobs, selectedJobId])
+
+  const updateDraft = (patch: any) => {
+    setDraft((prev: any) => ({ ...prev, ...patch }))
+  }
+
+  const createNewJob = (openEditor = true) => {
+    setSelectedJobId('')
+    setDraft({
+      id: '',
+      name: '',
+      enabled: true,
+      schedule: { kind: 'every', everyMs: 3600000, expr: '0 9 * * *', tz: 'Asia/Shanghai', atMs: 0 },
+      payload: {
+        kind: 'run',
+        run: {
+          threadId: '',
+          threadMode: 'fixed',
+          composer: {
+            projectId: activeProjectId || '',
+            workspaceDir: resolveProjectDir(activeProjectId || ''),
+            providerOverrideId: '',
+            modelOverride: ''
+          },
+          messages: [{ role: 'user', content: '' }]
+        },
+        chatId: '',
+        text: '',
+        ifNonEmpty: true
+      },
+      delivery: { kind: '', chatId: '', ifNonEmpty: true }
+    })
+    setEditorOpen(openEditor)
+  }
+
+  const openJobEditor = (jobId: string) => {
+    setSelectedJobId(String(jobId || '').trim())
+    setEditorOpen(true)
+  }
+
+  useEffect(() => {
+    if (!selectedJobId && !String(draft.name || '').trim()) createNewJob(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const saveJob = async () => {
+    setSaving(true)
+    try {
+      const scheduleKind = String(draft.schedule?.kind || 'every')
+      const payloadKind = String(draft.payload?.kind || 'run')
+      const job: any = {
+        id: String(draft.id || '').trim() || undefined,
+        name: String(draft.name || '').trim(),
+        enabled: Boolean(draft.enabled),
+        schedule: { kind: scheduleKind },
+        payload: { kind: payloadKind }
+      }
+      if (scheduleKind === 'at') {
+        job.schedule.atMs = Number(draft.schedule?.atMs || 0)
+      } else if (scheduleKind === 'cron') {
+        job.schedule.expr = String(draft.schedule?.expr || '').trim()
+        job.schedule.tz = String(draft.schedule?.tz || 'Asia/Shanghai').trim() || 'Asia/Shanghai'
+      } else {
+        job.schedule.everyMs = Math.max(1000, Number(draft.schedule?.everyMs || 0))
+      }
+
+      if (payloadKind === 'telegramMessage') {
+        job.payload.chatId = String(draft.payload?.chatId || '').trim()
+        job.payload.text = String(draft.payload?.text || '')
+        job.payload.ifNonEmpty = Boolean(draft.payload?.ifNonEmpty)
+      } else {
+        const projectId = String(draft.payload?.run?.composer?.projectId || '').trim()
+        const providerOverrideId = String(draft.payload?.run?.composer?.providerOverrideId || '').trim()
+        const modelOverride = String(draft.payload?.run?.composer?.modelOverride || '').trim()
+        const threadMode = String(draft.payload?.run?.threadMode || 'fixed').trim() || 'fixed'
+        job.payload.run = {
+          threadId: threadMode === 'fixed' ? String(draft.payload?.run?.threadId || '').trim() : '',
+          threadMode,
+          composer: {
+            projectId,
+            workspaceDir: resolveProjectDir(projectId),
+            providerOverrideId,
+            modelOverride
+          },
+          messages: [{ role: 'user', content: String(draft.payload?.run?.messages?.[0]?.content || '') }]
+        }
+        const deliveryKind = String(draft.delivery?.kind || '').trim()
+        if (deliveryKind === 'telegram') {
+          job.delivery = {
+            kind: 'telegram',
+            chatId: String(draft.delivery?.chatId || '').trim(),
+            ifNonEmpty: Boolean(draft.delivery?.ifNonEmpty)
+          }
+        }
+      }
+
+      const res = await fetchBackendJson<{ ok: boolean; job?: any; store?: { jobs?: any[] } }>('/api/cron/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'upsert', job })
+      })
+      const nextJobs = Array.isArray(res?.store?.jobs) ? res.store.jobs : jobs
+      setJobs(nextJobs)
+      const savedId = String(res?.job?.id || job.id || '').trim()
+      if (savedId) setSelectedJobId(savedId)
+      setStatus({ type: 'ok', text: t.saved })
+    } catch (e) {
+      setStatus({ type: 'error', text: e instanceof Error ? e.message : t.failedSave })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const deleteJob = async (targetId?: string) => {
+    const id = String(targetId || draft.id || selectedJobId || '').trim()
+    if (!id) return
+    try {
+      await fetchBackendJson('/api/cron/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', id })
+      })
+      setJobs((prev) => prev.filter((job) => String(job?.id || '') !== id))
+      if (String(selectedJobId || '').trim() === id || String(draft.id || '').trim() === id) {
+        setSelectedJobId('')
+        createNewJob(false)
+        setEditorOpen(false)
+      }
+      setStatus({ type: 'ok', text: t.deleted })
+    } catch (e) {
+      setStatus({ type: 'error', text: e instanceof Error ? e.message : t.failedDelete })
+    }
+  }
+
+  const runJobNow = async (id: string) => {
+    if (!id) return
+    try {
+      await fetchBackendJson('/api/cron/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'run', id })
+      })
+      setStatus({ type: 'ok', text: t.triggered })
+      await loadJobs()
+    } catch (e) {
+      setStatus({ type: 'error', text: e instanceof Error ? e.message : t.failedRun })
+    }
+  }
+
+  const formatDateTime = (value: number) => {
+    if (!Number.isFinite(value) || value <= 0) return '-'
+    return new Date(value).toLocaleString()
+  }
+
+  const formatDuration = (value: number) => {
+    const ms = Number(value || 0)
+    if (!Number.isFinite(ms) || ms <= 0) return '-'
+    if (ms < 1000) return `${ms}ms`
+    if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
+    return `${(ms / 60_000).toFixed(1)}m`
+  }
+
+  const toInputDateTimeValue = (value: number) => {
+    if (!Number.isFinite(value) || value <= 0) return ''
+    const d = new Date(value)
+    const yyyy = d.getFullYear()
+    const mm = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+    const hh = String(d.getHours()).padStart(2, '0')
+    const mi = String(d.getMinutes()).padStart(2, '0')
+    return `${yyyy}-${mm}-${dd}T${hh}:${mi}`
+  }
+
+  const formatScheduleSummary = (job: any) => {
+    const schedule = job?.schedule && typeof job.schedule === 'object' ? job.schedule : {}
+    const kind = String(schedule.kind || '')
+    if (kind === 'at') return `${t.scheduleAt} · ${formatDateTime(Number(schedule.atMs || 0))}`
+    if (kind === 'cron') return `${t.scheduleCron} · ${String(schedule.expr || '0 9 * * *')}`
+    return `${t.scheduleEvery} · ${formatDuration(Number(schedule.everyMs || 0))}`
+  }
+
+  const formatContextSummary = (job: any) => {
+    const payload = job?.payload && typeof job.payload === 'object' ? job.payload : {}
+    if (String(payload.kind || 'run') !== 'run') return t.payloadTelegram
+    const run = payload.run && typeof payload.run === 'object' ? payload.run : {}
+    const composer = run.composer && typeof run.composer === 'object' ? run.composer : {}
+    const projectId = String(composer.projectId || '').trim()
+    const providerOverrideId = String(composer.providerOverrideId || '').trim()
+    const modelOverride = String(composer.modelOverride || '').trim()
+    const threadMode = String(run.threadMode || 'fixed')
+    const projectName = projectId
+      ? String(
+          projects.find((project: any) => String(project?.id || '').trim() === projectId)?.name ||
+          projects.find((project: any) => String(project?.id || '').trim() === projectId)?.id ||
+          projectId
+        )
+      : t.noProject
+    const parts = [projectName, threadMode === 'new_chat' ? t.threadModeNewChat : t.threadModeFixed]
+    if (modelOverride) parts.push(modelOverride)
+    else if (providerOverrideId) {
+      const providerName = availableProviders.find((provider) => provider.id === providerOverrideId)?.name || providerOverrideId
+      parts.push(String(providerName))
+    }
+    return parts.filter(Boolean).join(' · ')
+  }
+
+  const formatJobStatusVariant = (statusValue: string) => {
+    if (statusValue === 'succeeded') return 'default' as const
+    if (statusValue === 'failed') return 'destructive' as const
+    return 'secondary' as const
+  }
+
+  const openHistoryThread = async (threadId: string, projectId: string) => {
+    const tid = String(threadId || '').trim()
+    if (!tid) return
+    const pid = String(projectId || '').trim()
+    if (pid) setActiveProject(pid)
+    await setActiveChat(tid)
+    setSettingsOpen(false)
+  }
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="space-y-1">
+        <h3 className="text-[28px] font-semibold tracking-tight">{t.title}</h3>
+        <p className="max-w-3xl text-sm text-muted-foreground">{t.desc}</p>
+      </div>
+
+      {status.type !== 'idle' ? (
+        <div className={`rounded-xl border px-3 py-2 text-xs ${
+          status.type === 'ok'
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300'
+            : 'border-destructive/30 bg-destructive/5 text-destructive'
+        }`}>
+          {status.text}
+        </div>
+      ) : null}
+
+      <Card className="border-border/70">
+        <CardContent className="space-y-3 p-4">
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="text-sm font-semibold">{t.serviceTitle}</div>
+              <Badge variant={Boolean(cron.enabled) ? 'default' : 'secondary'}>
+                {Boolean(cron.enabled) ? t.enabled : t.disabled}
+              </Badge>
+            </div>
+            <div className="text-[11px] leading-5 text-muted-foreground">{t.serviceCompactHint}</div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[auto_184px_auto]">
+              <div className="flex h-10 items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/[0.08] px-3">
+                <span className="text-xs font-medium">{t.cronEnable}</span>
+                <Switch checked={Boolean(cron.enabled)} onCheckedChange={(c) => updateSettings({ cron: { ...cron, enabled: c } } as any)} />
+              </div>
+              <div className="flex h-10 items-center gap-2 rounded-lg border border-border/70 bg-muted/[0.08] px-3">
+                <Label className="shrink-0 text-xs font-medium">{t.pollInterval}</Label>
+                <Input
+                  className="h-7 border-0 bg-transparent px-0 text-right shadow-none focus-visible:ring-0"
+                  type="number"
+                  min={200}
+                  max={30000}
+                  value={Number(cron.pollIntervalMs || 500)}
+                  onChange={(e) => updateSettings({ cron: { ...cron, pollIntervalMs: Number(e.target.value || 500) } } as any)}
+                />
+              </div>
+              <div className="flex h-10 items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/[0.08] px-3">
+                <span className="text-xs font-medium">{t.allowAgentManage}</span>
+                <Switch checked={Boolean(cron.allowAgentManage)} onCheckedChange={(c) => updateSettings({ cron: { ...cron, allowAgentManage: c } } as any)} />
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-border/70">
+        <CardContent className="space-y-5 p-5">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div className="space-y-1">
+              <div className="text-base font-semibold">{t.listTitle}</div>
+              <div className="text-sm text-muted-foreground">{t.listHint}</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => void loadJobs()} disabled={loading}>
+                <RefreshCw className={`mr-1 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                {t.refresh}
+              </Button>
+              <Button size="sm" onClick={() => createNewJob()}>
+                <Plus className="mr-1 h-4 w-4" />
+                {t.newJob}
+              </Button>
+            </div>
+          </div>
+
+          {jobs.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border/70 px-5 py-8 text-center">
+              <div className="text-sm font-medium">{t.empty}</div>
+              <div className="mt-2 text-xs text-muted-foreground">{t.cronEnableHint}</div>
+              <Button size="sm" className="mt-4" onClick={() => createNewJob()}>
+                <Plus className="mr-1 h-4 w-4" />
+                {t.newJob}
+              </Button>
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-2xl border border-border/70 bg-background">
+              {jobs.map((job) => {
+                const jobId = String(job?.id || '')
+                const lastStatus = String(job?.lastStatus || '')
+                return (
+                  <div
+                    key={jobId}
+                    className="w-full border-b border-border/70 px-4 py-3 last:border-b-0 transition-colors hover:bg-muted/[0.06]"
+                  >
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="min-w-0 space-y-1.5">
+                        <div className="truncate text-sm font-medium">{String(job?.name || jobId || '-')}</div>
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                          <span>{t.nextRun}: {formatDateTime(Number(job?.nextRunAtMs || 0))}</span>
+                          <span className="text-border">/</span>
+                          <span>{formatScheduleSummary(job)}</span>
+                          <span className="text-border">/</span>
+                          <span>{formatContextSummary(job)}</span>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                        <Badge variant={Boolean(job?.enabled) ? 'default' : 'secondary'}>
+                          {Boolean(job?.enabled) ? t.enabled : t.disabled}
+                        </Badge>
+                        <Badge variant={formatJobStatusVariant(lastStatus)}>
+                          {lastStatus || t.lastRunEmpty}
+                        </Badge>
+                        <Button size="sm" variant="outline" className="h-8 px-3 rounded-full" onClick={() => openJobEditor(jobId)}>
+                          {t.edit}
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-8 px-3 rounded-full text-muted-foreground hover:text-foreground" onClick={() => void deleteJob(jobId)}>
+                          <Trash2 className="mr-1 h-3.5 w-3.5" />
+                          {t.deleteShort}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Dialog open={editorOpen} onOpenChange={setEditorOpen}>
+        <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden border-border/70 bg-background p-0 shadow-2xl sm:max-w-4xl sm:rounded-[28px]">
+          <DialogHeader className="shrink-0 border-b border-border/70 px-8 pb-5 pt-7">
+            <DialogTitle>{String(draft.name || '').trim() || t.newJob}</DialogTitle>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto px-8 pb-6 pt-6 custom-scrollbar">
+            <div className="space-y-5">
+            <div className="flex flex-col gap-4 rounded-3xl border border-border/70 bg-muted/[0.04] p-6 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0 flex-1 space-y-3">
+                <div className="space-y-1">
+                  <div className="text-sm font-semibold">{String(draft.id || '').trim() ? t.jobName : t.newJob}</div>
+                  <div className="text-xs text-muted-foreground">{t.promptHint}</div>
+                </div>
+                <Input
+                  value={String(draft.name || '')}
+                  onChange={(e) => updateDraft({ name: e.target.value })}
+                  className="h-11 text-lg font-semibold"
+                  placeholder={t.jobName}
+                />
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <span>{t.nextRun}: {formatDateTime(Number(selectedJob?.nextRunAtMs || 0))}</span>
+                  <span>{t.lastStatus}: {String(selectedJob?.lastStatus || t.lastRunEmpty)}</span>
+                </div>
+              </div>
+              <Button variant="ghost" onClick={() => setEditorOpen(false)}>{t.close}</Button>
+            </div>
+
+            <section className="space-y-4 rounded-3xl border border-border/70 bg-muted/[0.035] p-6">
+              <div className="space-y-1">
+                <div className="text-sm font-semibold">{t.sectionTask}</div>
+                <div className="text-xs text-muted-foreground">{t.promptHint}</div>
+              </div>
+              <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_240px]">
+                <div className="space-y-2">
+                  <Textarea
+                    value={payloadKind === 'run' ? String(draft.payload?.run?.messages?.[0]?.content || '') : String(draft.payload?.text || '')}
+                    onChange={(e) =>
+                      payloadKind === 'run'
+                        ? updateDraft({ payload: { ...draft.payload, run: { ...draft.payload.run, messages: [{ role: 'user', content: e.target.value }] } } })
+                        : updateDraft({ payload: { ...draft.payload, text: e.target.value } })
+                    }
+                    rows={13}
+                    className="min-h-[280px] rounded-2xl border-border/70 bg-muted/10 px-5 py-4 text-[15px] leading-7"
+                    placeholder={t.prompt}
+                  />
+                </div>
+                <div className="space-y-3">
+                  <div className="rounded-2xl border border-border/70 bg-muted/15 px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-medium">{t.enabled}</span>
+                      <Switch checked={Boolean(draft.enabled)} onCheckedChange={(c) => updateDraft({ enabled: c })} />
+                    </div>
+                  </div>
+                  <div className="space-y-2 rounded-2xl border border-border/70 bg-muted/15 p-4">
+                    <Label>{t.payloadKind}</Label>
+                    <Select value={payloadKind} onValueChange={(val) => updateDraft({ payload: { ...draft.payload, kind: val } })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="run">{t.payloadRun}</SelectItem>
+                        <SelectItem value="telegramMessage">{t.payloadTelegram}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <div className="text-xs text-muted-foreground">{t.taskTypeHint}</div>
+                  </div>
+                  {payloadKind === 'telegramMessage' ? (
+                    <>
+                      <div className="space-y-2 rounded-2xl border border-border/70 bg-muted/15 p-4">
+                        <Label>{t.telegramChatId}</Label>
+                        <Input value={String(draft.payload?.chatId || '')} onChange={(e) => updateDraft({ payload: { ...draft.payload, chatId: e.target.value } })} />
+                      </div>
+                      <div className="rounded-2xl border border-border/70 bg-muted/15 px-4 py-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-sm font-medium">{t.ifNonEmpty}</span>
+                          <Switch checked={Boolean(draft.payload?.ifNonEmpty)} onCheckedChange={(c) => updateDraft({ payload: { ...draft.payload, ifNonEmpty: c } })} />
+                        </div>
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+            </section>
+
+            {payloadKind === 'run' ? (
+              <>
+                <section className="space-y-4 rounded-3xl border border-border/70 bg-muted/[0.035] p-6">
+                  <div className="space-y-1">
+                    <div className="text-sm font-semibold">{t.sectionContext}</div>
+                    <div className="text-xs text-muted-foreground">{t.projectHint}</div>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="space-y-2">
+                      <Label>{t.project}</Label>
+                      <Select
+                        value={String(draft.payload?.run?.composer?.projectId || '') || ' '}
+                        onValueChange={(val) => {
+                          const nextProjectId = val.trim() ? val : ''
+                          updateDraft({
+                            payload: {
+                              ...draft.payload,
+                              run: {
+                                ...draft.payload.run,
+                                composer: {
+                                  ...draft.payload.run.composer,
+                                  projectId: nextProjectId,
+                                  workspaceDir: resolveProjectDir(nextProjectId)
+                                }
+                              }
+                            }
+                          })
+                        }}
+                      >
+                        <SelectTrigger><SelectValue placeholder={t.noProject} /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value=" ">{t.noProject}</SelectItem>
+                          {projects.map((p: any) => (
+                            <SelectItem key={String(p?.id || '')} value={String(p?.id || '')}>
+                              {String(p?.name || p?.id || '')}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{t.provider}</Label>
+                      <Select
+                        value={String(draft.payload?.run?.composer?.providerOverrideId || '') || ' '}
+                        onValueChange={(val) =>
+                          updateDraft({
+                            payload: {
+                              ...draft.payload,
+                              run: {
+                                ...draft.payload.run,
+                                composer: {
+                                  ...draft.payload.run.composer,
+                                  providerOverrideId: val.trim() ? val : '',
+                                  modelOverride: ''
+                                }
+                              }
+                            }
+                          })
+                        }
+                      >
+                        <SelectTrigger><SelectValue placeholder={t.followDefault} /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value=" ">{t.followDefault}</SelectItem>
+                          {availableProviders.map((p) => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {p.name || p.id}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{t.model}</Label>
+                      <Select
+                        value={String(draft.payload?.run?.composer?.modelOverride || '') || ' '}
+                        onValueChange={(val) =>
+                          updateDraft({
+                            payload: {
+                              ...draft.payload,
+                              run: {
+                                ...draft.payload.run,
+                                composer: {
+                                  ...draft.payload.run.composer,
+                                  modelOverride: val.trim() ? val : ''
+                                }
+                              }
+                            }
+                          })
+                        }
+                      >
+                        <SelectTrigger><SelectValue placeholder={t.followDefault} /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value=" ">{t.followDefault}</SelectItem>
+                          {availableModels.map((m) => (
+                            <SelectItem key={m} value={m}>
+                              {m}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{t.threadMode}</Label>
+                      <Select
+                        value={String(draft.payload?.run?.threadMode || 'fixed')}
+                        onValueChange={(val) =>
+                          updateDraft({
+                            payload: {
+                              ...draft.payload,
+                              run: {
+                                ...draft.payload.run,
+                                threadMode: val,
+                                threadId: val === 'fixed' ? String(draft.payload?.run?.threadId || '') : ''
+                              }
+                            }
+                          })
+                        }
+                      >
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="fixed">{t.threadModeFixed}</SelectItem>
+                          <SelectItem value="new_chat">{t.threadModeNewChat}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="text-xs text-muted-foreground">{t.threadModeHint}</div>
+                </section>
+
+                <section className="space-y-4 rounded-3xl border border-border/70 bg-muted/[0.035] p-6">
+                  <div className="space-y-1">
+                    <div className="text-sm font-semibold">{t.sectionSchedule}</div>
+                    <div className="text-xs text-muted-foreground">{t.scheduleHint}</div>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[220px_minmax(0,1fr)_minmax(0,1fr)]">
+                    <div className="space-y-2">
+                      <Label>{t.scheduleKind}</Label>
+                      <Select value={scheduleKind} onValueChange={(val) => updateDraft({ schedule: { ...draft.schedule, kind: val } })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="at">{t.scheduleAt}</SelectItem>
+                          <SelectItem value="every">{t.scheduleEvery}</SelectItem>
+                          <SelectItem value="cron">{t.scheduleCron}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {scheduleKind === 'at' ? (
+                      <div className="space-y-2">
+                        <Label>{t.atTime}</Label>
+                        <Input
+                          type="datetime-local"
+                          value={toInputDateTimeValue(Number(draft.schedule?.atMs || 0))}
+                          onChange={(e) => updateDraft({ schedule: { ...draft.schedule, atMs: e.target.value ? new Date(e.target.value).getTime() : 0 } })}
+                        />
+                      </div>
+                    ) : null}
+                    {scheduleKind === 'every' ? (
+                      <div className="space-y-2">
+                        <Label>{t.everyMs}</Label>
+                        <Input
+                          type="number"
+                          min={1000}
+                          value={Number(draft.schedule?.everyMs || 0)}
+                          onChange={(e) => updateDraft({ schedule: { ...draft.schedule, everyMs: Number(e.target.value || 0) } })}
+                        />
+                      </div>
+                    ) : null}
+                    {scheduleKind === 'cron' ? (
+                      <>
+                        <div className="space-y-2">
+                          <Label>{t.cronExpr}</Label>
+                          <Input value={String(draft.schedule?.expr || '')} onChange={(e) => updateDraft({ schedule: { ...draft.schedule, expr: e.target.value } })} placeholder="0 9 * * *" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>{t.cronTz}</Label>
+                          <Input value={String(draft.schedule?.tz || '')} onChange={(e) => updateDraft({ schedule: { ...draft.schedule, tz: e.target.value } })} placeholder="Asia/Shanghai" />
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                </section>
+
+                <section className="space-y-4 rounded-3xl border border-border/70 bg-muted/[0.035] p-6">
+                  <div className="space-y-1">
+                    <div className="text-sm font-semibold">{t.sectionDelivery}</div>
+                    <div className="text-xs text-muted-foreground">{t.telegramHint}</div>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[220px_minmax(0,1fr)_180px]">
+                    <div className="space-y-2">
+                      <Label>{t.deliveryKind}</Label>
+                      <Select value={String(draft.delivery?.kind || '') || 'none'} onValueChange={(val) => updateDraft({ delivery: { ...draft.delivery, kind: val === 'none' ? '' : val } })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">{t.deliveryNone}</SelectItem>
+                          <SelectItem value="telegram">{t.deliveryTelegram}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {String(draft.delivery?.kind || '') === 'telegram' ? (
+                      <>
+                        <div className="space-y-2">
+                          <Label>{t.telegramChatId}</Label>
+                          <Input value={String(draft.delivery?.chatId || '')} onChange={(e) => updateDraft({ delivery: { ...draft.delivery, chatId: e.target.value } })} />
+                        </div>
+                        <div className="rounded-2xl border border-border/70 bg-muted/15 px-4 py-3 md:mt-7">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-sm font-medium">{t.ifNonEmpty}</span>
+                            <Switch checked={Boolean(draft.delivery?.ifNonEmpty)} onCheckedChange={(c) => updateDraft({ delivery: { ...draft.delivery, ifNonEmpty: c } })} />
+                          </div>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                </section>
+              </>
+            ) : (
+              <section className="space-y-4 rounded-3xl border border-border/70 bg-muted/[0.035] p-6">
+                <div className="space-y-1">
+                  <div className="text-sm font-semibold">{t.sectionSchedule}</div>
+                  <div className="text-xs text-muted-foreground">{t.scheduleHint}</div>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[220px_minmax(0,1fr)_minmax(0,1fr)]">
+                  <div className="space-y-2">
+                    <Label>{t.scheduleKind}</Label>
+                    <Select value={scheduleKind} onValueChange={(val) => updateDraft({ schedule: { ...draft.schedule, kind: val } })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="at">{t.scheduleAt}</SelectItem>
+                        <SelectItem value="every">{t.scheduleEvery}</SelectItem>
+                        <SelectItem value="cron">{t.scheduleCron}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {scheduleKind === 'at' ? (
+                    <div className="space-y-2">
+                      <Label>{t.atTime}</Label>
+                      <Input
+                        type="datetime-local"
+                        value={toInputDateTimeValue(Number(draft.schedule?.atMs || 0))}
+                        onChange={(e) => updateDraft({ schedule: { ...draft.schedule, atMs: e.target.value ? new Date(e.target.value).getTime() : 0 } })}
+                      />
+                    </div>
+                  ) : null}
+                  {scheduleKind === 'every' ? (
+                    <div className="space-y-2">
+                      <Label>{t.everyMs}</Label>
+                      <Input
+                        type="number"
+                        min={1000}
+                        value={Number(draft.schedule?.everyMs || 0)}
+                        onChange={(e) => updateDraft({ schedule: { ...draft.schedule, everyMs: Number(e.target.value || 0) } })}
+                      />
+                    </div>
+                  ) : null}
+                  {scheduleKind === 'cron' ? (
+                    <>
+                      <div className="space-y-2">
+                        <Label>{t.cronExpr}</Label>
+                        <Input value={String(draft.schedule?.expr || '')} onChange={(e) => updateDraft({ schedule: { ...draft.schedule, expr: e.target.value } })} placeholder="0 9 * * *" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t.cronTz}</Label>
+                        <Input value={String(draft.schedule?.tz || '')} onChange={(e) => updateDraft({ schedule: { ...draft.schedule, tz: e.target.value } })} placeholder="Asia/Shanghai" />
+                      </div>
+                    </>
+                    ) : null}
+                  </div>
+                </section>
+            )}
+
+            <section className="space-y-4 rounded-3xl border border-border/70 bg-muted/[0.035] p-6">
+              <div className="space-y-1">
+                <div className="text-sm font-semibold">{t.sectionHistory}</div>
+                <div className="text-xs text-muted-foreground">{t.historyTitle}</div>
+              </div>
+              {runHistory.length === 0 ? (
+                <div className="text-xs text-muted-foreground">{t.historyEmpty}</div>
+              ) : (
+                <div className="space-y-3">
+                  {runHistory.map((item: any) => (
+                    <div key={String(item?.id || '')} className="rounded-2xl border border-border/70 bg-muted/15 px-4 py-4">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant={String(item?.status || '') === 'succeeded' ? 'default' : 'destructive'}>
+                            {String(item?.status || '-')}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">{t.historyStarted}: {formatDateTime(Number(item?.startedAtMs || 0))}</span>
+                          <span className="text-xs text-muted-foreground">{t.historyDuration}: {formatDuration(Number(item?.durationMs || 0))}</span>
+                        </div>
+                        {String(item?.threadId || '').trim() ? (
+                          <Button variant="ghost" size="sm" onClick={() => void openHistoryThread(String(item?.threadId || ''), String(item?.projectId || ''))}>
+                            <ExternalLink className="mr-1 h-4 w-4" />
+                            {t.openThread}
+                          </Button>
+                        ) : null}
+                      </div>
+                      {String(item?.outputPreview || '').trim() ? (
+                        <div className="mt-3 text-xs">
+                          <span className="text-muted-foreground">{t.historyOutput}: </span>
+                          <span>{String(item?.outputPreview || '')}</span>
+                        </div>
+                      ) : null}
+                      {String(item?.error || '').trim() ? (
+                        <div className="mt-2 text-xs text-destructive">{t.historyError}: {String(item?.error || '')}</div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+            </div>
+          </div>
+          <DialogFooter className="shrink-0 gap-2 border-t border-border/70 bg-background/95 px-8 py-4 sm:justify-between">
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={() => void runJobNow(currentJobId)} disabled={!currentJobId}>
+                <Play className="mr-1 h-4 w-4" />
+                {t.runNow}
+              </Button>
+              <Button variant="destructive" onClick={() => void deleteJob()} disabled={!currentJobId}>
+                <Trash2 className="mr-1 h-4 w-4" />
+                {t.deleteJob}
+              </Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" onClick={() => setEditorOpen(false)}>{t.close}</Button>
+              <Button onClick={() => void saveJob()} disabled={saving}>{t.saveJob}</Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
 function ImSettings() {
   const { settings: settings0, updateSettings } = useStore()
   const settings = settings0!
@@ -5785,14 +6962,7 @@ function ImSettings() {
         chatProviderHint: 'Optional. Use a specific provider/model for Telegram.',
         chatModel: 'Chat Model',
         chatModelHint: 'Optional. Overrides the provider default model.',
-        followDefault: 'Follow desktop default',
-        openclaw: 'OpenClaw',
-        enableHeartbeat: 'Enable Heartbeat',
-        heartbeatChatId: 'Heartbeat Chat ID',
-        heartbeatChatIdHint: 'Telegram chat ID to receive heartbeat messages.',
-        workspaceDir: 'Workspace Directory',
-        workspaceDirHint: 'Used by OpenClaw and workspace-based tools.',
-        selectFolder: 'Select Folder'
+        followDefault: 'Follow desktop default'
       },
       zh: {
         provider: 'IM 服务商',
@@ -5813,14 +6983,7 @@ function ImSettings() {
         chatProviderHint: '可选。为 Telegram 单独指定 provider / model。',
         chatModel: '聊天模型',
         chatModelHint: '可选。覆盖 provider 的默认模型。',
-        followDefault: '跟随桌面默认',
-        openclaw: 'OpenClaw',
-        enableHeartbeat: '启用 Heartbeat',
-        heartbeatChatId: 'Heartbeat Chat ID',
-        heartbeatChatIdHint: '用于接收心跳消息的 Telegram chat id。',
-        workspaceDir: '工作区目录',
-        workspaceDirHint: '供 OpenClaw 与工作区相关工具使用。',
-        selectFolder: '选择文件夹'
+        followDefault: '跟随桌面默认'
       },
       ja: {
         provider: 'IM プロバイダー',
@@ -5841,14 +7004,7 @@ function ImSettings() {
         chatProviderHint: '任意。Telegram 用に provider/model を指定できます。',
         chatModel: 'チャットモデル',
         chatModelHint: '任意。プロバイダー既定モデルを上書きします。',
-        followDefault: 'デスクトップ既定に従う',
-        openclaw: 'OpenClaw',
-        enableHeartbeat: 'Heartbeat を有効化',
-        heartbeatChatId: 'Heartbeat Chat ID',
-        heartbeatChatIdHint: 'Heartbeat メッセージを受信する Telegram chat id。',
-        workspaceDir: 'ワークスペースディレクトリ',
-        workspaceDirHint: 'OpenClaw とワークスペース系ツールで使用します。',
-        selectFolder: 'フォルダーを選択'
+        followDefault: 'デスクトップ既定に従う'
       }
     } as const
     return dict[settings.language as keyof typeof dict] || dict.en
@@ -5885,10 +7041,6 @@ function ImSettings() {
       .filter((id: any) => typeof id === 'string' && id.trim())
   }, [availableProviders, selectedProvider])
 
-  const openclaw = settings.openclaw || {}
-  const heartbeatEnabled = Boolean(openclaw.heartbeatEnabled)
-  const heartbeatTelegramChatId = String(openclaw.heartbeatTelegramChatId || '')
-
   const allowedText = allowedUserIds.join('\n')
 
   const updateTelegram = (updates: Partial<NonNullable<typeof settings.im>['telegram']>) => {
@@ -5898,10 +7050,6 @@ function ImSettings() {
         telegram: { ...tg, ...updates }
       }
     } as any)
-  }
-
-  const updateOpenclaw = (updates: Partial<NonNullable<typeof settings.openclaw>>) => {
-    updateSettings({ openclaw: { ...openclaw, ...updates } })
   }
 
   const parseAllowed = (raw: string) => {
@@ -6055,29 +7203,6 @@ function ImSettings() {
             </SelectContent>
           </Select>
           <div className="text-xs text-muted-foreground">{t.chatModelHint}</div>
-        </div>
-      </Card>
-
-      <Card className="p-5 space-y-4">
-        <div className="text-[13px] font-semibold">{t.openclaw}</div>
-
-        <div className="flex items-start gap-3">
-          <Switch checked={heartbeatEnabled} onCheckedChange={(c) => updateOpenclaw({ heartbeatEnabled: c as boolean })} />
-          <div className="grid gap-1.5 leading-none">
-            <div className="text-[13px] font-medium leading-none">{t.enableHeartbeat}</div>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <Label>{t.heartbeatChatId}</Label>
-          <Input
-            value={heartbeatTelegramChatId}
-            onChange={(e) => updateOpenclaw({ heartbeatTelegramChatId: e.target.value })}
-            placeholder="123456789"
-            autoComplete="off"
-            spellCheck={false}
-          />
-          <div className="text-xs text-muted-foreground">{t.heartbeatChatIdHint}</div>
         </div>
       </Card>
 
