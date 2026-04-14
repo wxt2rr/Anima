@@ -18,6 +18,7 @@ from .chats import (
     handle_post_chats,
     handle_post_chats_sync,
 )
+from .composer import handle_post_composer_tab_complete
 from .db import handle_get_db_export, handle_get_db_path, handle_get_db_status, handle_post_db_clear, handle_post_db_import
 from .debug import handle_get_debug_config
 from .qwen_auth import (
@@ -46,6 +47,14 @@ from .memory import (
     handle_post_memory_items,
     handle_post_memory_embedding_models_download,
     handle_post_memory_embedding_models_download_cancel,
+)
+from .mcp import (
+    handle_get_mcp_config,
+    handle_get_mcp_server_catalog,
+    handle_post_mcp_server_close,
+    handle_post_mcp_server_test,
+    handle_post_mcp_validate,
+    handle_put_mcp_config,
 )
 from .runs import handle_get_run, handle_post_run_resume, handle_post_runs_non_stream
 from .runs_stream import handle_post_runs_stream
@@ -135,6 +144,14 @@ def _handle_post_run_resume_dynamic(handler: Any, match: Match[str]) -> None:
     handle_post_run_resume(handler, match.group("run_id"))
 
 
+def _handle_get_mcp_server_catalog_dynamic(handler: Any, match: Match[str]) -> None:
+    handle_get_mcp_server_catalog(handler, match.group("server_id"))
+
+
+def _handle_post_mcp_server_close_dynamic(handler: Any, match: Match[str]) -> None:
+    handle_post_mcp_server_close(handler, match.group("server_id"))
+
+
 EXACT_ROUTES: Dict[Tuple[str, str], ExactHandler] = {
     ("GET", "/api/chats"): handle_get_chats,
     ("POST", "/api/chats"): handle_post_chats,
@@ -158,6 +175,7 @@ EXACT_ROUTES: Dict[Tuple[str, str], ExactHandler] = {
     ("GET", "/api/attachments/file"): handle_get_attachment_file,
     ("POST", "/api/artifacts/cleanup"): handle_post_artifacts_cleanup,
     ("POST", "/api/runs"): _handle_post_runs,
+    ("POST", "/api/composer/tab_complete"): handle_post_composer_tab_complete,
     ("POST", "/api/providers/fetch_models"): handle_post_providers_fetch_models,
     ("POST", "/api/tts/preview"): handle_post_tts_preview,
     ("GET", "/api/tts/qwen/local/catalog"): handle_get_tts_qwen_local_catalog,
@@ -192,6 +210,10 @@ EXACT_ROUTES: Dict[Tuple[str, str], ExactHandler] = {
     ("GET", "/memory/embedding/models/download/status"): handle_get_memory_embedding_models_download_status,
     ("POST", "/memory/embedding/models/download"): handle_post_memory_embedding_models_download,
     ("POST", "/memory/embedding/models/download/cancel"): handle_post_memory_embedding_models_download_cancel,
+    ("GET", "/api/mcp/config"): handle_get_mcp_config,
+    ("PUT", "/api/mcp/config"): handle_put_mcp_config,
+    ("POST", "/api/mcp/validate"): handle_post_mcp_validate,
+    ("POST", "/api/mcp/servers/test"): handle_post_mcp_server_test,
 }
 
 
@@ -205,6 +227,8 @@ DYNAMIC_ROUTES: Tuple[Tuple[str, Pattern[str], DynamicHandler], ...] = (
     ("DELETE", re.compile(r"^/api/chats/(?P<chat_id>[^/]+)$"), _handle_delete_chat_dynamic),
     ("GET", re.compile(r"^/api/runs/(?P<run_id>[^/]+)$"), _handle_get_run_dynamic),
     ("POST", re.compile(r"^/api/runs/(?P<run_id>[^/]+)/resume$"), _handle_post_run_resume_dynamic),
+    ("GET", re.compile(r"^/api/mcp/servers/(?P<server_id>[^/]+)/catalog$"), _handle_get_mcp_server_catalog_dynamic),
+    ("POST", re.compile(r"^/api/mcp/servers/(?P<server_id>[^/]+)/close$"), _handle_post_mcp_server_close_dynamic),
 )
 
 

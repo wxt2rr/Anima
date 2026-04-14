@@ -260,6 +260,8 @@ export interface Settings {
   maxContextMessages: number
   temperature: number
   maxTokens: number
+  tabCompletionProviderId?: string
+  tabCompletionModelId?: string
 
   enableStreamingResponse: boolean
   streamingNoProgressTimeoutMs?: number
@@ -274,6 +276,7 @@ export interface Settings {
   toolsEnabledIds: string[]
   commandBlacklist?: string[]
   commandWhitelist?: string[]
+  defaultProviderId?: string
   mcpEnabledServerIds: string[]
   defaultSkillMode: ChatDefaultMode
   skillsEnabledIds: string[]
@@ -466,6 +469,9 @@ interface AppState {
       modelOverride: string
       contextWindowOverride: number
       thinkingLevel: 'default' | 'off' | 'low' | 'medium' | 'high' | 'xhigh'
+      completionEnabled: boolean
+      completionTranslateEnabled: boolean
+      completionContextLimit: number
     }
   }
   settings: Settings | null
@@ -637,11 +643,23 @@ const createDefaultComposer = (): AppState['ui']['composer'] => ({
   providerOverrideId: '',
   modelOverride: '',
   contextWindowOverride: 0,
-  thinkingLevel: 'medium'
+  thinkingLevel: 'medium',
+  completionEnabled: true,
+  completionTranslateEnabled: true,
+  completionContextLimit: 4
 })
 
 const normalizeComposerPermissionMode = (value: unknown): ComposerPermissionMode =>
   value === 'full_access' ? 'full_access' : 'workspace_whitelist'
+
+const normalizeCompletionContextLimit = (value: unknown): number => {
+  const raw = Number(value)
+  if (!Number.isFinite(raw)) return 4
+  const n = Math.trunc(raw)
+  if (n < 0) return 0
+  if (n > 12) return 12
+  return n
+}
 
 const createDefaultUi = (): AppState['ui'] => ({
   sidebarCollapsed: false,
@@ -900,6 +918,7 @@ const normalizeSettingsPayload = (rawSettings: any): any => {
   if (!Array.isArray(rawSettings.commandWhitelist)) {
     rawSettings.commandWhitelist = Array.isArray(rawSettings.commandWhitelistPatterns) ? rawSettings.commandWhitelistPatterns : []
   }
+  rawSettings.defaultProviderId = String(rawSettings.defaultProviderId || '').trim()
 
   const normalizeCoderProfile = (raw: any): any => {
     const c = raw && typeof raw === 'object' ? raw : {}
@@ -1473,12 +1492,16 @@ export const useStore = create<AppState>()(
         }),
 
       updateComposer: (patch) =>
-        set((state) => ({
-          ui: {
-            ...state.ui,
-            composer: { ...state.ui.composer, ...patch }
+        set((state) => {
+          const nextComposer = { ...state.ui.composer, ...patch }
+          nextComposer.completionContextLimit = normalizeCompletionContextLimit(nextComposer.completionContextLimit)
+          return {
+            ui: {
+              ...state.ui,
+              composer: nextComposer
+            }
           }
-        })),
+        }),
 
       resetComposer: () =>
         set((state) => ({
@@ -2003,15 +2026,26 @@ export const useStore = create<AppState>()(
 
       toggleProvider: (id, isEnabled) => {
         let nextProviders: Provider[] = []
+        let nextDefaultProviderId = ''
         set((state) => {
           const curProviders = state.providers || []
-          nextProviders = curProviders.map((p) => (p.id === id ? { ...p, isEnabled } : { ...p, isEnabled: false }))
-          return { providers: nextProviders }
+          nextProviders = curProviders.map((p) => (p.id === id ? { ...p, isEnabled } : p))
+          const curDefaultProviderId = String((state.settings as any)?.defaultProviderId || '').trim()
+          const enabledIds = new Set(nextProviders.filter((p) => p.isEnabled).map((p) => String(p.id || '').trim()).filter(Boolean))
+          if (curDefaultProviderId && enabledIds.has(curDefaultProviderId)) {
+            nextDefaultProviderId = curDefaultProviderId
+          } else if (isEnabled) {
+            nextDefaultProviderId = String(id || '').trim()
+          } else {
+            nextDefaultProviderId = String(nextProviders.find((p) => p.isEnabled)?.id || '').trim()
+          }
+          const nextSettings = state.settings ? { ...state.settings, defaultProviderId: nextDefaultProviderId } : state.settings
+          return { providers: nextProviders, settings: nextSettings as any }
         })
         void fetchJson('/settings', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ providers: nextProviders })
+          body: JSON.stringify({ providers: nextProviders, settings: { defaultProviderId: nextDefaultProviderId } })
         }).catch(() => {})
       },
 
@@ -2039,7 +2073,13 @@ export const useStore = create<AppState>()(
       },
 
       getActiveProvider: () => {
-        return (get().providers || []).find((p) => p.isEnabled)
+        const providers = get().providers || []
+        const defaultProviderId = String((get().settings as any)?.defaultProviderId || '').trim()
+        if (defaultProviderId) {
+          const byDefault = providers.find((p) => p.isEnabled && String(p.id || '').trim() === defaultProviderId)
+          if (byDefault) return byDefault
+        }
+        return providers.find((p) => p.isEnabled)
       },
 
       addMemory: (content) => {
@@ -2106,6 +2146,7 @@ export const useStore = create<AppState>()(
           ...(nextUi.composer && typeof nextUi.composer === 'object' ? nextUi.composer : {})
         }
         nextUi.composer.permissionMode = normalizeComposerPermissionMode(nextUi.composer.permissionMode)
+        nextUi.composer.completionContextLimit = normalizeCompletionContextLimit(nextUi.composer.completionContextLimit)
         const activeChatId = typeof p.activeChatId === 'string' ? p.activeChatId : currentState.activeChatId
         return {
           ...currentState,
@@ -2122,6 +2163,7 @@ export const useStore = create<AppState>()(
           ...(ui.composer && typeof ui.composer === 'object' ? ui.composer : {})
         }
         ui.composer.permissionMode = normalizeComposerPermissionMode(ui.composer.permissionMode)
+        ui.composer.completionContextLimit = normalizeCompletionContextLimit(ui.composer.completionContextLimit)
         const activeChatId = typeof persisted.activeChatId === 'string' ? persisted.activeChatId : ''
         return {
           activeChatId,

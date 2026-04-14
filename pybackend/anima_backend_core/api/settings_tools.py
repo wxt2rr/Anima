@@ -19,7 +19,9 @@ from anima_backend_shared.http import json_response, read_body_json
 from anima_backend_shared.qwen_tts_local import ensure_qwen_tts_local_service
 from anima_backend_shared.codex_models import build_openai_codex_models
 from anima_backend_shared.settings import get_skills_content, list_commands, list_skills, load_settings, open_folder, skills_dir
-from anima_backend_shared.tools import builtin_tools, mcp_tools
+from anima_backend_shared.tools import builtin_tools
+
+from ..mcp import get_mcp_runtime_manager
 
 DEFAULT_MODEL_CONTEXT_WINDOW = 128000
 CODEX_FETCH_MODELS = build_openai_codex_models()
@@ -185,10 +187,26 @@ def handle_post_skills_open_dir(handler: Any) -> None:
 
 def handle_get_tools_list(handler: Any) -> None:
     try:
-        settings_obj = load_settings()
-        composer: Dict[str, Any] = {}
         tools = builtin_tools()
-        mcp, _ = mcp_tools(settings_obj, composer)
+        settings_obj = load_settings()
+        s = settings_obj.get("settings") if isinstance(settings_obj, dict) else {}
+        if not isinstance(s, dict):
+            s = {}
+        q = getattr(handler, "query", None) or {}
+        workspace_dir = str(q.get("workspaceDir") or s.get("workspaceDir") or "").strip()
+        scope_raw = str(q.get("scope") or "").strip().lower()
+        scope = scope_raw if scope_raw in ("user", "project") else ("project" if workspace_dir else "user")
+        enabled_server_ids_raw = q.get("enabledServerIds")
+        enabled_server_ids = None
+        if isinstance(enabled_server_ids_raw, str) and enabled_server_ids_raw.strip():
+            enabled_server_ids = [x.strip() for x in enabled_server_ids_raw.split(",") if x.strip()]
+        mgr = get_mcp_runtime_manager()
+        mcp, _ = mgr.list_tool_contracts(
+            scope=scope,
+            workspace_dir=workspace_dir,
+            input_values={},
+            enabled_server_ids=enabled_server_ids,
+        )
         json_response(handler, HTTPStatus.OK, {"ok": True, "tools": tools, "mcpTools": mcp})
     except Exception as e:
         json_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(e)})

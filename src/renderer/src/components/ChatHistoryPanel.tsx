@@ -629,7 +629,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
 
       {/* Footer */}
       {!ui.sidebarCollapsed && (
-        <div className="absolute left-0 bottom-2 w-full pt-0 pr-[var(--app-left-pane-pad-x)] pb-0 pl-[calc(var(--app-left-pane-pad-x)-10px)]">
+        <div className="absolute bottom-2 left-0 w-full px-[var(--app-left-pane-pad-x)]">
           <button
             className="w-full h-8 px-2.5 rounded-md flex items-center gap-2 text-[13px] text-foreground/85 hover:bg-black/5 transition-colors text-left"
             onClick={() => onOpenSettings?.()}

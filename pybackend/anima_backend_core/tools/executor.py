@@ -7,8 +7,10 @@ import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from anima_backend_shared.tools import builtin_tools as legacy_builtin_tools
-from anima_backend_shared.tools import execute_builtin_tool, execute_mcp_tool, mcp_tools as legacy_mcp_tools
+from anima_backend_shared.tools import execute_builtin_tool
 from anima_backend_shared.util import is_within, norm_abs, now_ms, preview_json, preview_tool_result
+
+from ..mcp import get_mcp_runtime_manager
 
 
 def _sanitize_artifacts(
@@ -88,6 +90,30 @@ def tool_mode(settings_obj: Dict[str, Any], composer: Dict[str, Any]) -> str:
     return str(m or "auto")
 
 
+def _resolve_mcp_scope_and_workspace(settings_obj: Dict[str, Any], composer: Dict[str, Any]) -> tuple[str, str]:
+    raw_scope = str(composer.get("mcpScope") or "").strip().lower()
+    workspace_dir = str(composer.get("workspaceDir") or "").strip()
+    if not workspace_dir:
+        s = (settings_obj.get("settings") or {}) if isinstance(settings_obj, dict) else {}
+        workspace_dir = str((s.get("workspaceDir") if isinstance(s, dict) else "") or "").strip()
+    if raw_scope in ("user", "project"):
+        return raw_scope, workspace_dir
+    return ("project" if workspace_dir else "user"), workspace_dir
+
+
+def _resolve_mcp_input_values(composer: Dict[str, Any]) -> Dict[str, str]:
+    raw = composer.get("mcpInputValues")
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, str] = {}
+    for k, v in raw.items():
+        key = str(k or "").strip()
+        if not key:
+            continue
+        out[key] = str(v or "")
+    return out
+
+
 def select_tools(
     settings_obj: Dict[str, Any], composer: Dict[str, Any]
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]], Union[str, Dict[str, Any], None]]:
@@ -106,7 +132,24 @@ def select_tools(
         cron_allowed = False
     if not cron_allowed:
         builtin = [t for t in builtin if str(((t.get("function") or {}) if isinstance(t, dict) else {}).get("name") or "") not in ("cron_list", "cron_upsert", "cron_delete", "cron_run")]
-    mcp, mcp_index = legacy_mcp_tools(settings_obj, composer)
+    mcp: List[Dict[str, Any]] = []
+    mcp_index: Dict[str, Dict[str, Any]] = {}
+    try:
+        enabled_server_ids = composer.get("enabledMcpServerIds")
+        if not isinstance(enabled_server_ids, list):
+            enabled_server_ids = None
+        scope, workspace_dir = _resolve_mcp_scope_and_workspace(settings_obj, composer)
+        input_values = _resolve_mcp_input_values(composer)
+        mgr = get_mcp_runtime_manager()
+        mcp, mcp_index = mgr.list_tool_contracts(
+            scope=scope,
+            workspace_dir=workspace_dir,
+            input_values=input_values,
+            enabled_server_ids=enabled_server_ids,
+        )
+    except Exception:
+        mcp = []
+        mcp_index = {}
     all_tools = builtin + mcp
 
     if mode == "disabled":
@@ -153,7 +196,15 @@ def execute_tool(
 
     try:
         if tool_name.startswith("mcp__"):
-            out = execute_mcp_tool(tool_name, args, mcp_index)
+            mgr = get_mcp_runtime_manager()
+            input_values = _resolve_mcp_input_values(composer or {})
+            res = mgr.call_tool_by_contract(
+                contract_name=tool_name,
+                arguments=args,
+                index=mcp_index,
+                input_values=input_values,
+            )
+            out = json.dumps(res, ensure_ascii=False)
         else:
             mode = str(((composer or {}).get("permissionMode") or "workspace_whitelist")).strip() or "workspace_whitelist"
             tool_args = dict(args or {})

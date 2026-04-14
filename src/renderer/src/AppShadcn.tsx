@@ -79,6 +79,11 @@ type DangerousCommandApprovalPayload = {
   approvalId?: string
 }
 
+type TabCompleteResult = {
+  mode: 'complete' | 'translate'
+  text: string
+}
+
 const DANGEROUS_COMMAND_APPROVAL_PREFIX = 'ANIMA_DANGEROUS_COMMAND_APPROVAL:'
 
 function parseDangerousCommandApproval(input: unknown): DangerousCommandApprovalPayload | null {
@@ -99,6 +104,39 @@ function parseDangerousCommandApproval(input: unknown): DangerousCommandApproval
   } catch {
     return null
   }
+}
+
+function applyTabCompletionSuggestion(base: string, result: TabCompleteResult): string | null {
+  const draft = String(base || '')
+  const mode = result.mode
+  const out = String(result.text || '').trim()
+  if (!draft) return null
+  if (!out) return null
+  if (mode === 'complete') {
+    if (!/^[A-Za-z][A-Za-z'-]{0,23}$/.test(out)) return null
+    return `${draft}${out}`
+  }
+  if (mode !== 'translate') {
+    return null
+  }
+  if (out === draft.trim()) return null
+  return out
+}
+
+function isOllamaLikeProviderCandidate(provider: {
+  id?: string
+  name?: string
+  config?: { baseUrl?: string }
+} | null | undefined): boolean {
+  const id = String(provider?.id || '').toLowerCase()
+  const name = String(provider?.name || '').toLowerCase()
+  const baseUrl = String(provider?.config?.baseUrl || '').toLowerCase()
+  return (
+    id.includes('ollama') ||
+    name.includes('ollama') ||
+    baseUrl.includes('127.0.0.1:11434') ||
+    baseUrl.includes('localhost:11434')
+  )
 }
 
 function CircularProgress({ value }: { value: number }) {
@@ -364,7 +402,7 @@ function AppLoaded(): JSX.Element {
   )
 
   // Use a single state for mutually exclusive popovers
-  const [popoverPanel, setPopoverPanel] = useState<'' | 'attachments' | 'tools' | 'skills' | 'model' | 'thinking' | 'permission' | 'git_branch'>('')
+  const [popoverPanel, setPopoverPanel] = useState<'' | 'attachments' | 'tools' | 'skills' | 'model' | 'thinking' | 'permission' | 'completion' | 'git_branch'>('')
   
   const [traceDetailOpenByKey, setTraceDetailOpenByKey] = useState<Record<string, boolean>>({})
   const [reasoningOpenByMsgId, setReasoningOpenByMsgId] = useState<Record<string, boolean>>({})
@@ -1757,6 +1795,9 @@ function AppLoaded(): JSX.Element {
     const enabledToolIds = composer.enabledToolIds.length ? composer.enabledToolIds : settings.toolsEnabledIds
     const enabledMcpServerIds = composer.enabledMcpServerIds.length ? composer.enabledMcpServerIds : settings.mcpEnabledServerIds
     const enabledSkillIds = composer.enabledSkillIds.length ? composer.enabledSkillIds : settings.skillsEnabledIds
+    const completionProviderId = String((settings as any).tabCompletionProviderId || '').trim()
+    const completionModelId = String((settings as any).tabCompletionModelId || '').trim()
+    const completionContextLimit = Math.max(0, Math.min(12, Number(composer.completionContextLimit ?? 4) || 4))
 
     const selectedModelConfig = effectiveProvider?.config?.models?.find(
       (m: any) => typeof m !== 'string' && m.id === effectiveModel
@@ -1788,6 +1829,11 @@ function AppLoaded(): JSX.Element {
       maxOutputTokens: selectedModelConfig?.config?.maxOutputTokens,
       jsonConfig: selectedModelConfig?.config?.jsonConfig,
       thinkingLevel,
+      completionEnabled: composer.completionEnabled !== false,
+      completionTranslateEnabled: composer.completionTranslateEnabled !== false,
+      completionContextLimit,
+      completionProviderId,
+      completionModelId,
       dangerousCommandApprovals,
       dangerousCommandAllowForThread
     }
@@ -2083,6 +2129,12 @@ function AppLoaded(): JSX.Element {
           mcpServers: 'MCP Servers',
           refresh: 'Refresh',
           openFolder: 'Open folder',
+          skillsLoaded: (n: number) => `${n} loaded`,
+          skillName: 'Name',
+          skillType: 'Type',
+          skillTypeSystem: 'System',
+          skillTypePersonal: 'Personal',
+          invalid: 'Invalid',
           modelOverride: 'Override model',
           useProviderDefault: 'Use provider default',
           contextWindow: 'Context window (messages)',
@@ -2093,6 +2145,11 @@ function AppLoaded(): JSX.Element {
           thinkingMedium: 'Medium',
           thinkingHigh: 'High',
           thinkingXHigh: 'Ultra',
+          completion: 'Completion',
+          completionEnable: 'Enable Tab completion',
+          completionTranslate: 'Enable mixed CN/EN translation',
+          completionContextLimit: 'Recent context messages',
+          completionApplyHint: 'Tab to apply suggestion, Esc to cancel',
           preview: 'Preview',
           prepare: 'Prepare'
         },
@@ -2170,6 +2227,12 @@ function AppLoaded(): JSX.Element {
           mcpServers: 'MCP 服务器',
           refresh: '刷新',
           openFolder: '打开文件夹',
+          skillsLoaded: (n: number) => `已加载 ${n} 个`,
+          skillName: '名称',
+          skillType: '类型',
+          skillTypeSystem: '系统',
+          skillTypePersonal: '个人',
+          invalid: '无效',
           modelOverride: '临时覆盖模型',
           useProviderDefault: '使用提供商默认',
           contextWindow: '上下文窗口（消息数）',
@@ -2180,6 +2243,11 @@ function AppLoaded(): JSX.Element {
           thinkingMedium: '中',
           thinkingHigh: '高',
           thinkingXHigh: '超高',
+          completion: '补全',
+          completionEnable: '启用 Tab 补全',
+          completionTranslate: '启用中英混输翻译补全',
+          completionContextLimit: '最近上下文消息数',
+          completionApplyHint: 'Tab 应用建议，Esc 取消',
           preview: '预览',
           prepare: '准备'
         },
@@ -2258,6 +2326,12 @@ function AppLoaded(): JSX.Element {
           mcpServers: 'MCP サーバー',
           refresh: '更新',
           openFolder: 'フォルダーを開く',
+          skillsLoaded: (n: number) => `${n} 件を読み込み`,
+          skillName: '名前',
+          skillType: '種別',
+          skillTypeSystem: 'システム',
+          skillTypePersonal: '個人',
+          invalid: '無効',
           modelOverride: 'モデル上書き',
           useProviderDefault: '既定モデルを使用',
           contextWindow: 'コンテキスト（メッセージ数）',
@@ -2268,6 +2342,11 @@ function AppLoaded(): JSX.Element {
           thinkingMedium: 'Medium',
           thinkingHigh: 'High',
           thinkingXHigh: 'Ultra',
+          completion: '補完',
+          completionEnable: 'Tab 補完を有効化',
+          completionTranslate: '中英混在入力の翻訳補完を有効化',
+          completionContextLimit: '直近コンテキスト件数',
+          completionApplyHint: 'Tab で適用、Esc でキャンセル',
           preview: 'プレビュー',
           prepare: '準備'
         },
@@ -2867,6 +2946,57 @@ function AppLoaded(): JSX.Element {
       compressionTypingTimerRef.current = null
     }
   }
+
+  const handleTabComplete = useCallback(
+    async (rawInput: string, mode: 'complete' | 'translate' = 'complete'): Promise<TabCompleteResult | null> => {
+      const input = String(rawInput || '')
+      if (!input.trim()) return null
+      const composerPayload = buildComposerPayload()
+      if (composerPayload.completionEnabled === false) return null
+
+      const completionProviderId = String(composerPayload.completionProviderId || '').trim()
+      const completionProvider = completionProviderId
+        ? providers.find((p) => String(p.id || '').trim() === completionProviderId)
+        : effectiveProvider
+      const timeoutMs = isOllamaLikeProviderCandidate(completionProvider) ? 3200 : 1800
+
+      const controller = new AbortController()
+      const timer = window.setTimeout(() => controller.abort(), timeoutMs)
+      try {
+        const baseUrl = await resolveBackendBaseUrl()
+        const res = await fetch(`${baseUrl}/api/composer/tab_complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            input,
+            chatId: composerPayload.chatId,
+            composer: composerPayload,
+            contextLimit: composerPayload.completionContextLimit,
+            tabMode: mode,
+            translateEnabled: mode === 'translate'
+          })
+        })
+        const text = await res.text()
+        if (!res.ok) return null
+        const data = text ? JSON.parse(text) : {}
+        const modeRaw = String((data as any)?.mode || '').trim().toLowerCase()
+        const resolvedMode: TabCompleteResult['mode'] =
+          modeRaw === 'translate' || modeRaw === 'complete' ? modeRaw : mode
+        const out = String((data as any)?.text || '').trim()
+        if (!out) return null
+        return {
+          mode: resolvedMode,
+          text: out
+        }
+      } catch {
+        return null
+      } finally {
+        window.clearTimeout(timer)
+      }
+    },
+    [buildComposerPayload, effectiveProvider, providers]
+  )
 
   const handleSend = async (
     rawText: string,
@@ -5557,11 +5687,13 @@ function AppLoaded(): JSX.Element {
                     placeholder={t.typeMessage}
                     isLoading={isLoading}
                     onSend={handleSend}
+                    onTabComplete={handleTabComplete}
                     slashCommands={slashCommands}
                     slashEmptyLabel={slashText.empty}
                     slashMenuTitle={slashText.menuTitle}
                     slashMenuHint={slashText.menuHint}
                     slashSourceLabels={{ builtin: slashText.builtIn, project: slashText.project }}
+                    tabApplyHint={t.composer.completionApplyHint}
                     onExecuteSlashCommand={handleExecuteSlashCommand}
                     onStop={handleStop}
                     onPasteImage={handleComposerPaste}
@@ -5679,12 +5811,17 @@ function AppLoaded(): JSX.Element {
                                   <Sparkles className="w-4 h-4" />
                                 </Button>
                               </PopoverTrigger>
-                              <PopoverContent className="w-80" align="start" onMouseEnter={() => handleMouseEnter('skills')} onMouseLeave={handleMouseLeave}>
-                                <div className="space-y-3">
-                                  <div className="flex items-center justify-between">
-                                    <h4 className="font-medium text-xs leading-none">{t.composer.skills}</h4>
+                              <PopoverContent
+                                className="w-[460px] p-0 overflow-hidden border border-border/70 bg-popover shadow-[0_20px_56px_-28px_rgba(0,0,0,0.45)]"
+                                align="start"
+                                onMouseEnter={() => handleMouseEnter('skills')}
+                                onMouseLeave={handleMouseLeave}
+                              >
+                                <div className="border-b border-border/60 bg-muted/25 px-3 py-2.5 space-y-2">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <h4 className="font-medium text-xs leading-none tracking-[0.02em]">{t.composer.skills}</h4>
                                     <select
-                                      className="text-xs border rounded px-2 py-1"
+                                      className="h-7 rounded-md border border-border/70 bg-background px-2 text-xs"
                                       value={composer.skillMode}
                                       onChange={(e) => updateComposer({ skillMode: e.target.value as any })}
                                     >
@@ -5693,48 +5830,67 @@ function AppLoaded(): JSX.Element {
                                       <option value="disabled">{t.composer.disabled}</option>
                                     </select>
                                   </div>
-
                                   <div className="flex items-center justify-between gap-2">
-                                    <span className="text-xs text-muted-foreground">{skillsCache.length} loaded</span>
-                                    <div className="flex gap-2">
-                                      <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => void ensureSkills()}>
+                                    <span className="text-[11px] text-muted-foreground">{t.composer.skillsLoaded(skillsCache.length)}</span>
+                                    <div className="flex gap-1.5">
+                                      <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]" onClick={() => void ensureSkills()}>
                                         {t.composer.refresh}
                                       </Button>
-                                      <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => void openSkillsFolder()}>
+                                      <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]" onClick={() => void openSkillsFolder()}>
                                         {t.composer.openFolder}
                                       </Button>
                                     </div>
                                   </div>
+                                </div>
 
-                                  {skillsCache.length === 0 ? (
-                                    <div className="text-xs text-muted-foreground">—</div>
-                                  ) : (
-                                    <ScrollArea className="h-[300px]">
-                                      <div className="space-y-2">
-                                        {skillsCache.map((s) => (
-                                          <div key={s.id} className="flex items-start space-x-2">
-                                            <Checkbox
-                                              className="rounded-none"
-                                              id={`skill-${s.id}`}
-                                              disabled={s.isValid === false}
-                                              checked={composer.enabledSkillIds.includes(s.id)}
-                                              onCheckedChange={(checked) => updateComposer({ enabledSkillIds: toggleId(composer.enabledSkillIds, s.id, !!checked) })}
-                                            />
-                                            <label htmlFor={`skill-${s.id}`} className="text-xs leading-none space-y-1">
-                                              <span className="block font-medium">{s.name || s.id}</span>
-                                              <span className="block text-[10px] text-muted-foreground line-clamp-2">{s.description || s.id}</span>
-                                              {s.isValid === false ? (
-                                                <span className="block text-[10px] text-destructive line-clamp-2">
-                                                  {Array.isArray(s.errors) && s.errors.length ? s.errors.join(', ') : 'invalid'}
-                                                </span>
-                                              ) : null}
+                                {skillsCache.length === 0 ? (
+                                  <div className="px-3 py-4 text-xs text-muted-foreground">—</div>
+                                ) : (
+                                  <>
+                                    <div className="grid grid-cols-[minmax(0,1fr),auto] items-center gap-2 px-3 py-2 text-[10px] uppercase tracking-[0.08em] text-muted-foreground border-b border-border/60">
+                                      <span>{t.composer.skillName}</span>
+                                      <span>{t.composer.skillType}</span>
+                                    </div>
+                                    <ScrollArea className="h-[320px]">
+                                      <div>
+                                        {skillsCache.map((s) => {
+                                          const typeLabel = String(s.dir || '').includes('/.system/')
+                                            ? t.composer.skillTypeSystem
+                                            : t.composer.skillTypePersonal
+                                          return (
+                                            <label
+                                              key={s.id}
+                                              htmlFor={`skill-${s.id}`}
+                                              className="grid grid-cols-[auto,minmax(0,1fr),auto] items-start gap-2 px-3 py-2.5 border-b border-border/45 hover:bg-accent/35 transition-colors cursor-pointer"
+                                            >
+                                              <Checkbox
+                                                className="mt-0.5 rounded-[4px]"
+                                                id={`skill-${s.id}`}
+                                                disabled={s.isValid === false}
+                                                checked={composer.enabledSkillIds.includes(s.id)}
+                                                onCheckedChange={(checked) => updateComposer({ enabledSkillIds: toggleId(composer.enabledSkillIds, s.id, !!checked) })}
+                                              />
+                                              <div className="min-w-0 space-y-1">
+                                                <div className="text-xs font-medium leading-none truncate">{s.name || s.id}</div>
+                                                <div className="text-[11px] text-muted-foreground line-clamp-2 leading-4">{s.description || s.id}</div>
+                                                {s.isValid === false ? (
+                                                  <div className="text-[10px] text-destructive line-clamp-2">
+                                                    {Array.isArray(s.errors) && s.errors.length ? s.errors.join(', ') : t.composer.invalid}
+                                                  </div>
+                                                ) : null}
+                                              </div>
+                                              <div className="pt-0.5">
+                                                <Badge variant="outline" className="h-5 rounded-md px-2 text-[10px] font-normal">
+                                                  {typeLabel}
+                                                </Badge>
+                                              </div>
                                             </label>
-                                          </div>
-                                        ))}
+                                          )
+                                        })}
                                       </div>
                                     </ScrollArea>
-                                  )}
-                                </div>
+                                  </>
+                                )}
                               </PopoverContent>
                             </Popover>
                           </>
@@ -5867,40 +6023,88 @@ function AppLoaded(): JSX.Element {
               </div>
               <div className="max-w-[50rem] mx-auto mt-2 px-1 w-full">
                 <div className="w-full flex items-center justify-between gap-2">
-                  <Popover open={popoverPanel === 'permission'} onOpenChange={(open) => handlePopoverOpenChange('permission', open)}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        className="h-8 rounded-md gap-1.5 px-2.5 text-xs font-normal text-muted-foreground hover:text-foreground hover:bg-black/5 shrink-0 focus-visible:ring-0 focus-visible:ring-offset-0"
-                        title={t.composer.permission}
-                      >
-                        <Shield className="w-3.5 h-3.5 shrink-0" />
-                        <span className="truncate">
-                          {permissionMode === 'full_access' ? t.composer.permissionFull : t.composer.permissionDefault}
-                        </span>
-                        <ChevronDown className="w-3.5 h-3.5 opacity-50 shrink-0" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-44 p-1" align="start" side="top" sideOffset={8}>
-                      <div className="px-2 py-1">
-                        <h4 className="font-medium text-xs leading-none">{t.composer.permission}</h4>
-                      </div>
-                      {[
-                        { value: 'workspace_whitelist', label: t.composer.permissionDefault },
-                        { value: 'full_access', label: t.composer.permissionFull }
-                      ].map((opt) => (
-                        <button
-                          key={opt.value}
-                          type="button"
-                          className="w-full h-8 px-2 rounded-md text-xs flex items-center justify-between hover:bg-black/5"
-                          onClick={() => handlePermissionModeChange(opt.value as 'workspace_whitelist' | 'full_access')}
+                  <div className="flex items-center gap-1.5">
+                    <Popover open={popoverPanel === 'permission'} onOpenChange={(open) => handlePopoverOpenChange('permission', open)}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          className="h-8 rounded-md gap-1.5 px-2.5 text-xs font-normal text-muted-foreground hover:text-foreground hover:bg-black/5 shrink-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                          title={t.composer.permission}
                         >
-                          <span>{opt.label}</span>
-                          {permissionMode === opt.value ? <Check className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5" />}
-                        </button>
-                      ))}
-                    </PopoverContent>
-                  </Popover>
+                          <Shield className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">
+                            {permissionMode === 'full_access' ? t.composer.permissionFull : t.composer.permissionDefault}
+                          </span>
+                          <ChevronDown className="w-3.5 h-3.5 opacity-50 shrink-0" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-44 p-1" align="start" side="top" sideOffset={8}>
+                        <div className="px-2 py-1">
+                          <h4 className="font-medium text-xs leading-none">{t.composer.permission}</h4>
+                        </div>
+                        {[
+                          { value: 'workspace_whitelist', label: t.composer.permissionDefault },
+                          { value: 'full_access', label: t.composer.permissionFull }
+                        ].map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            className="w-full h-8 px-2 rounded-md text-xs flex items-center justify-between hover:bg-black/5"
+                            onClick={() => handlePermissionModeChange(opt.value as 'workspace_whitelist' | 'full_access')}
+                          >
+                            <span>{opt.label}</span>
+                            {permissionMode === opt.value ? <Check className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5" />}
+                          </button>
+                        ))}
+                      </PopoverContent>
+                    </Popover>
+
+                    <Popover open={popoverPanel === 'completion'} onOpenChange={(open) => handlePopoverOpenChange('completion', open)}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          className="h-8 rounded-md gap-1.5 px-2.5 text-xs font-normal text-muted-foreground hover:text-foreground hover:bg-black/5 shrink-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                          title={t.composer.completion}
+                        >
+                          <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">{t.composer.completion}</span>
+                          <ChevronDown className="w-3.5 h-3.5 opacity-50 shrink-0" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-64 p-3 space-y-3" align="start" side="top" sideOffset={8}>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs">{t.composer.completionEnable}</span>
+                          <Switch
+                            checked={composer.completionEnabled !== false}
+                            onCheckedChange={(checked) => updateComposer({ completionEnabled: Boolean(checked) })}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs">{t.composer.completionTranslate}</span>
+                          <Switch
+                            checked={composer.completionTranslateEnabled !== false}
+                            disabled={composer.completionEnabled === false}
+                            onCheckedChange={(checked) => updateComposer({ completionTranslateEnabled: Boolean(checked) })}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs">{t.composer.completionContextLimit}</span>
+                          <select
+                            className="h-7 rounded-md border bg-background px-2 text-xs"
+                            value={String(Math.max(0, Math.min(12, Number(composer.completionContextLimit ?? 4) || 4)))}
+                            disabled={composer.completionEnabled === false}
+                            onChange={(e) => updateComposer({ completionContextLimit: Number(e.target.value) })}
+                          >
+                            {[0, 2, 4, 6, 8, 10, 12].map((n) => (
+                              <option key={n} value={n}>
+                                {n}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
 
                   <div className="flex items-center gap-1.5">
                     <Popover
@@ -6001,11 +6205,13 @@ function ChatComposer({
   placeholder,
   isLoading,
   onSend,
+  onTabComplete,
   slashCommands,
   slashEmptyLabel,
   slashMenuTitle,
   slashMenuHint,
   slashSourceLabels,
+  tabApplyHint,
   onExecuteSlashCommand,
   onStop,
   onPasteImage,
@@ -6018,11 +6224,13 @@ function ChatComposer({
   placeholder: string
   isLoading: boolean
   onSend: (text: string) => Promise<boolean>
+  onTabComplete?: (text: string, mode?: 'complete' | 'translate') => Promise<TabCompleteResult | null>
   slashCommands: SlashCommandEntry[]
   slashEmptyLabel: string
   slashMenuTitle: string
   slashMenuHint: string
   slashSourceLabels: { builtin: string; project: string }
+  tabApplyHint: string
   onExecuteSlashCommand: (rawInput: string) => Promise<{ handled: boolean; clearValue?: boolean; nextValue?: string }>
   onStop: () => void
   onPasteImage?: (e: ClipboardEvent<HTMLTextAreaElement>) => void
@@ -6038,9 +6246,18 @@ function ChatComposer({
   leftControls: ReactNode
 }): JSX.Element {
   const [value, setValue] = useState('')
+  const [pendingTabCompletion, setPendingTabCompletion] = useState<{
+    base: string
+    suggestion: string
+    mode: TabCompleteResult['mode']
+    nextValue: string
+  } | null>(null)
   const [slashIndex, setSlashIndex] = useState(0)
   const [slashDismissed, setSlashDismissed] = useState(false)
   const voiceAnchorRef = useRef<number | null>(null)
+  const tabCompleteRunningRef = useRef(false)
+  const tabChordTimerRef = useRef<number | null>(null)
+  const tabChordBaseRef = useRef('')
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const slashMenuRef = useRef<HTMLDivElement | null>(null)
   const slashItemRefs = useRef<Array<HTMLButtonElement | null>>([])
@@ -6073,6 +6290,22 @@ function ChatComposer({
   useEffect(() => {
     setSlashIndex(0)
   }, [value, slashCommands])
+
+  useEffect(() => {
+    if (!pendingTabCompletion) return
+    if (value !== pendingTabCompletion.base) {
+      setPendingTabCompletion(null)
+    }
+  }, [pendingTabCompletion, value])
+
+  useEffect(() => {
+    return () => {
+      if (tabChordTimerRef.current != null) {
+        window.clearTimeout(tabChordTimerRef.current)
+        tabChordTimerRef.current = null
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (!slashMenuOpen || !slashSuggestions.length) return
@@ -6153,11 +6386,42 @@ function ChatComposer({
     focusInput()
   }, [focusInput])
 
+  const requestTabCompletion = useCallback((mode: 'complete' | 'translate', current: string) => {
+    if (!onTabComplete) return
+    if (tabCompleteRunningRef.current) return
+    tabCompleteRunningRef.current = true
+    void (async () => {
+      try {
+        const completed = await onTabComplete(current, mode)
+        if (!completed) return
+        const suggestion = String(completed.text || '').trim()
+        if (!suggestion) return
+        const next = applyTabCompletionSuggestion(current, completed)
+        if (next && next !== current) {
+          setPendingTabCompletion({
+            base: current,
+            suggestion,
+            mode: completed.mode,
+            nextValue: next
+          })
+        }
+      } finally {
+        tabCompleteRunningRef.current = false
+      }
+    })()
+  }, [onTabComplete])
+
   const onSubmit = useCallback(async () => {
     if (isLoading) {
       onStop()
       return
     }
+    if (tabChordTimerRef.current != null) {
+      window.clearTimeout(tabChordTimerRef.current)
+      tabChordTimerRef.current = null
+      tabChordBaseRef.current = ''
+    }
+    if (pendingTabCompletion) setPendingTabCompletion(null)
     const text = String(value || '').trim()
     if (!text) return
     if (slashInput) {
@@ -6185,6 +6449,7 @@ function ChatComposer({
     onExecuteSlashCommand,
     onSend,
     onStop,
+    pendingTabCompletion,
     slashInput,
     value
   ])
@@ -6260,6 +6525,12 @@ function ChatComposer({
               value={inputDisplayValue}
               onChange={(e) => {
                 const next = e.target.value
+                if (pendingTabCompletion) setPendingTabCompletion(null)
+                if (tabChordTimerRef.current != null) {
+                  window.clearTimeout(tabChordTimerRef.current)
+                  tabChordTimerRef.current = null
+                  tabChordBaseRef.current = ''
+                }
                 if (selectedSlashCommand) {
                   const normalized = String(next || '')
                   setValue(normalized ? `${selectedSlashPrefix} ${normalized}` : selectedSlashPrefix)
@@ -6283,6 +6554,60 @@ function ChatComposer({
                   if (!activeSlashSuggestion) return
                   e.preventDefault()
                   applySlashSuggestion(activeSlashSuggestion)
+                  return
+                }
+                if (e.key === 'Escape' && pendingTabCompletion) {
+                  e.preventDefault()
+                  setPendingTabCompletion(null)
+                  return
+                }
+                if (e.key === 'Escape' && tabChordTimerRef.current != null) {
+                  e.preventDefault()
+                  window.clearTimeout(tabChordTimerRef.current)
+                  tabChordTimerRef.current = null
+                  tabChordBaseRef.current = ''
+                  return
+                }
+                if (
+                  (e.key === 't' || e.key === 'T') &&
+                  !e.metaKey &&
+                  !e.ctrlKey &&
+                  !e.altKey &&
+                  !e.shiftKey &&
+                  tabChordTimerRef.current != null
+                ) {
+                  e.preventDefault()
+                  window.clearTimeout(tabChordTimerRef.current)
+                  tabChordTimerRef.current = null
+                  const current = String(tabChordBaseRef.current || value || '')
+                  tabChordBaseRef.current = ''
+                  if (!current.trim()) return
+                  requestTabCompletion('translate', current)
+                  return
+                }
+                if (e.key === 'Tab' && !e.shiftKey && !slashInput && !slashMenuOpen && onTabComplete) {
+                  const current = String(value || '')
+                  if (!current.trim()) return
+                  e.preventDefault()
+                  if (pendingTabCompletion && pendingTabCompletion.base === current) {
+                    setPendingTabCompletion(null)
+                    if (pendingTabCompletion.nextValue !== current) {
+                      setValue(pendingTabCompletion.nextValue)
+                    }
+                    return
+                  }
+                  if (tabChordTimerRef.current != null) {
+                    window.clearTimeout(tabChordTimerRef.current)
+                    tabChordTimerRef.current = null
+                  }
+                  tabChordBaseRef.current = current
+                  tabChordTimerRef.current = window.setTimeout(() => {
+                    tabChordTimerRef.current = null
+                    const base = String(tabChordBaseRef.current || current)
+                    tabChordBaseRef.current = ''
+                    if (!base.trim()) return
+                    requestTabCompletion('complete', base)
+                  }, 260)
                   return
                 }
                 if (slashMenuOpen && e.key === 'Escape') {
@@ -6309,6 +6634,12 @@ function ChatComposer({
           </div>
         </div>
       </div>
+      {pendingTabCompletion ? (
+        <div className="px-2 pt-1 space-y-0.5">
+          <div className="text-[11px] text-muted-foreground">{tabApplyHint}</div>
+          <div className="text-[11px] text-muted-foreground truncate">{pendingTabCompletion.nextValue}</div>
+        </div>
+      ) : null}
       <div className="flex justify-between items-end px-2 pt-1.5 pb-0 mt-0.5 gap-2.5">
         {leftControls}
         <div className="flex items-center gap-1.5 shrink-0">

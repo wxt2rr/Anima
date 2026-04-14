@@ -1447,6 +1447,19 @@ def get_provider_spec(settings_obj: Dict[str, Any], provider_id: Optional[str] =
                 return _provider_spec_from_obj(settings_obj, p)
         return None
 
+    settings_root = settings_obj.get("settings")
+    default_provider_id = ""
+    if isinstance(settings_root, dict):
+        default_provider_id = str(settings_root.get("defaultProviderId") or "").strip()
+    if default_provider_id:
+        for p in providers:
+            if not isinstance(p, dict):
+                continue
+            if p.get("isEnabled") is not True:
+                continue
+            if str(p.get("id") or "").strip().lower() == default_provider_id.lower():
+                return _provider_spec_from_obj(settings_obj, p)
+
     active = None
     for p in providers:
         if isinstance(p, dict) and p.get("isEnabled") is True:

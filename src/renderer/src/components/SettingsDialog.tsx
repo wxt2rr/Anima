@@ -1,7 +1,7 @@
 import { 
   Settings, MessageSquare, Database, Globe, 
   Cpu, Search, Plus, Trash2, CheckCircle2, XCircle, RefreshCw,
-  Copy, ChevronDown, ChevronRight, Eye, EyeOff, ExternalLink, Wand2, FolderOpen, Sparkles, Mic, Info, Keyboard, X, Bell, Clock3, Play
+  Copy, ChevronDown, ChevronRight, ChevronLeft, Eye, EyeOff, ExternalLink, Wand2, FolderOpen, Sparkles, Mic, Info, Keyboard, X, Bell, Clock3, Play
 } from 'lucide-react'
 import { resolveBackendBaseUrl, useStore, type Provider, type ProviderModel, type VoiceModelEntry } from '../store/useStore'
 import { THEMES, ThemeColor } from '../lib/themes'
@@ -1667,6 +1667,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           general: 'General',
           providers: 'Providers',
           chat: 'Chat',
+          mcp: 'MCP',
           coder: 'Coder',
           automation: 'Automation',
           im: 'IM',
@@ -1774,6 +1775,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           general: '通用',
           providers: '提供商',
           chat: '聊天',
+          mcp: 'MCP',
           coder: 'Coder',
           automation: '自动化',
           im: 'IM',
@@ -1881,6 +1883,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           general: '一般',
           providers: 'プロバイダー',
           chat: 'チャット',
+          mcp: 'MCP',
           coder: 'Coder',
           automation: '自動化',
           im: 'IM',
@@ -1988,6 +1991,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
     { id: 'general', label: t.tabs.general, icon: Settings },
     { id: 'providers', label: t.tabs.providers, icon: Cpu },
     { id: 'chat', label: t.tabs.chat, icon: MessageSquare },
+    { id: 'mcp', label: t.tabs.mcp, icon: Database },
     { id: 'coder', label: t.tabs.coder, icon: Sparkles },
     { id: 'im', label: t.tabs.im, icon: ExternalLink },
     { id: 'skills', label: t.tabs.skills, icon: Wand2 },
@@ -2004,6 +2008,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
     if (activeTab === 'providers') return <ProvidersSettings />
     if (activeTab === 'general') return <GeneralSettings />
     if (activeTab === 'chat') return <ChatSettings />
+    if (activeTab === 'mcp') return <McpSettings />
     if (activeTab === 'coder') return <CoderSettings />
     if (activeTab === 'im') return <ImSettings />
     if (activeTab === 'skills') return <SkillsSettings />
@@ -2032,7 +2037,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
                   key={tab.id}
                   variant="ghost"
                   onClick={() => setActiveTab(tab.id)}
-                  className={`w-full justify-start gap-3 px-3 py-2.5 h-auto font-medium transition-all duration-200 ${
+                  className={`w-full justify-start gap-3 px-3 py-2.5 h-auto text-[13px] font-medium transition-all duration-200 ${
                     activeTab === tab.id
                       ? 'rounded-xl bg-black/5 text-foreground'
                       : 'rounded-md text-muted-foreground hover:bg-black/5 hover:text-foreground'
@@ -2100,6 +2105,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           general: 'General',
           providers: 'Providers',
           chat: 'Chat',
+          mcp: 'MCP',
           coder: 'Coder',
           automation: 'Automation',
           im: 'IM',
@@ -2136,6 +2142,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           general: '通用',
           providers: '提供商',
           chat: '聊天',
+          mcp: 'MCP',
           coder: 'Coder',
           automation: '自动化',
           im: 'IM',
@@ -2172,6 +2179,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           general: '一般',
           providers: 'プロバイダー',
           chat: 'チャット',
+          mcp: 'MCP',
           coder: 'Coder',
           automation: '自動化',
           im: 'IM',
@@ -2243,6 +2251,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
     { id: 'general', label: t.tabs.general, icon: Settings },
     { id: 'providers', label: t.tabs.providers, icon: Cpu },
     { id: 'chat', label: t.tabs.chat, icon: MessageSquare },
+    { id: 'mcp', label: t.tabs.mcp, icon: Database },
     { id: 'coder', label: t.tabs.coder, icon: Sparkles },
     { id: 'automation', label: t.tabs.automation, icon: Clock3 },
     { id: 'memory', label: t.tabs.memory, icon: Search },
@@ -2261,6 +2270,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
     if (activeTab === 'providers') return <ProvidersSettings />
     if (activeTab === 'general') return <GeneralSettings />
     if (activeTab === 'chat') return <ChatSettings />
+    if (activeTab === 'mcp') return <McpSettings />
     if (activeTab === 'coder') return <CoderSettings />
     if (activeTab === 'automation') return <AutomationSettings />
     if (activeTab === 'memory') return <MemorySettings />
@@ -2300,10 +2310,11 @@ export const SettingsWindow = memo(function SettingsWindow() {
           >
             <button
               type="button"
-              className="inline-flex min-w-[78px] items-center justify-center rounded-[var(--app-left-pane-header-btn-radius)] px-3 text-[13px] font-medium leading-[14px] text-muted-foreground/90 transition-colors hover:bg-background/55 hover:text-foreground"
+              className="inline-flex min-w-[78px] items-center justify-center gap-1.5 rounded-[var(--app-left-pane-header-btn-radius)] px-3 text-[13px] font-medium leading-[14px] text-muted-foreground/90 transition-colors hover:bg-background/55 hover:text-foreground"
               style={{ height: 'var(--app-left-pane-traffic-row-height)' }}
               onClick={onClose}
             >
+              <ChevronLeft className="h-3.5 w-3.5 shrink-0" />
               <span className="block leading-[14px]">{t.backToApp}</span>
             </button>
           </div>
@@ -2317,7 +2328,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
                 key={tab.id}
                 variant="ghost"
                 onClick={() => setActiveTab(tab.id)}
-                className={`w-full justify-start gap-3 px-3 py-2.5 h-auto font-medium transition-all duration-200 ${
+                className={`w-full justify-start gap-3 px-3 py-2.5 h-auto text-[13px] font-medium transition-all duration-200 ${
                   activeTab === tab.id
                     ? 'rounded-xl bg-black/5 text-foreground'
                     : 'rounded-md text-muted-foreground hover:bg-black/5 hover:text-foreground'
@@ -3384,7 +3395,7 @@ function AboutSettings() {
 }
 
 function ProvidersSettings() {
-  const { providers: providers0, toggleProvider, updateProvider, reorderProviders, addProvider } = useStore()
+  const { providers: providers0, toggleProvider, updateProvider, reorderProviders, addProvider, updateSettings } = useStore()
   const { settings: settings0 } = useStore()
   const loadRemoteConfig = useStore(s => s.loadRemoteConfig)
   const settings = settings0!
@@ -3485,6 +3496,8 @@ function ProvidersSettings() {
         localProviderHint: 'Local provider does not require API key.',
         active: 'Active',
         inactive: 'Inactive',
+        default: 'Default',
+        setDefault: 'Set Default',
         apiKey: 'API Key',
         baseUrl: 'Base URL (Optional)',
         baseUrlHint: 'Leave empty to use the default API endpoint',
@@ -3551,6 +3564,8 @@ function ProvidersSettings() {
         localProviderHint: '本地 provider 不需要 API Key。',
         active: '启用',
         inactive: '未启用',
+        default: '默认',
+        setDefault: '设为默认',
         apiKey: 'API Key',
         baseUrl: 'Base URL (Optional)',
         baseUrlHint: '留空则使用默认 OpenAI API 端点',
@@ -3617,6 +3632,8 @@ function ProvidersSettings() {
         localProviderHint: 'ローカル Provider では API Key は不要です。',
         active: '有効',
         inactive: '無効',
+        default: 'デフォルト',
+        setDefault: 'デフォルトに設定',
         apiKey: 'API Key',
         baseUrl: 'Base URL（任意）',
         baseUrlHint: '空欄の場合は既定の API エンドポイントを使用します',
@@ -3678,6 +3695,8 @@ function ProvidersSettings() {
   })()
 
   const activeProvider = providers.find(p => p.id === selectedProviderId)
+  const defaultProviderId = String((settings as any).defaultProviderId || '').trim()
+  const isDefaultProvider = Boolean(activeProvider && String(activeProvider.id || '').trim() === defaultProviderId)
   const hasFetchedModels = Boolean(activeProvider?.config?.modelsFetched)
   const activeProviderIdLower = String(activeProvider?.id || '').toLowerCase()
   const activeProviderNameLower = String(activeProvider?.name || '').toLowerCase()
@@ -4150,9 +4169,22 @@ function ProvidersSettings() {
                        }`}>
                          {activeProvider.isEnabled ? t.active : t.inactive}
                        </Badge>
+                       {isDefaultProvider ? (
+                         <Badge variant="outline" className="font-medium border-0 bg-primary/10 text-primary">
+                           {t.default}
+                         </Badge>
+                       ) : null}
                     </div>
                     <div className="flex items-center gap-3">
-                       <RefreshCw className="w-4 h-4 text-muted-foreground cursor-pointer hover:text-foreground transition-colors" />
+                       <Button
+                          type="button"
+                          variant={isDefaultProvider ? 'secondary' : 'outline'}
+                          size="sm"
+                          disabled={!activeProvider.isEnabled || isDefaultProvider}
+                          onClick={() => updateSettings({ defaultProviderId: String(activeProvider.id || '').trim() } as any)}
+                       >
+                          {isDefaultProvider ? t.default : t.setDefault}
+                       </Button>
                        <Switch 
                           checked={activeProvider.isEnabled}
                           onCheckedChange={(c) => toggleProvider(activeProvider.id, c)}
@@ -5071,6 +5103,313 @@ function NetworkSettings() {
   )
 }
 
+function McpSettings() {
+  const settings = useStore(s => s.settings)!
+  const [mcpScope, setMcpScope] = useState<'user' | 'project'>('user')
+  const [mcpConfigText, setMcpConfigText] = useState('')
+  const [mcpServerId, setMcpServerId] = useState('')
+  const [mcpBusy, setMcpBusy] = useState(false)
+  const [mcpStatus, setMcpStatus] = useState<{ type: 'idle' | 'ok' | 'error'; text: string }>({ type: 'idle', text: '' })
+  const [mcpErrors, setMcpErrors] = useState<Array<{ path?: string; code?: string; message?: string }>>([])
+  const [mcpCatalogText, setMcpCatalogText] = useState('')
+  const t = (() => {
+    const dict = {
+      en: {
+        mcpConfig: 'MCP Config (JSON)',
+        mcpConfigHint: 'Manage MCP servers using JSON. Use ${input:...} or ${env:...} for secrets.',
+        mcpScope: 'MCP Scope',
+        mcpScopeUser: 'User',
+        mcpScopeProject: 'Project',
+        mcpLoad: 'Load',
+        mcpValidate: 'Validate',
+        mcpSave: 'Save',
+        mcpTest: 'Test',
+        mcpCatalog: 'Catalog',
+        mcpServerId: 'Server ID',
+        mcpServerIdHint: 'Input a server id for test/catalog.',
+        mcpValidationPassed: 'Validation passed.',
+        mcpValidationFailed: 'Validation failed.',
+        mcpSaveDone: 'Saved.',
+        mcpLoadDone: 'Loaded.',
+        mcpTestDone: 'Test passed.',
+        mcpCatalogDone: 'Catalog loaded.',
+        mcpWorkspaceRequired: 'Project scope requires workspaceDir.',
+        mcpErrors: 'Validation Errors',
+        mcpCatalogTitle: 'Catalog Preview',
+      },
+      zh: {
+        mcpConfig: 'MCP 配置（JSON）',
+        mcpConfigHint: '通过 JSON 管理 MCP 服务器。敏感信息请使用 ${input:...} 或 ${env:...}。',
+        mcpScope: 'MCP 范围',
+        mcpScopeUser: '用户级',
+        mcpScopeProject: '项目级',
+        mcpLoad: '加载',
+        mcpValidate: '校验',
+        mcpSave: '保存',
+        mcpTest: '测试',
+        mcpCatalog: '目录',
+        mcpServerId: 'Server ID',
+        mcpServerIdHint: '输入 server id 以执行测试或读取目录。',
+        mcpValidationPassed: '校验通过。',
+        mcpValidationFailed: '校验失败。',
+        mcpSaveDone: '保存成功。',
+        mcpLoadDone: '加载成功。',
+        mcpTestDone: '测试通过。',
+        mcpCatalogDone: '目录已加载。',
+        mcpWorkspaceRequired: '项目级作用域需要 workspaceDir。',
+        mcpErrors: '校验错误',
+        mcpCatalogTitle: '目录预览',
+      },
+      ja: {
+        mcpConfig: 'MCP 設定 (JSON)',
+        mcpConfigHint: 'JSON で MCP サーバーを管理します。機密値は ${input:...} または ${env:...} を使用してください。',
+        mcpScope: 'MCP スコープ',
+        mcpScopeUser: 'ユーザー',
+        mcpScopeProject: 'プロジェクト',
+        mcpLoad: '読み込み',
+        mcpValidate: '検証',
+        mcpSave: '保存',
+        mcpTest: 'テスト',
+        mcpCatalog: 'カタログ',
+        mcpServerId: 'Server ID',
+        mcpServerIdHint: 'テスト/カタログ取得に使う server id を入力します。',
+        mcpValidationPassed: '検証に成功しました。',
+        mcpValidationFailed: '検証に失敗しました。',
+        mcpSaveDone: '保存しました。',
+        mcpLoadDone: '読み込みました。',
+        mcpTestDone: 'テスト成功。',
+        mcpCatalogDone: 'カタログを取得しました。',
+        mcpWorkspaceRequired: 'project スコープでは workspaceDir が必要です。',
+        mcpErrors: '検証エラー',
+        mcpCatalogTitle: 'カタログプレビュー',
+      }
+    } as const
+    const lang = (settings?.language || 'en') as keyof typeof dict
+    return dict[lang] || dict.en
+  })()
+
+  const mcpWorkspaceDir = mcpScope === 'project' ? String(settings.workspaceDir || '').trim() : ''
+  const mcpScopePayload = () => {
+    if (mcpScope === 'project' && !mcpWorkspaceDir) throw new Error(t.mcpWorkspaceRequired)
+    return {
+      scope: mcpScope,
+      workspaceDir: mcpWorkspaceDir
+    }
+  }
+  const loadMcpConfig = async () => {
+    setMcpBusy(true)
+    try {
+      const payload = mcpScopePayload()
+      const q = new URLSearchParams()
+      q.set('scope', payload.scope)
+      if (payload.workspaceDir) q.set('workspaceDir', payload.workspaceDir)
+      const res = await fetchBackendJson<{ ok: boolean; config?: any }>(`/api/mcp/config?${q.toString()}`, { method: 'GET' })
+      const cfg = res?.config && typeof res.config === 'object' ? res.config : {}
+      setMcpConfigText(JSON.stringify(cfg, null, 2))
+      setMcpStatus({ type: 'ok', text: t.mcpLoadDone })
+      setMcpErrors([])
+    } catch (e) {
+      setMcpStatus({ type: 'error', text: e instanceof Error ? e.message : 'load failed' })
+    } finally {
+      setMcpBusy(false)
+    }
+  }
+  const validateMcpConfig = async () => {
+    setMcpBusy(true)
+    try {
+      const baseUrl = await resolveBackendBaseUrl()
+      const res = await fetch(`${baseUrl}/api/mcp/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: mcpConfigText })
+      })
+      const text = await res.text()
+      const data = text ? JSON.parse(text) : {}
+      const errs = Array.isArray((data as any)?.errors) ? ((data as any).errors as Array<any>) : []
+      if (errs.length) {
+        setMcpErrors(errs.map((x) => ({ path: String(x?.path || ''), code: String(x?.code || ''), message: String(x?.message || '') })))
+      } else {
+        setMcpErrors([])
+      }
+      if (!res.ok) {
+        const msg = String((data as any)?.error || t.mcpValidationFailed)
+        setMcpStatus({ type: 'error', text: msg })
+        return
+      }
+      if (errs.length) {
+        setMcpStatus({ type: 'error', text: t.mcpValidationFailed })
+      } else {
+        setMcpStatus({ type: 'ok', text: t.mcpValidationPassed })
+      }
+    } catch (e) {
+      setMcpStatus({ type: 'error', text: e instanceof Error ? e.message : t.mcpValidationFailed })
+    } finally {
+      setMcpBusy(false)
+    }
+  }
+  const saveMcpConfig = async () => {
+    setMcpBusy(true)
+    try {
+      const payload = mcpScopePayload()
+      await fetchBackendJson<{ ok: boolean }>('/api/mcp/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, text: mcpConfigText })
+      })
+      setMcpStatus({ type: 'ok', text: t.mcpSaveDone })
+      setMcpErrors([])
+    } catch (e) {
+      setMcpStatus({ type: 'error', text: e instanceof Error ? e.message : 'save failed' })
+    } finally {
+      setMcpBusy(false)
+    }
+  }
+  const testMcpServer = async () => {
+    const serverId = String(mcpServerId || '').trim()
+    if (!serverId) return
+    setMcpBusy(true)
+    try {
+      const payload = mcpScopePayload()
+      await fetchBackendJson<{ ok: boolean; result?: any }>('/api/mcp/servers/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, serverId })
+      })
+      setMcpStatus({ type: 'ok', text: t.mcpTestDone })
+    } catch (e) {
+      setMcpStatus({ type: 'error', text: e instanceof Error ? e.message : 'test failed' })
+    } finally {
+      setMcpBusy(false)
+    }
+  }
+  const loadMcpCatalog = async () => {
+    const serverId = String(mcpServerId || '').trim()
+    if (!serverId) return
+    setMcpBusy(true)
+    try {
+      const payload = mcpScopePayload()
+      const q = new URLSearchParams()
+      q.set('scope', payload.scope)
+      if (payload.workspaceDir) q.set('workspaceDir', payload.workspaceDir)
+      const res = await fetchBackendJson<{ ok: boolean; catalog?: any }>(`/api/mcp/servers/${encodeURIComponent(serverId)}/catalog?${q.toString()}`, {
+        method: 'GET'
+      })
+      setMcpCatalogText(JSON.stringify(res?.catalog || {}, null, 2))
+      setMcpStatus({ type: 'ok', text: t.mcpCatalogDone })
+    } catch (e) {
+      setMcpStatus({ type: 'error', text: e instanceof Error ? e.message : 'catalog failed' })
+    } finally {
+      setMcpBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadMcpConfig()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mcpScope])
+
+  return (
+    <div className="p-6 space-y-6">
+      <Card className="p-5 space-y-4">
+        <h3 className="text-[13px] font-semibold">{t.mcpConfig}</h3>
+        <p className="text-xs text-muted-foreground">{t.mcpConfigHint}</p>
+
+        <div className="grid gap-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label>{t.mcpScope}</Label>
+              <Select value={mcpScope} onValueChange={(v) => setMcpScope(v as 'user' | 'project')}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="user">{t.mcpScopeUser}</SelectItem>
+                  <SelectItem value="project">{t.mcpScopeProject}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>{t.mcpServerId}</Label>
+              <Input value={mcpServerId} onChange={(e) => setMcpServerId(e.target.value)} placeholder="my-server" />
+              <p className="text-xs text-muted-foreground">{t.mcpServerIdHint}</p>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Textarea
+              value={mcpConfigText}
+              onChange={(e) => setMcpConfigText(e.target.value)}
+              placeholder='{"mcpServers": {}}'
+              rows={14}
+              className="font-mono text-xs"
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" disabled={mcpBusy} onClick={() => void loadMcpConfig()}>
+              {mcpBusy ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {t.mcpLoad}
+            </Button>
+            <Button type="button" variant="outline" disabled={mcpBusy} onClick={() => void validateMcpConfig()}>
+              {mcpBusy ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {t.mcpValidate}
+            </Button>
+            <Button type="button" disabled={mcpBusy} onClick={() => void saveMcpConfig()}>
+              {mcpBusy ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {t.mcpSave}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={mcpBusy || !String(mcpServerId || '').trim()}
+              onClick={() => void testMcpServer()}
+            >
+              {mcpBusy ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {t.mcpTest}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={mcpBusy || !String(mcpServerId || '').trim()}
+              onClick={() => void loadMcpCatalog()}
+            >
+              {mcpBusy ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {t.mcpCatalog}
+            </Button>
+          </div>
+
+          {mcpStatus.type !== 'idle' && (
+            <div className={mcpStatus.type === 'ok' ? 'text-xs text-emerald-600 dark:text-emerald-400' : 'text-xs text-destructive'}>
+              {mcpStatus.type === 'ok' ? <CheckCircle2 className="mr-1 inline h-4 w-4" /> : <XCircle className="mr-1 inline h-4 w-4" />}
+              {mcpStatus.text}
+            </div>
+          )}
+
+          {mcpErrors.length > 0 && (
+            <div className="space-y-2">
+              <Label>{t.mcpErrors}</Label>
+              <div className="max-h-40 overflow-auto rounded-md border bg-muted/30 p-2 text-xs">
+                {mcpErrors.map((err, idx) => (
+                  <div key={`${err.path || 'root'}-${idx}`} className="py-1">
+                    [{err.code || 'error'}] {err.path || '/'}: {err.message || ''}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {mcpCatalogText ? (
+            <div className="space-y-2">
+              <Label>{t.mcpCatalogTitle}</Label>
+              <Textarea value={mcpCatalogText} readOnly rows={8} className="font-mono text-xs" />
+            </div>
+          ) : null}
+        </div>
+      </Card>
+    </div>
+  )
+}
+
 function ChatSettings() {
   const {
     settings: settings0,
@@ -5127,6 +5466,13 @@ function ChatSettings() {
         commandWhitelistHint: 'Input command entries to bypass blacklist checks.',
         addCommand: 'Add',
         commandPlaceholder: 'Enter command',
+        tabCompletionModelTitle: 'Tab Completion Model',
+        tabCompletionProvider: 'Provider',
+        tabCompletionModel: 'Model',
+        tabCompletionFollowChat: 'Follow current chat model',
+        tabCompletionProviderDefault: 'Use provider default model',
+        tabCompletionProviderHint: 'Choose a provider for Tab completion only.',
+        tabCompletionModelHint: 'Choose the model used by Tab completion.',
         responseSettings: 'Response Settings',
         collapseHistoricalProcess: 'Collapse historical process by default',
         collapseHistoricalProcessHint: 'For all turns except the latest one, hide thinking/tool/skill process and keep final assistant reply only.',
@@ -5217,6 +5563,13 @@ function ChatSettings() {
         commandWhitelistHint: '输入命令词条，可绕过黑名单检查。',
         addCommand: '添加',
         commandPlaceholder: '请输入命令',
+        tabCompletionModelTitle: 'Tab 补全模型',
+        tabCompletionProvider: 'Provider',
+        tabCompletionModel: '模型',
+        tabCompletionFollowChat: '跟随当前聊天模型',
+        tabCompletionProviderDefault: '使用 Provider 默认模型',
+        tabCompletionProviderHint: '仅用于 Tab 补全，不影响常规聊天模型。',
+        tabCompletionModelHint: '选择 Tab 补全时使用的模型。',
         responseSettings: '响应设置',
         collapseHistoricalProcess: '默认折叠历史过程',
         collapseHistoricalProcessHint: '除最后一条消息外，默认折叠思考/工具/skill过程，仅保留最终 AI 回复内容。',
@@ -5307,6 +5660,13 @@ function ChatSettings() {
         commandWhitelistHint: 'ブラックリスト判定を回避するコマンド項目を入力します。',
         addCommand: '追加',
         commandPlaceholder: 'コマンドを入力',
+        tabCompletionModelTitle: 'Tab 補完モデル',
+        tabCompletionProvider: 'Provider',
+        tabCompletionModel: 'モデル',
+        tabCompletionFollowChat: '現在のチャットモデルに従う',
+        tabCompletionProviderDefault: 'Provider の既定モデルを使用',
+        tabCompletionProviderHint: 'Tab 補完専用の Provider を選択します。',
+        tabCompletionModelHint: 'Tab 補完で使うモデルを選択します。',
         responseSettings: '応答設定',
         collapseHistoricalProcess: '履歴プロセスを既定で折りたたむ',
         collapseHistoricalProcessHint: '最新メッセージ以外では、思考/ツール/スキル過程を折りたたみ、最終のAI応答のみ表示します。',
@@ -5401,6 +5761,46 @@ function ChatSettings() {
     }
     updateSettings({ commandWhitelist: commandWhitelist.filter((x: string) => x !== entry) } as any)
   }
+  const completionProviderOptions = useMemo(() => {
+    return providers
+      .filter((p) => Boolean((p as any)?.isEnabled))
+      .map((p) => {
+        const models = Array.isArray((p as any)?.config?.models) ? (p as any).config.models : []
+        const modelIds = models
+          .map((m: any) => {
+            if (typeof m === 'string') return m.trim()
+            if (m && m.isEnabled === false) return ''
+            return String(m?.id || '').trim()
+          })
+          .filter((id: string) => Boolean(id))
+        if (!modelIds.length) return null
+        return { id: String(p.id || '').trim(), name: String(p.name || p.id || '').trim(), modelIds }
+      })
+      .filter((item): item is { id: string; name: string; modelIds: string[] } => Boolean(item?.id))
+  }, [providers])
+  const completionProviderId = String((settings as any).tabCompletionProviderId || '').trim()
+  const completionModelId = String((settings as any).tabCompletionModelId || '').trim()
+  const completionProviderValue = completionProviderId || '__follow_chat__'
+  const completionProviderOption = completionProviderOptions.find((p) => p.id === completionProviderId)
+  const completionModelOptions = completionProviderOption?.modelIds || []
+  const completionModelValue =
+    completionModelId && completionModelOptions.includes(completionModelId)
+      ? completionModelId
+      : '__provider_default__'
+  const onTabCompletionProviderChange = (nextValue: string) => {
+    if (nextValue === '__follow_chat__') {
+      updateSettings({ tabCompletionProviderId: '', tabCompletionModelId: '' } as any)
+      return
+    }
+    const nextProvider = completionProviderOptions.find((item) => item.id === nextValue)
+    if (!nextProvider) {
+      updateSettings({ tabCompletionProviderId: '', tabCompletionModelId: '' } as any)
+      return
+    }
+    const nextModel =
+      completionModelId && nextProvider.modelIds.includes(completionModelId) ? completionModelId : ''
+    updateSettings({ tabCompletionProviderId: nextProvider.id, tabCompletionModelId: nextModel } as any)
+  }
   const imageProviderSelectValue = media.imageProviderId ? media.imageProviderId : '__chat__'
   const videoProviderSelectValue = media.videoProviderId ? media.videoProviderId : '__chat__'
 
@@ -5436,6 +5836,60 @@ function ChatSettings() {
                  onChange={(e) => updateSettings({ maxTokens: Number(e.target.value) })}
               />
               <p className="text-xs text-muted-foreground">{t.maxTokensHint}</p>
+           </div>
+
+           <div className="space-y-3 rounded-md border p-3">
+              <div className="space-y-1">
+                <Label>{t.tabCompletionModelTitle}</Label>
+                <p className="text-xs text-muted-foreground">{t.tabCompletionProviderHint}</p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>{t.tabCompletionProvider}</Label>
+                  <Select value={completionProviderValue} onValueChange={onTabCompletionProviderChange}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__follow_chat__">{t.tabCompletionFollowChat}</SelectItem>
+                      {completionProviderOptions.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>{t.tabCompletionModel}</Label>
+                  <Select
+                    value={completionModelValue}
+                    disabled={completionProviderValue === '__follow_chat__' || !completionModelOptions.length}
+                    onValueChange={(v) => updateSettings({ tabCompletionModelId: v === '__provider_default__' ? '' : v } as any)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {completionModelOptions.length ? (
+                        <>
+                          <SelectItem value="__provider_default__">{t.tabCompletionProviderDefault}</SelectItem>
+                          {completionModelOptions.map((modelId) => (
+                            <SelectItem key={modelId} value={modelId}>
+                              {modelId}
+                            </SelectItem>
+                          ))}
+                        </>
+                      ) : (
+                        <SelectItem value="__none__" disabled>
+                          -
+                        </SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">{t.tabCompletionModelHint}</p>
+                </div>
+              </div>
            </div>
 
            <div className="flex items-start gap-3">
@@ -6396,11 +6850,6 @@ function AutomationSettings() {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="space-y-1">
-        <h3 className="text-[28px] font-semibold tracking-tight">{t.title}</h3>
-        <p className="max-w-3xl text-sm text-muted-foreground">{t.desc}</p>
-      </div>
-
       {status.type !== 'idle' ? (
         <div className={`rounded-xl border px-3 py-2 text-xs ${
           status.type === 'ok'
@@ -6520,38 +6969,38 @@ function AutomationSettings() {
       </Card>
 
       <Dialog open={editorOpen} onOpenChange={setEditorOpen}>
-        <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden border-border/70 bg-background p-0 shadow-2xl sm:max-w-4xl sm:rounded-[28px]">
-          <DialogHeader className="shrink-0 border-b border-border/70 px-8 pb-5 pt-7">
+        <DialogContent className="flex max-h-[88vh] flex-col overflow-hidden border border-border/70 bg-background p-0 shadow-xl sm:max-w-[1024px] sm:rounded-2xl">
+          <DialogHeader className="shrink-0 border-b border-border/70 px-6 py-5">
             <DialogTitle>{String(draft.name || '').trim() || t.newJob}</DialogTitle>
           </DialogHeader>
-          <div className="min-h-0 flex-1 overflow-y-auto px-8 pb-6 pt-6 custom-scrollbar">
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 custom-scrollbar">
             <div className="space-y-5">
-            <div className="flex flex-col gap-4 rounded-3xl border border-border/70 bg-muted/[0.04] p-6 lg:flex-row lg:items-start lg:justify-between">
-              <div className="min-w-0 flex-1 space-y-3">
-                <div className="space-y-1">
-                  <div className="text-sm font-semibold">{String(draft.id || '').trim() ? t.jobName : t.newJob}</div>
-                  <div className="text-xs text-muted-foreground">{t.promptHint}</div>
-                </div>
-                <Input
-                  value={String(draft.name || '')}
-                  onChange={(e) => updateDraft({ name: e.target.value })}
-                  className="h-11 text-lg font-semibold"
-                  placeholder={t.jobName}
-                />
-                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <span>{t.nextRun}: {formatDateTime(Number(selectedJob?.nextRunAtMs || 0))}</span>
-                  <span>{t.lastStatus}: {String(selectedJob?.lastStatus || t.lastRunEmpty)}</span>
+              <div className="flex flex-col gap-4 rounded-2xl border border-border/70 bg-background p-5">
+                <div className="min-w-0 space-y-2">
+                  <div className="space-y-1">
+                    <div className="text-sm font-semibold">{String(draft.id || '').trim() ? t.jobName : t.newJob}</div>
+                    <div className="text-xs text-muted-foreground">{t.promptHint}</div>
+                  </div>
+                  <Input
+                    value={String(draft.name || '')}
+                    onChange={(e) => updateDraft({ name: e.target.value })}
+                    className="h-10 rounded-xl border-border/70 bg-background text-sm font-medium"
+                    placeholder={t.jobName}
+                  />
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span>{t.nextRun}: {formatDateTime(Number(selectedJob?.nextRunAtMs || 0))}</span>
+                    <span>{t.lastStatus}: {String(selectedJob?.lastStatus || t.lastRunEmpty)}</span>
+                  </div>
                 </div>
               </div>
-              <Button variant="ghost" onClick={() => setEditorOpen(false)}>{t.close}</Button>
-            </div>
+              
 
-            <section className="space-y-4 rounded-3xl border border-border/70 bg-muted/[0.035] p-6">
+              <section className="space-y-4 rounded-2xl border border-border/70 bg-background p-5">
               <div className="space-y-1">
                 <div className="text-sm font-semibold">{t.sectionTask}</div>
                 <div className="text-xs text-muted-foreground">{t.promptHint}</div>
               </div>
-              <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_240px]">
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_220px]">
                 <div className="space-y-2">
                   <Textarea
                     value={payloadKind === 'run' ? String(draft.payload?.run?.messages?.[0]?.content || '') : String(draft.payload?.text || '')}
@@ -6560,19 +7009,19 @@ function AutomationSettings() {
                         ? updateDraft({ payload: { ...draft.payload, run: { ...draft.payload.run, messages: [{ role: 'user', content: e.target.value }] } } })
                         : updateDraft({ payload: { ...draft.payload, text: e.target.value } })
                     }
-                    rows={13}
-                    className="min-h-[280px] rounded-2xl border-border/70 bg-muted/10 px-5 py-4 text-[15px] leading-7"
+                    rows={11}
+                    className="min-h-[240px] rounded-xl border-border/70 bg-background px-3 py-2 text-sm leading-6"
                     placeholder={t.prompt}
                   />
                 </div>
                 <div className="space-y-3">
-                  <div className="rounded-2xl border border-border/70 bg-muted/15 px-4 py-3">
+                  <div className="rounded-xl border border-border/70 bg-muted/[0.08] px-4 py-3">
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-sm font-medium">{t.enabled}</span>
                       <Switch checked={Boolean(draft.enabled)} onCheckedChange={(c) => updateDraft({ enabled: c })} />
                     </div>
                   </div>
-                  <div className="space-y-2 rounded-2xl border border-border/70 bg-muted/15 p-4">
+                  <div className="space-y-2 rounded-xl border border-border/70 bg-muted/[0.08] p-4">
                     <Label>{t.payloadKind}</Label>
                     <Select value={payloadKind} onValueChange={(val) => updateDraft({ payload: { ...draft.payload, kind: val } })}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
@@ -6585,11 +7034,11 @@ function AutomationSettings() {
                   </div>
                   {payloadKind === 'telegramMessage' ? (
                     <>
-                      <div className="space-y-2 rounded-2xl border border-border/70 bg-muted/15 p-4">
+                      <div className="space-y-2 rounded-xl border border-border/70 bg-muted/[0.08] p-4">
                         <Label>{t.telegramChatId}</Label>
                         <Input value={String(draft.payload?.chatId || '')} onChange={(e) => updateDraft({ payload: { ...draft.payload, chatId: e.target.value } })} />
                       </div>
-                      <div className="rounded-2xl border border-border/70 bg-muted/15 px-4 py-3">
+                      <div className="rounded-xl border border-border/70 bg-muted/[0.08] px-4 py-3">
                         <div className="flex items-center justify-between gap-3">
                           <span className="text-sm font-medium">{t.ifNonEmpty}</span>
                           <Switch checked={Boolean(draft.payload?.ifNonEmpty)} onCheckedChange={(c) => updateDraft({ payload: { ...draft.payload, ifNonEmpty: c } })} />
@@ -6599,11 +7048,11 @@ function AutomationSettings() {
                   ) : null}
                 </div>
               </div>
-            </section>
+              </section>
 
-            {payloadKind === 'run' ? (
-              <>
-                <section className="space-y-4 rounded-3xl border border-border/70 bg-muted/[0.035] p-6">
+              {payloadKind === 'run' ? (
+                <>
+                  <section className="space-y-4 rounded-2xl border border-border/70 bg-background p-5">
                   <div className="space-y-1">
                     <div className="text-sm font-semibold">{t.sectionContext}</div>
                     <div className="text-xs text-muted-foreground">{t.projectHint}</div>
@@ -6728,9 +7177,9 @@ function AutomationSettings() {
                     </div>
                   </div>
                   <div className="text-xs text-muted-foreground">{t.threadModeHint}</div>
-                </section>
+                  </section>
 
-                <section className="space-y-4 rounded-3xl border border-border/70 bg-muted/[0.035] p-6">
+                  <section className="space-y-4 rounded-2xl border border-border/70 bg-background p-5">
                   <div className="space-y-1">
                     <div className="text-sm font-semibold">{t.sectionSchedule}</div>
                     <div className="text-xs text-muted-foreground">{t.scheduleHint}</div>
@@ -6781,9 +7230,9 @@ function AutomationSettings() {
                       </>
                     ) : null}
                   </div>
-                </section>
+                  </section>
 
-                <section className="space-y-4 rounded-3xl border border-border/70 bg-muted/[0.035] p-6">
+                  <section className="space-y-4 rounded-2xl border border-border/70 bg-background p-5">
                   <div className="space-y-1">
                     <div className="text-sm font-semibold">{t.sectionDelivery}</div>
                     <div className="text-xs text-muted-foreground">{t.telegramHint}</div>
@@ -6805,7 +7254,7 @@ function AutomationSettings() {
                           <Label>{t.telegramChatId}</Label>
                           <Input value={String(draft.delivery?.chatId || '')} onChange={(e) => updateDraft({ delivery: { ...draft.delivery, chatId: e.target.value } })} />
                         </div>
-                        <div className="rounded-2xl border border-border/70 bg-muted/15 px-4 py-3 md:mt-7">
+                        <div className="rounded-xl border border-border/70 bg-muted/[0.08] px-4 py-3 md:mt-7">
                           <div className="flex items-center justify-between gap-3">
                             <span className="text-sm font-medium">{t.ifNonEmpty}</span>
                             <Switch checked={Boolean(draft.delivery?.ifNonEmpty)} onCheckedChange={(c) => updateDraft({ delivery: { ...draft.delivery, ifNonEmpty: c } })} />
@@ -6814,10 +7263,10 @@ function AutomationSettings() {
                       </>
                     ) : null}
                   </div>
-                </section>
-              </>
-            ) : (
-              <section className="space-y-4 rounded-3xl border border-border/70 bg-muted/[0.035] p-6">
+                  </section>
+                </>
+              ) : (
+                <section className="space-y-4 rounded-2xl border border-border/70 bg-background p-5">
                 <div className="space-y-1">
                   <div className="text-sm font-semibold">{t.sectionSchedule}</div>
                   <div className="text-xs text-muted-foreground">{t.scheduleHint}</div>
@@ -6869,9 +7318,9 @@ function AutomationSettings() {
                     ) : null}
                   </div>
                 </section>
-            )}
+              )}
 
-            <section className="space-y-4 rounded-3xl border border-border/70 bg-muted/[0.035] p-6">
+              <section className="space-y-4 rounded-2xl border border-border/70 bg-background p-5">
               <div className="space-y-1">
                 <div className="text-sm font-semibold">{t.sectionHistory}</div>
                 <div className="text-xs text-muted-foreground">{t.historyTitle}</div>
@@ -6910,10 +7359,10 @@ function AutomationSettings() {
                   ))}
                 </div>
               )}
-            </section>
+              </section>
             </div>
           </div>
-          <DialogFooter className="shrink-0 gap-2 border-t border-border/70 bg-background/95 px-8 py-4 sm:justify-between">
+          <DialogFooter className="shrink-0 gap-2 border-t border-border/70 bg-background px-6 py-3 sm:justify-between">
             <div className="flex items-center gap-2">
               <Button variant="outline" onClick={() => void runJobNow(currentJobId)} disabled={!currentJobId}>
                 <Play className="mr-1 h-4 w-4" />
