@@ -326,6 +326,7 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
 
                 output_messages = out.get("messages")
                 content = str(out.get("final_content") or "")
+                memory_injection = composer.get("runtimeMemoryInjection") if isinstance(composer.get("runtimeMemoryInjection"), dict) else None
                 usage, usage_source = normalize_or_estimate_usage(
                     usage=out.get("usage"),
                     settings_obj=settings_obj,
@@ -383,6 +384,8 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
                         "verification": final_ver,
                         "orchestration": orchestration,
                     }
+                    if isinstance(memory_injection, dict) and memory_injection:
+                        done_payload["memoryInjection"] = memory_injection
                     if isinstance(rate_limit, dict) and rate_limit:
                         done_payload["rateLimit"] = rate_limit
                     try:
@@ -405,6 +408,8 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
                     "verification": final_ver,
                     "orchestration": orchestration,
                 }
+                if isinstance(memory_injection, dict) and memory_injection:
+                    payload["memoryInjection"] = memory_injection
                 if isinstance(rate_limit, dict) and rate_limit:
                     payload["rateLimit"] = rate_limit
                 json_response(handler, HTTPStatus.OK, payload)
@@ -451,6 +456,7 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
         extra_body, max_tokens = _apply_thinking_level(provider, composer, extra_body, max_tokens)
 
         has_system = any(isinstance(m, dict) and m.get("role") == "system" for m in messages)
+        memory_injection = composer.get("runtimeMemoryInjection") if isinstance(composer.get("runtimeMemoryInjection"), dict) else None
         worker_ctx = {
             "reportsText": "",
             "traces": [],
@@ -478,6 +484,7 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
                 messages = list(messages) + [{"role": "assistant", "content": "Worker reports:\n" + worker_reports_text}]
             messages = _isolate_worker_messages(messages, composer)
             messages = inject_system_message(messages, settings_obj, composer)
+            memory_injection = composer.get("runtimeMemoryInjection") if isinstance(composer.get("runtimeMemoryInjection"), dict) else None
         prepared = apply_attachments_inline(messages, composer)
 
         update_run(run_id, "running")
@@ -629,6 +636,8 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
                 "verification": final_ver,
                 "orchestration": orchestration,
             }
+            if isinstance(memory_injection, dict) and memory_injection:
+                done_payload["memoryInjection"] = memory_injection
             if isinstance(artifacts, list) and artifacts:
                 done_payload["artifacts"] = artifacts
             if isinstance(rate_limit, dict) and rate_limit:
@@ -653,6 +662,8 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
             "verification": final_ver,
             "orchestration": orchestration,
         }
+        if isinstance(memory_injection, dict) and memory_injection:
+            payload["memoryInjection"] = memory_injection
         if isinstance(rate_limit, dict) and rate_limit:
             payload["rateLimit"] = rate_limit
         json_response(handler, HTTPStatus.OK, payload)

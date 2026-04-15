@@ -51,7 +51,25 @@ export interface Message {
       selectedOption?: 'approve_once' | 'approve_thread' | 'approve_whitelist' | 'reject'
       dismissed?: boolean
     }
+    memoryInjection?: MemoryInjectionSummary
   }
+}
+
+export interface MemoryInjectionItem {
+  id?: string
+  type?: string
+  scope?: 'workspace' | 'global' | string
+  content: string
+  similarity?: number
+  score?: number
+}
+
+export interface MemoryInjectionSummary {
+  count: number
+  durationMs?: number
+  workspaceCount?: number
+  globalCount?: number
+  items: MemoryInjectionItem[]
 }
 
 export interface ArtifactSource {
@@ -825,6 +843,7 @@ const normalizeSettingsPayload = (rawSettings: any): any => {
 
   if (!rawSettings.defaultToolMode) rawSettings.defaultToolMode = 'auto'
   if (!rawSettings.defaultSkillMode) rawSettings.defaultSkillMode = 'auto'
+  if (typeof rawSettings.collapseHistoricalProcess !== 'boolean') rawSettings.collapseHistoricalProcess = true
   rawSettings.orchestrationForce = Boolean(rawSettings.orchestrationForce)
   if (!rawSettings.selectedSystemPromptId) rawSettings.selectedSystemPromptId = ''
 

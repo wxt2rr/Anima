@@ -1191,6 +1191,7 @@ def handle_post_runs_non_stream_via_stream_executor(body: Dict[str, Any]) -> Tup
         messages = list(messages) + [{"role": "assistant", "content": "Worker reports:\n" + worker_reports_text}]
     messages = _isolate_worker_messages(messages, composer)
     messages = inject_system_message(messages, settings_obj, composer)
+    memory_injection = composer.get("runtimeMemoryInjection") if isinstance(composer.get("runtimeMemoryInjection"), dict) else None
     prepared = apply_attachments_inline(messages, composer)
 
     create_run(
@@ -1301,6 +1302,8 @@ def handle_post_runs_non_stream_via_stream_executor(body: Dict[str, Any]) -> Tup
             "verification": final_ver,
             "orchestration": orchestration,
         }
+        if isinstance(memory_injection, dict) and memory_injection:
+            payload["memoryInjection"] = memory_injection
         if isinstance(compression_evt, dict) and compression_evt:
             payload["compression"] = compression_evt
         rate_limit = out.get("rate_limit")
@@ -1428,6 +1431,7 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
         messages = list(messages) + [{"role": "assistant", "content": "Worker reports:\n" + worker_reports_text}]
     messages = _isolate_worker_messages(messages, composer)
     messages = inject_system_message(messages, settings_obj, composer)
+    memory_injection = composer.get("runtimeMemoryInjection") if isinstance(composer.get("runtimeMemoryInjection"), dict) else None
     prepared = apply_attachments_inline(messages, composer)
     create_run(
         run_id,
@@ -1462,6 +1466,8 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
                 "verification": obj.get("verification"),
                 "orchestration": obj.get("orchestration"),
             }
+            if isinstance(obj.get("memoryInjection"), dict) and obj.get("memoryInjection"):
+                out["memoryInjection"] = obj.get("memoryInjection")
             if isinstance(obj.get("artifacts"), list) and obj.get("artifacts"):
                 out["artifacts"] = obj.get("artifacts")
             if isinstance(obj.get("rateLimit"), dict) and obj.get("rateLimit"):
@@ -1576,6 +1582,7 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
                     "stopReason": out_stop_reason,
                     "verification": final_ver,
                     "orchestration": orchestration,
+                    "memoryInjection": memory_injection,
                 }
             )
         except Exception:

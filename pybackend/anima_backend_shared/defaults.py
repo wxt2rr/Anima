@@ -28,7 +28,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "enableStreamingResponse": True,
     "streamingNoProgressTimeoutMs": 30000,
     "enableMarkdown": True,
-    "collapseHistoricalProcess": False,
+    "collapseHistoricalProcess": True,
     "renderSingleDollarMath": False,
     "enableInfoCardVisualization": False,
     "workspaceDir": "",

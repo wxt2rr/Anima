@@ -10,7 +10,7 @@ import { MermaidBlock } from './components/markdown/MermaidBlock'
 import 'katex/dist/katex.min.css'
 import { DiffView } from './components/DiffView'
 import { createTwoFilesPatch } from 'diff'
-import { resolveBackendBaseUrl, useStore, type Message, type ToolTrace, type ProviderModel, type Artifact } from './store/useStore'
+import { resolveBackendBaseUrl, useStore, type Message, type ToolTrace, type ProviderModel, type Artifact, type MemoryInjectionSummary } from './store/useStore'
 import { THEMES } from './lib/themes'
 import { SettingsDialog, SettingsWindow } from './components/SettingsDialog'
 import { ChatHistoryPanel } from './components/ChatHistoryPanel'
@@ -36,6 +36,8 @@ import {
   renderSlashCommandTemplate,
   type SlashCommandEntry
 } from './lib/slashCommands'
+import animaLogo from '../../../images/logo.gif'
+import loadingGif from '../../../images/loding.gif'
 
 type BackendUsage = {
   prompt_tokens?: number
@@ -103,6 +105,44 @@ function parseDangerousCommandApproval(input: unknown): DangerousCommandApproval
     }
   } catch {
     return null
+  }
+}
+
+function parseMemoryInjection(input: unknown): MemoryInjectionSummary | null {
+  if (!input || typeof input !== 'object') return null
+  const obj = input as Record<string, any>
+  const rawItems = Array.isArray(obj.items) ? obj.items : []
+  const items = rawItems
+    .map((x) => {
+      if (!x || typeof x !== 'object') return null
+      const content = String((x as any).content || '').trim()
+      if (!content) return null
+      const id = String((x as any).id || '').trim() || undefined
+      const type = String((x as any).type || '').trim() || 'semantic'
+      const scope = String((x as any).scope || '').trim() || undefined
+      const similarity = Number((x as any).similarity)
+      const score = Number((x as any).score)
+      return {
+        id,
+        type,
+        scope,
+        content,
+        similarity: Number.isFinite(similarity) ? similarity : undefined,
+        score: Number.isFinite(score) ? score : undefined
+      }
+    })
+    .filter(Boolean) as MemoryInjectionSummary['items']
+  if (!items.length) return null
+  const countRaw = Number(obj.count)
+  const durationRaw = Number(obj.durationMs)
+  const workspaceRaw = Number(obj.workspaceCount)
+  const globalRaw = Number(obj.globalCount)
+  return {
+    count: Number.isFinite(countRaw) && countRaw > 0 ? Math.floor(countRaw) : items.length,
+    durationMs: Number.isFinite(durationRaw) && durationRaw >= 0 ? Math.floor(durationRaw) : undefined,
+    workspaceCount: Number.isFinite(workspaceRaw) && workspaceRaw >= 0 ? Math.floor(workspaceRaw) : undefined,
+    globalCount: Number.isFinite(globalRaw) && globalRaw >= 0 ? Math.floor(globalRaw) : undefined,
+    items
   }
 }
 
@@ -331,6 +371,13 @@ function App(): JSX.Element {
             transition={reduceMotion ? undefined : { duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
             className="w-full max-w-[520px] text-center"
           >
+            <div className="mb-4 flex items-center justify-center">
+              <img
+                src={loadingGif}
+                alt="Loading"
+                className="h-24 w-24 object-contain select-none pointer-events-none"
+              />
+            </div>
             <div className="flex items-center justify-center gap-2">
               <motion.span
                 aria-hidden="true"
@@ -406,6 +453,7 @@ function AppLoaded(): JSX.Element {
   
   const [traceDetailOpenByKey, setTraceDetailOpenByKey] = useState<Record<string, boolean>>({})
   const [reasoningOpenByMsgId, setReasoningOpenByMsgId] = useState<Record<string, boolean>>({})
+  const [memoryInjectionOpenByMsgId, setMemoryInjectionOpenByMsgId] = useState<Record<string, boolean>>({})
   const [collapsedTurnOpenById, setCollapsedTurnOpenById] = useState<Record<string, boolean>>({})
   const [copiedMessageId, setCopiedMessageId] = useState('')
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -648,7 +696,7 @@ function AppLoaded(): JSX.Element {
   const turnProcessStatsById = useMemo(() => {
     const map: Record<
       string,
-      { reasoningCount: number; toolCount: number; skillCount: number; hasProcess: boolean; finalAssistantMessageId: string }
+      { memoryCount: number; reasoningCount: number; toolCount: number; skillCount: number; hasProcess: boolean; finalAssistantMessageId: string }
     > = {}
     const skillSets: Record<string, Set<string>> = {}
     const skillCalls: Record<string, number> = {}
@@ -667,9 +715,11 @@ function AppLoaded(): JSX.Element {
       const mid = String(m?.id || '').trim()
       const tid = mid ? String(effectiveTurnIdByMessageId[mid] || '').trim() : ''
       if (!tid) continue
-      const current = map[tid] || { reasoningCount: 0, toolCount: 0, skillCount: 0, hasProcess: false, finalAssistantMessageId: '' }
+      const current = map[tid] || { memoryCount: 0, reasoningCount: 0, toolCount: 0, skillCount: 0, hasProcess: false, finalAssistantMessageId: '' }
       if (m?.role === 'assistant') {
         current.finalAssistantMessageId = String(m?.id || '').trim() || current.finalAssistantMessageId
+        const memoryInjection = parseMemoryInjection(m?.meta?.memoryInjection)
+        if (memoryInjection?.count) current.memoryCount = Math.max(current.memoryCount, memoryInjection.count)
         const reasoning = String(m?.meta?.reasoningText || '').trim()
         if (reasoning) current.reasoningCount += 1
       } else if (m?.role === 'tool') {
@@ -689,7 +739,7 @@ function AppLoaded(): JSX.Element {
         }
       }
       current.skillCount = skillSets[tid]?.size || skillCalls[tid] || 0
-      current.hasProcess = current.reasoningCount > 0 || current.toolCount > 0 || current.skillCount > 0
+      current.hasProcess = current.memoryCount > 0 || current.reasoningCount > 0 || current.toolCount > 0 || current.skillCount > 0
       map[tid] = current
     }
     return map
@@ -2083,8 +2133,8 @@ function AppLoaded(): JSX.Element {
         noProviderActive: 'No Provider Active',
         settings: 'Settings',
         noProject: 'No project selected',
-        foldProcessSummary: (thinking: number, tools: number, skills: number) =>
-          `Thought ${thinking} times, tools ${tools} calls, skills ${skills}`,
+        foldProcessSummary: (memories: number, thinking: number, tools: number, skills: number) =>
+          `Injected memories ${memories}, thought ${thinking} times, tools ${tools} calls, skills ${skills}`,
         foldProcessExpand: 'Expand process',
         foldProcessCollapse: 'Collapse process',
         dangerousApprovalQuestion: 'Do you want to run this dangerous command?',
@@ -2182,8 +2232,8 @@ function AppLoaded(): JSX.Element {
         noProviderActive: '未启用提供商',
         settings: '设置',
         noProject: '未选择项目',
-        foldProcessSummary: (thinking: number, tools: number, skills: number) =>
-          `思考了${thinking}次，工具调用${tools}次，技能使用${skills}个`,
+        foldProcessSummary: (memories: number, thinking: number, tools: number, skills: number) =>
+          `注入记忆${memories}条，思考了${thinking}次，工具调用${tools}次，技能使用${skills}个`,
         foldProcessExpand: '展开过程',
         foldProcessCollapse: '收起过程',
         dangerousApprovalQuestion: '是否执行这个危险命令？',
@@ -2280,8 +2330,8 @@ function AppLoaded(): JSX.Element {
         noProviderActive: 'プロバイダー未有効',
         settings: '設定',
         noProject: 'プロジェクト未選択',
-        foldProcessSummary: (thinking: number, tools: number, skills: number) =>
-          `思考 ${thinking} 回、ツール ${tools} 回、スキル ${skills} 件`,
+        foldProcessSummary: (memories: number, thinking: number, tools: number, skills: number) =>
+          `注入記憶 ${memories} 件、思考 ${thinking} 回、ツール ${tools} 回、スキル ${skills} 件`,
         foldProcessExpand: 'プロセスを表示',
         foldProcessCollapse: 'プロセスを折りたたむ',
         dangerousApprovalQuestion: 'この危険なコマンドを実行しますか？',
@@ -3095,6 +3145,18 @@ function AppLoaded(): JSX.Element {
         updateMessageById(activeChatId, currentAssistantId, { content, meta })
       }
     }
+    const assignMemoryInjectionToTurnFirstAssistant = (injection: MemoryInjectionSummary | null) => {
+      if (!injection || !injection.items.length) return
+      const { messages, activeChatId, updateMessageById, persistMessageById } = useStore.getState()
+      const firstAssistant = messages.find((m: any) => m?.role === 'assistant' && String(m?.turnId || '') === String(turnId || ''))
+      const msgId = String(firstAssistant?.id || '').trim()
+      if (!msgId) return
+      const nextMeta = { ...(firstAssistant?.meta || {}), memoryInjection: injection }
+      if (activeChatId) {
+        updateMessageById(activeChatId, msgId, { meta: nextMeta } as any)
+        void persistMessageById(activeChatId, msgId, String(firstAssistant?.content || ''), nextMeta as any)
+      }
+    }
     const runSend = async () => {
       const composerPayload = buildComposerPayload({
         dangerousCommandApprovals: opts?.dangerousCommandApprovals || [],
@@ -3374,6 +3436,7 @@ function AppLoaded(): JSX.Element {
                   rateLimit?: BackendRateLimit
                   traces?: ToolTrace[]
                   artifacts?: Artifact[]
+                  memoryInjection?: MemoryInjectionSummary
                   trace?: ToolTrace
                   ok?: boolean
                   error?: string
@@ -3415,8 +3478,13 @@ function AppLoaded(): JSX.Element {
                 }
                 if (e.type === 'done') {
                   usage = e.usage || null
+                  const memoryInjection = parseMemoryInjection(e.memoryInjection)
                   if (e.rateLimit && Object.keys(e.rateLimit).length) {
                     assistantMeta = { ...assistantMeta, rateLimit: e.rateLimit }
+                  }
+                  if (memoryInjection) {
+                    assistantMeta = { ...assistantMeta, memoryInjection }
+                    assignMemoryInjectionToTurnFirstAssistant(memoryInjection)
                   }
                   if (Array.isArray(e.artifacts)) {
                     assistantMeta = { ...assistantMeta, artifacts: e.artifacts }
@@ -3532,6 +3600,7 @@ function AppLoaded(): JSX.Element {
                   rateLimit?: BackendRateLimit
                   traces?: ToolTrace[]
                   artifacts?: Artifact[]
+                  memoryInjection?: MemoryInjectionSummary
                   trace?: ToolTrace
                   approval?: {
                     code?: string
@@ -3622,8 +3691,13 @@ function AppLoaded(): JSX.Element {
                 } else if (evt.type === 'done') {
                   if (compressionSeenStart && !compressionEnded) ensureCompressionMsg('done', compressionFullContent)
                   usage = evt.usage || null
+                  const memoryInjection = parseMemoryInjection(evt.memoryInjection)
                   if (evt.rateLimit && Object.keys(evt.rateLimit).length) {
                     assistantMeta = { ...assistantMeta, rateLimit: evt.rateLimit }
+                  }
+                  if (memoryInjection) {
+                    assistantMeta = { ...assistantMeta, memoryInjection }
+                    assignMemoryInjectionToTurnFirstAssistant(memoryInjection)
                   }
                   if (Array.isArray(evt.artifacts)) {
                     assistantMeta = { ...assistantMeta, artifacts: evt.artifacts }
@@ -3763,6 +3837,7 @@ function AppLoaded(): JSX.Element {
           traces?: ToolTrace[]
           artifacts?: Artifact[]
           reasoning?: string
+          memoryInjection?: MemoryInjectionSummary
         }
         
         const content = typeof data.content === 'string' ? data.content : ''
@@ -3770,6 +3845,7 @@ function AppLoaded(): JSX.Element {
         const rateLimit = data.rateLimit
         const traces = Array.isArray(data.traces) ? data.traces : []
         const artifacts = Array.isArray(data.artifacts) ? data.artifacts : []
+        const memoryInjection = parseMemoryInjection(data.memoryInjection)
 
         const dangerousTrace = traces.find((tr) => {
           if (tr?.name !== 'bash' || tr?.status !== 'failed') return false
@@ -3799,7 +3875,7 @@ function AppLoaded(): JSX.Element {
 
         const reasoning = typeof data.reasoning === 'string' && data.reasoning.trim() ? data.reasoning : undefined
         const assistantMeta: Message['meta'] | undefined =
-          usage || (rateLimit && Object.keys(rateLimit).length) || Boolean(reasoning) || shouldShowAnalysis || artifacts.length > 0
+          usage || (rateLimit && Object.keys(rateLimit).length) || Boolean(reasoning) || shouldShowAnalysis || artifacts.length > 0 || Boolean(memoryInjection)
             ? {
                 promptTokens: usage ? usage?.prompt_tokens ?? 0 : undefined,
                 completionTokens: usage ? usage?.completion_tokens ?? 0 : undefined,
@@ -3808,9 +3884,13 @@ function AppLoaded(): JSX.Element {
                 reasoningSummary: deriveReasoningSummaryFromTraces(traces),
                 reasoningText: reasoning,
                 reasoningStatus: shouldShowAnalysis ? 'done' : reasoning ? 'done' : undefined,
-                artifacts: artifacts.length ? artifacts : undefined
+                artifacts: artifacts.length ? artifacts : undefined,
+                memoryInjection: memoryInjection || undefined
               }
             : undefined
+        if (memoryInjection) {
+          assignMemoryInjectionToTurnFirstAssistant(memoryInjection)
+        }
         updateLastMessage(content, assistantMeta)
         await persistLastMessage()
         await speakAssistantIfNeeded(content)
@@ -4304,6 +4384,11 @@ function AppLoaded(): JSX.Element {
             >
               {displayMessages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-3">
+                  <img
+                    src={animaLogo}
+                    alt="Anima logo"
+                    className="h-24 w-24 object-contain select-none pointer-events-none"
+                  />
                   <p className="font-semibold text-[22px] tracking-tight text-foreground">{t.helloTitle}</p>
                   <p className="text-sm text-muted-foreground text-center max-w-[520px] leading-6">
                     {activeProvider ? t.helloSubtitleConnected(activeProvider.name) : t.helloSubtitleDisconnected}
@@ -4359,12 +4444,14 @@ function AppLoaded(): JSX.Element {
                         Boolean(assistantMeta?.dangerousCommandApproval) &&
                         typeof assistantMeta?.dangerousCommandApproval?.command === 'string' &&
                         assistantMeta?.dangerousCommandApproval?.command.trim().length > 0
+                      const assistantHasMemoryInjection = isFirstAssistantOfTurn
                       const assistantHasVisibleBody = Boolean(
                         assistantHasContent ||
                         assistantHasReasoning ||
                         assistantHasTokens ||
                         assistantHasCompression ||
-                        assistantHasDangerousApproval
+                        assistantHasDangerousApproval ||
+                        assistantHasMemoryInjection
                       )
 
                       if (msg.role !== 'user' && msg.role !== 'tool') {
@@ -4521,7 +4608,7 @@ function AppLoaded(): JSX.Element {
                                 aria-expanded={turnExpanded}
                               >
                                 <span className="text-[12px] font-medium text-muted-foreground group-hover:text-foreground truncate">
-                                  {t.foldProcessSummary(turnStats!.reasoningCount, turnStats!.toolCount, turnStats!.skillCount)}
+                                  {t.foldProcessSummary(turnStats!.memoryCount, turnStats!.reasoningCount, turnStats!.toolCount, turnStats!.skillCount)}
                                 </span>
                                 <span
                                   aria-hidden="true"
@@ -4569,7 +4656,7 @@ function AppLoaded(): JSX.Element {
                             aria-expanded={turnExpanded}
                           >
                             <span className="text-[12px] font-medium text-muted-foreground group-hover:text-foreground truncate">
-                              {t.foldProcessSummary(turnStats!.reasoningCount, turnStats!.toolCount, turnStats!.skillCount)}
+                              {t.foldProcessSummary(turnStats!.memoryCount, turnStats!.reasoningCount, turnStats!.toolCount, turnStats!.skillCount)}
                             </span>
                             <span
                               aria-hidden="true"
@@ -5237,6 +5324,90 @@ function AppLoaded(): JSX.Element {
                       ) : (
                         <div className="py-0.5 group">
                           <div className="space-y-0.5">
+                            {(() => {
+                              if (shouldHideProcess) return null
+                              if (!isFirstAssistantOfTurn) return null
+                              const meta = msg.meta || {}
+                              const injection = parseMemoryInjection(meta.memoryInjection)
+                              const memoryCount = Math.max(0, Number(injection?.count || 0))
+                              const hasItems = Boolean(memoryCount > 0 && injection?.items?.length)
+                              const msgId = String(msg.id || '')
+                              const open = Boolean(memoryInjectionOpenByMsgId[msgId])
+                              const toggle = () => {
+                                if (!hasItems) return
+                                setMemoryInjectionOpenByMsgId((prev) => ({ ...prev, [msgId]: !open }))
+                              }
+                              return (
+                                <div key={`memory-injection-block:${msgId}`} className="overflow-hidden">
+                                  <button
+                                    type="button"
+                                    className="group w-full flex items-center gap-2 min-w-0 py-0.5 rounded-md text-left hover:bg-muted/10 transition-colors motion-reduce:transition-none"
+                                    onClick={(e) => {
+                                      e.preventDefault()
+                                      e.stopPropagation()
+                                      toggle()
+                                    }}
+                                    aria-expanded={hasItems ? open : false}
+                                  >
+                                    <span className="text-[12px] font-medium text-muted-foreground group-hover:text-foreground">
+                                      已注入 {memoryCount}条记忆
+                                    </span>
+                                    <span className="text-[11px] text-muted-foreground/40 whitespace-nowrap tabular-nums">
+                                      {typeof injection?.durationMs === 'number' ? `${injection.durationMs}ms` : ''}
+                                    </span>
+                                    {hasItems ? (
+                                      <span
+                                        aria-hidden="true"
+                                        className={`h-4 w-4 shrink-0 text-muted-foreground/70 transition-opacity motion-reduce:transition-none flex items-center justify-center ${
+                                          open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                                        }`}
+                                      >
+                                        <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-300 motion-reduce:transition-none ${open ? 'rotate-0' : '-rotate-90'}`} />
+                                      </span>
+                                    ) : null}
+                                  </button>
+
+                                  <AnimatePresence initial={false}>
+                                    {open && hasItems ? (
+                                      <motion.div
+                                        key={`memory-injection-content:${msgId}`}
+                                        initial={{ gridTemplateRows: '0fr' }}
+                                        animate={{ gridTemplateRows: '1fr' }}
+                                        exit={{ gridTemplateRows: '0fr' }}
+                                        transition={collapseAnimTransition}
+                                        className="overflow-hidden"
+                                        style={{ display: 'grid', willChange: 'grid-template-rows' }}
+                                      >
+                                        <div className="min-h-0 overflow-hidden">
+                                          <motion.div
+                                            className="mt-1 space-y-1"
+                                            initial={collapseContentAnim.initial}
+                                            animate={collapseContentAnim.animate}
+                                            exit={collapseContentAnim.exit}
+                                            transition={collapseContentAnim.transition}
+                                          >
+                                            {(injection?.items || []).map((item, idx) => {
+                                              const type = String(item.type || 'semantic').trim()
+                                              const content = String(item.content || '').trim()
+                                              if (!content) return null
+                                              return (
+                                                <div key={`${String(item.id || '')}:${idx}`} className="flex items-start gap-2">
+                                                  <span className="mt-[6px] h-1 w-1 rounded-full bg-muted-foreground/50 shrink-0" />
+                                                  <span className="text-[12px] leading-relaxed text-foreground/85 break-words">
+                                                    <span className="inline-block text-muted-foreground mr-1">[{type}]</span>
+                                                    {content}
+                                                  </span>
+                                                </div>
+                                              )
+                                            })}
+                                          </motion.div>
+                                        </div>
+                                      </motion.div>
+                                    ) : null}
+                                  </AnimatePresence>
+                                </div>
+                              )
+                            })()}
                             {(() => {
                               if (shouldHideProcess) return null
                               const meta = msg.meta || {}

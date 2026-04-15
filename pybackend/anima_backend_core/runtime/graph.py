@@ -723,6 +723,7 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
             if picked:
                 memory_block = "User memory:\n" + "\n".join([f"- {x}" for x in picked])
     runtime_memory_block = ""
+    composer.pop("runtimeMemoryInjection", None)
     workspace_dir = str(composer.get("workspaceDir") or "").strip()
     if (
         memory_enabled
@@ -732,6 +733,7 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
         and mem_max_k > 0
         and (workspace_dir or memory_global_enabled)
     ):
+        started_at = int(time.time() * 1000)
         try:
             rows = query_memory_items_scoped(
                 workspace_dir=workspace_dir,
@@ -745,6 +747,7 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
                 ws_count = 0
                 gl_count = 0
                 lines = []
+                injected_items: List[Dict[str, Any]] = []
                 for row in rows[:mem_max_k]:
                     content = str(row.get("content") or "").strip()
                     if not content:
@@ -755,10 +758,27 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
                     else:
                         ws_count += 1
                     lines.append(f"- [{str(row.get('type') or 'semantic')}] {content}")
+                    injected_items.append(
+                        {
+                            "id": str(row.get("id") or "").strip(),
+                            "type": str(row.get("type") or "semantic").strip() or "semantic",
+                            "scope": scope,
+                            "content": content,
+                            "similarity": float(row.get("similarity") or 0.0),
+                            "score": float(row.get("score") or 0.0),
+                        }
+                    )
                 if lines:
                     runtime_memory_block = (
                         f"Runtime memory retrieval (workspace={ws_count}, global={gl_count}):\n" + "\n".join(lines)
                     )
+                    composer["runtimeMemoryInjection"] = {
+                        "count": len(injected_items),
+                        "durationMs": max(0, int(time.time() * 1000) - started_at),
+                        "workspaceCount": ws_count,
+                        "globalCount": gl_count,
+                        "items": injected_items,
+                    }
                 if memory_graph_enabled and workspace_dir:
                     anchors = [
                         str(x.get("id") or "").strip()
