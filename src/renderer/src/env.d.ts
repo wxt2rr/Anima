@@ -22,6 +22,24 @@ declare global {
         readFile: (path: string) => Promise<{ ok: boolean; content?: string; error?: string }>
         readFileBinary: (path: string) => Promise<{ ok: boolean; base64?: string; mime?: string; error?: string }>
         getCwd: () => Promise<{ ok: boolean; cwd?: string; error?: string }>
+        copyFilesToDir: (params: { sourcePaths: string[]; targetDir: string }) => Promise<{
+          ok: boolean
+          copied?: Array<{ sourcePath: string; targetPath: string }>
+          failed?: Array<{ sourcePath: string; error?: string }>
+          error?: string
+        }>
+        movePathsToDir: (params: { sourcePaths: string[]; targetDir: string }) => Promise<{
+          ok: boolean
+          moved?: Array<{ sourcePath: string; targetPath: string }>
+          failed?: Array<{ sourcePath: string; error?: string }>
+          error?: string
+        }>
+        writeFilesToDir: (params: { files: Array<{ name: string; bytes: number[] }>; targetDir: string }) => Promise<{
+          ok: boolean
+          written?: Array<{ name: string; targetPath: string }>
+          failed?: Array<{ name: string; error?: string }>
+          error?: string
+        }>
       }
       git: {
         checkIsRepo: (cwd: string) => Promise<{ ok: boolean; isRepo?: boolean; error?: string }>

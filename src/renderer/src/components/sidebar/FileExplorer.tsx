@@ -6,17 +6,10 @@ import remarkGfm from 'remark-gfm';
 import { 
   ChevronRight, 
   ChevronDown, 
-  File as FileIcon, 
-  Folder, 
-  FolderOpen, 
   RefreshCw,
-  FileImage,
-  FileCode,
-  FileText,
-  FileJson,
-  FileArchive,
   RotateCcw,
   Search,
+  ArrowLeftRight,
   ZoomIn,
   ZoomOut,
   PanelLeftClose,
@@ -28,11 +21,19 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
 import { cn } from '@/lib/utils';
+import materialThemeRaw from 'material-icon-theme/dist/material-icons.json';
 
 interface FileNode {
   name: string;
   isDirectory: boolean;
   path: string;
+}
+
+const INTERNAL_DND_PATH_MIME = 'application/x-anima-path'
+
+const hasExternalFileType = (dt?: DataTransfer | null): boolean => {
+  const types = Array.from(dt?.types || [])
+  return types.includes('Files')
 }
 
 interface SelectedFile {
@@ -44,41 +45,119 @@ interface SelectedFile {
   error?: string;
 }
 
-const getFileIcon = (name: string) => {
-  const ext = name.split('.').pop()?.toLowerCase();
-  switch (ext) {
-    case 'png':
-    case 'jpg':
-    case 'jpeg':
-    case 'gif':
-    case 'svg':
-    case 'webp':
-      return <FileImage className="w-4 h-4 text-purple-500" />;
-    case 'ts':
-    case 'tsx':
-    case 'js':
-    case 'jsx':
-    case 'py':
-    case 'html':
-    case 'css':
-      return <FileCode className="w-4 h-4 text-primary" />;
-    case 'json':
-    case 'yaml':
-    case 'yml':
-      return <FileJson className="w-4 h-4 text-yellow-500" />;
-    case 'md':
-    case 'txt':
-    case 'log':
-      return <FileText className="w-4 h-4 text-slate-500" />;
-    case 'zip':
-    case 'tar':
-    case 'gz':
-    case 'rar':
-      return <FileArchive className="w-4 h-4 text-red-500" />;
-    default:
-      return <FileIcon className="w-4 h-4 text-muted-foreground" />;
+type MaterialThemeLike = {
+  iconDefinitions?: Record<string, { iconPath?: string }>
+  file?: string
+  folder?: string
+  folderExpanded?: string
+  fileNames?: Record<string, string>
+  fileExtensions?: Record<string, string>
+  folderNames?: Record<string, string>
+  folderNamesExpanded?: Record<string, string>
+  rootFolderNames?: Record<string, string>
+  rootFolderNamesExpanded?: Record<string, string>
+}
+
+const materialTheme = materialThemeRaw as MaterialThemeLike
+
+const MATERIAL_ICON_URLS = import.meta.glob('./material-icons/*.svg', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+}) as Record<string, string>
+
+const iconUrlByFileName: Record<string, string> = {}
+for (const [path, url] of Object.entries(MATERIAL_ICON_URLS)) {
+  const name = String(path || '').split('/').pop() || ''
+  if (name) iconUrlByFileName[name] = String(url || '')
+}
+
+const FILE_EXT_KEY_OVERRIDES: Record<string, string> = {
+  js: 'javascript',
+  cjs: 'javascript',
+  ts: 'typescript',
+  html: 'html',
+  yaml: 'yaml',
+  yml: 'yaml',
+  wal: 'database',
+  shm: 'database',
+}
+
+const FILE_NAME_KEY_OVERRIDES: Record<string, string> = {
+  '.ds_store': 'document',
+  'script.js': 'javascript',
+  'index.html': 'html',
+  'styles.css': 'css',
+}
+
+const FOLDER_NAME_KEY_OVERRIDES: Record<string, { closed: string; open: string }> = {
+  '.anima': { closed: 'folder-private', open: 'folder-private-open' },
+  '.agents': { closed: 'folder-private', open: 'folder-private-open' },
+  '.tmp': { closed: 'folder-temp', open: 'folder-temp-open' },
+}
+
+const resolveIconUrlByThemeKey = (themeKey: string): string => {
+  const key = String(themeKey || '').trim()
+  if (!key) return ''
+  const def = materialTheme.iconDefinitions?.[key]
+  const iconPath = String(def?.iconPath || '').trim()
+  const fileName = iconPath.split('/').pop() || ''
+  return iconUrlByFileName[fileName] || ''
+}
+
+const resolveThemeKeyForFile = (name: string): string => {
+  const base = String(name || '').trim().toLowerCase()
+  if (!base) return String(materialTheme.file || 'file')
+  if (FILE_NAME_KEY_OVERRIDES[base]) return FILE_NAME_KEY_OVERRIDES[base]
+  const byName = materialTheme.fileNames?.[base]
+  if (byName) return byName
+  const ext = base.includes('.') ? (base.split('.').pop() || '') : ''
+  if (ext) {
+    const override = FILE_EXT_KEY_OVERRIDES[ext]
+    if (override) return override
+    const byExt = materialTheme.fileExtensions?.[ext]
+    if (byExt) return byExt
+    const tail = ext.includes('-') ? (ext.split('-').pop() || '') : ''
+    if (tail) {
+      const overrideTail = FILE_EXT_KEY_OVERRIDES[tail]
+      if (overrideTail) return overrideTail
+      const byTail = materialTheme.fileExtensions?.[tail]
+      if (byTail) return byTail
+    }
   }
+  return String(materialTheme.file || 'file')
+}
+
+const resolveThemeKeyForFolder = (name: string, expanded: boolean, isRoot = false): string => {
+  const base = String(name || '').trim().toLowerCase()
+  if (!base) return expanded ? String(materialTheme.folderExpanded || 'folder-open') : String(materialTheme.folder || 'folder')
+  const override = FOLDER_NAME_KEY_OVERRIDES[base]
+  if (override) return expanded ? override.open : override.closed
+  if (isRoot) {
+    const rootKey = expanded ? materialTheme.rootFolderNamesExpanded?.[base] : materialTheme.rootFolderNames?.[base]
+    if (rootKey) return rootKey
+  }
+  const byName = expanded ? materialTheme.folderNamesExpanded?.[base] : materialTheme.folderNames?.[base]
+  if (byName) return byName
+  if (base.startsWith('.')) return expanded ? 'folder-config-open' : 'folder-config'
+  return expanded ? String(materialTheme.folderExpanded || 'folder-open') : String(materialTheme.folder || 'folder')
+}
+
+const renderMaterialIconByKey = (themeKey: string, alt: string) => {
+  const src = resolveIconUrlByThemeKey(themeKey) || resolveIconUrlByThemeKey(String(materialTheme.file || 'file'))
+  if (!src) {
+    return <span className="inline-block w-4 h-4 rounded-[3px] bg-muted-foreground/30 shrink-0" aria-hidden="true" />
+  }
+  return <img src={src} alt={alt} className="w-4 h-4 shrink-0" draggable={false} />
+}
+
+const getFileIcon = (name: string) => {
+  return renderMaterialIconByKey(resolveThemeKeyForFile(name), name || 'file')
 };
+
+const getFolderIcon = (name: string, expanded: boolean, isRoot = false) => {
+  return renderMaterialIconByKey(resolveThemeKeyForFolder(name, expanded, isRoot), name || 'folder')
+}
 
 const getFileType = (name: string): SelectedFile['type'] => {
   const ext = name.split('.').pop()?.toLowerCase();
@@ -123,11 +202,17 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
   const [loadingFile, setLoadingFile] = useState(false);
   const selectedBlobUrlRef = React.useRef<string | null>(null)
   const prevSidebarWidthRef = React.useRef<number>(240)
+  const handledOpenRequestNonceRef = React.useRef<number>(0)
   const [isExplorerCollapsed, setIsExplorerCollapsed] = useState(false)
+  const [swapPaneSides, setSwapPaneSides] = useState(false)
+  const [isPreviewVisible, setIsPreviewVisible] = useState(false)
   
   // Resize state
   const [sidebarWidth, setSidebarWidth] = useState(240);
   const [isResizing, setIsResizing] = useState(false);
+  const [dragOverDirPath, setDragOverDirPath] = useState('')
+  const [uploadingDirPath, setUploadingDirPath] = useState('')
+  const [draggingPath, setDraggingPath] = useState('')
 
   useEffect(() => {
     return () => {
@@ -143,6 +228,16 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
     selectedBlobUrlRef.current = null
     setSelectedFile(null)
   }
+
+  const handleClosePreview = () => {
+    clearSelectedFile()
+    setIsPreviewVisible(false)
+  }
+
+  useEffect(() => {
+    if (selectedFile || loadingFile) return
+    setIsPreviewVisible(false)
+  }, [selectedFile, loadingFile])
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -164,7 +259,8 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
       // So increasing width means dragging to the right.
       // We can just take the previous width + movementX.
       setSidebarWidth(prev => {
-        const newWidth = prev + e.movementX;
+        const delta = swapPaneSides ? -e.movementX : e.movementX
+        const newWidth = prev + delta;
         return Math.max(150, Math.min(newWidth, 600)); // Clamp between 150px and 600px
       });
     };
@@ -188,7 +284,7 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
       document.body.style.cursor = 'default';
       document.body.style.userSelect = 'auto';
     };
-  }, [isResizing]);
+  }, [isResizing, swapPaneSides]);
 
   useEffect(() => {
     if (!active && rootPath) return
@@ -232,6 +328,89 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
     setRefreshKey(k => k + 1);
   };
 
+  const handleDropFilesToDir = async (targetDir: string, files: File[]) => {
+    const dir = String(targetDir || '').trim()
+    if (!dir) return
+    const sourcePaths = Array.from(files || [])
+      .map((f: any) => String(f?.path || '').trim())
+      .filter(Boolean)
+    const filesNoPath = Array.from(files || []).filter((f: any) => !String(f?.path || '').trim())
+    if (!sourcePaths.length && !filesNoPath.length) return
+
+    if (sourcePaths.length) {
+      setUploadingDirPath(dir)
+      try {
+        const res = await window.anima.fs.copyFilesToDir({ sourcePaths, targetDir: dir })
+        if (res.ok) {
+          if (Array.isArray(res.failed) && res.failed.length) {
+            alert(`部分文件复制失败：${res.failed.slice(0, 3).map((x: any) => String(x?.sourcePath || '')).join(', ')}`)
+          }
+          setRefreshKey((k) => k + 1)
+        } else {
+          console.error('copyFilesToDir failed', res.error)
+          alert(`拖拽复制失败：${String(res.error || 'unknown error')}`)
+        }
+      } catch (e) {
+        console.error('copyFilesToDir error', e)
+        alert(`拖拽复制失败：${String(e || 'unknown error')}`)
+      } finally {
+        setUploadingDirPath('')
+        setDragOverDirPath('')
+      }
+    }
+
+    if (!filesNoPath.length) return
+    setUploadingDirPath(dir)
+    try {
+      const payload: Array<{ name: string; bytes: number[] }> = []
+      for (const f of filesNoPath) {
+        const bytes = new Uint8Array(await f.arrayBuffer())
+        if (!bytes.length) continue
+        payload.push({ name: String(f.name || '').trim() || 'dropped-file', bytes: Array.from(bytes) })
+      }
+      if (!payload.length) return
+      const res = await window.anima.fs.writeFilesToDir({ files: payload, targetDir: dir })
+      if (res.ok) {
+        if (Array.isArray(res.failed) && res.failed.length) {
+          alert(`部分文件写入失败：${res.failed.slice(0, 3).map((x: any) => String(x?.name || '')).join(', ')}`)
+        }
+        setRefreshKey((k) => k + 1)
+      } else {
+        alert(`拖拽写入失败：${String(res.error || 'unknown error')}`)
+      }
+    } catch (e) {
+      alert(`拖拽写入失败：${String(e || 'unknown error')}`)
+    } finally {
+      setUploadingDirPath('')
+      setDragOverDirPath('')
+    }
+  }
+
+  const handleMovePathsToDir = async (targetDir: string, sourcePaths: string[]) => {
+    const dir = String(targetDir || '').trim()
+    const sources = Array.isArray(sourcePaths) ? sourcePaths.map((p) => String(p || '').trim()).filter(Boolean) : []
+    if (!dir || !sources.length) return
+    setUploadingDirPath(dir)
+    try {
+      const res = await window.anima.fs.movePathsToDir({ sourcePaths: sources, targetDir: dir })
+      if (res.ok) {
+        if (Array.isArray(res.failed) && res.failed.length) {
+          alert(`部分项目移动失败：${res.failed.slice(0, 3).map((x: any) => String(x?.sourcePath || '')).join(', ')}`)
+        }
+        setRefreshKey((k) => k + 1)
+      } else {
+        console.error('movePathsToDir failed', res.error)
+        alert(`拖拽移动失败：${String(res.error || 'unknown error')}`)
+      }
+    } catch (e) {
+      console.error('movePathsToDir error', e)
+      alert(`拖拽移动失败：${String(e || 'unknown error')}`)
+    } finally {
+      setUploadingDirPath('')
+      setDragOverDirPath('')
+    }
+  }
+
   const handleToggleExplorer = () => {
     setIsExplorerCollapsed((v) => {
       if (!v) prevSidebarWidthRef.current = sidebarWidth
@@ -246,6 +425,10 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
     await window.anima.shell.openPath(p)
   }
 
+  const handleSwapPaneSides = () => {
+    setSwapPaneSides((v) => !v)
+  }
+
   const openFilePath = async (filePath: string) => {
     const isMissingFileError = (err: unknown): boolean => {
       const msg = String(err || '').toLowerCase()
@@ -255,6 +438,7 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
       .trim()
       .replace(/[?#].*$/, '');
     if (!normalized) return;
+    setIsPreviewVisible(true)
     const name = normalized.split('/').pop() || normalized;
     setLoadingFile(true);
     const type = getFileType(name);
@@ -322,9 +506,12 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
   useEffect(() => {
     if (!active) return
     const req = ui.fileExplorerRequest;
-    if (!req?.nonce) return;
+    const nonce = Number(req?.nonce || 0)
+    if (!nonce) return;
+    if (handledOpenRequestNonceRef.current === nonce) return
     const raw = String(req.path || '').trim();
     if (!raw) return;
+    handledOpenRequestNonceRef.current = nonce
     const withoutScheme = raw.startsWith('file://') ? raw.slice('file://'.length) : raw;
     const withoutFragment = withoutScheme.replace(/[?#].*$/, '');
     const base = activeProjectDir || rootPath || settings?.workspaceDir || '';
@@ -337,17 +524,14 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
   if (!rootPath) {
     return (
       <div className="flex flex-col items-center justify-center h-full p-4 text-center space-y-4">
-        <FolderOpen className="w-12 h-12 text-muted-foreground/30" />
+        <img src={resolveIconUrlByThemeKey('folder-open') || resolveIconUrlByThemeKey('folder')} alt="folder" className="w-12 h-12 opacity-30" draggable={false} />
         <p className="text-sm text-muted-foreground">No folder opened.</p>
         <Button onClick={handlePickRoot} size="sm">Open Folder</Button>
       </div>
     );
   }
 
-  return (
-    <div className="flex h-full w-full overflow-hidden">
-      {/* Left: File Tree */}
-      {isExplorerCollapsed ? (
+  const treePane = isExplorerCollapsed ? (
         <div className="flex flex-col h-full shrink-0 border-r border-black/5 bg-white w-10">
           <div className="h-9 flex items-center justify-center border-b border-black/5 shrink-0">
             <Button
@@ -361,6 +545,15 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
             </Button>
           </div>
           <div className="flex-1 flex flex-col items-center gap-1 p-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-foreground"
+              onClick={handleSwapPaneSides}
+              title={swapPaneSides ? 'Move explorer to left' : 'Move explorer to right'}
+            >
+              <ArrowLeftRight className="w-3.5 h-3.5" />
+            </Button>
             <Button
               variant="ghost"
               size="icon"
@@ -384,7 +577,7 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
       ) : (
         <div 
           className="flex flex-col h-full shrink-0 transition-none border-r border-black/5"
-          style={{ width: sidebarWidth }}
+          style={{ width: isPreviewVisible ? sidebarWidth : '100%' }}
         >
           <div className="h-9 px-2 flex items-center justify-between border-b border-black/5 bg-white shrink-0">
             <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground px-2">Explorer</span>
@@ -397,6 +590,15 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
                 title="Collapse"
               >
                 <PanelLeftClose className="w-3.5 h-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                onClick={handleSwapPaneSides}
+                title={swapPaneSides ? 'Move explorer to left' : 'Move explorer to right'}
+              >
+                <ArrowLeftRight className="w-3.5 h-3.5" />
               </Button>
               <Button
                 variant="ghost"
@@ -426,16 +628,23 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
                  name={rootPath.split('/').pop() || rootPath} 
                  isDirectory={true} 
                  defaultExpanded={true}
+                 isRoot={true}
                  onSelect={handleFileSelect}
                  selectedPath={selectedFile?.path}
+                 dragOverDirPath={dragOverDirPath}
+                 uploadingDirPath={uploadingDirPath}
+                 draggingPath={draggingPath}
+                 onSetDragOverDirPath={setDragOverDirPath}
+                 onSetDraggingPath={setDraggingPath}
+                 onDropFilesToDir={handleDropFilesToDir}
+                 onMovePathsToDir={handleMovePathsToDir}
                />
             </div>
           </ScrollArea>
         </div>
-      )}
+      )
 
-      {/* Resize Handle */}
-      {!isExplorerCollapsed && (
+  const resizeHandle = !isExplorerCollapsed && isPreviewVisible ? (
         <div
           className={cn(
             "w-1 h-full cursor-col-resize hover:bg-black/10 transition-colors flex items-center justify-center group z-10 shrink-0",
@@ -445,19 +654,42 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
         >
           <div className="w-[1px] h-8 bg-black/10 group-hover:bg-black/20 transition-colors" />
         </div>
-      )}
+      ) : null
 
-      {/* Right: Preview */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden bg-white min-w-0">
+  const previewPane = (
+    <div className="flex-1 flex flex-col h-full overflow-hidden bg-white min-w-0">
         {selectedFile ? (
-          <FilePreview file={selectedFile} loading={loadingFile} onClose={clearSelectedFile} active={active} />
+          <FilePreview file={selectedFile} loading={loadingFile} onClose={handleClosePreview} active={active} />
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-2 p-8 text-center opacity-50">
             <Search className="w-10 h-10 stroke-1" />
             <p className="text-xs">Select a file to preview</p>
           </div>
         )}
-      </div>
+    </div>
+  )
+
+  return (
+    <div className="flex h-full w-full overflow-hidden">
+      {!isPreviewVisible ? (
+        treePane
+      ) : (
+      <>
+      {swapPaneSides ? (
+        <>
+          {previewPane}
+          {resizeHandle}
+          {treePane}
+        </>
+      ) : (
+        <>
+          {treePane}
+          {resizeHandle}
+          {previewPane}
+        </>
+      )}
+      </>
+      )}
     </div>
   );
 };
@@ -467,9 +699,17 @@ const FileTreeItem: React.FC<{
   name: string, 
   isDirectory: boolean, 
   defaultExpanded?: boolean,
+  isRoot?: boolean,
   onSelect: (file: FileNode) => void,
-  selectedPath?: string
-}> = ({ path, name, isDirectory, defaultExpanded, onSelect, selectedPath }) => {
+  selectedPath?: string,
+  dragOverDirPath: string,
+  uploadingDirPath: string,
+  draggingPath: string,
+  onSetDragOverDirPath: (path: string) => void,
+  onSetDraggingPath: (path: string) => void,
+  onDropFilesToDir: (targetDir: string, files: File[]) => Promise<void>
+  onMovePathsToDir: (targetDir: string, sourcePaths: string[]) => Promise<void>
+}> = ({ path, name, isDirectory, defaultExpanded, isRoot = false, onSelect, selectedPath, dragOverDirPath, uploadingDirPath, draggingPath, onSetDragOverDirPath, onSetDraggingPath, onDropFilesToDir, onMovePathsToDir }) => {
   const [expanded, setExpanded] = useState(defaultExpanded || false);
   const [children, setChildren] = useState<FileNode[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -508,11 +748,87 @@ const FileTreeItem: React.FC<{
     setExpanded(!expanded);
   };
 
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!isDirectory) return
+    const dragTypes = Array.from(e.dataTransfer?.types || [])
+    const hasInternalPathType = dragTypes.includes(INTERNAL_DND_PATH_MIME) || dragTypes.includes('text/plain')
+    const hasInternalPath = Boolean(String(draggingPath || '').trim())
+    const hasExternalFiles = hasExternalFileType(e.dataTransfer)
+    if (!hasExternalFiles && !hasInternalPathType && !hasInternalPath) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = hasExternalFiles ? 'copy' : 'move'
+    if (dragOverDirPath !== path) onSetDragOverDirPath(path)
+  }
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!isDirectory) return
+    const next = e.relatedTarget as Node | null
+    if (next && (e.currentTarget as HTMLDivElement).contains(next)) return
+    if (dragOverDirPath === path) onSetDragOverDirPath('')
+  }
+
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    if (!isDirectory) return
+    const internalPath = String(
+      e.dataTransfer?.getData(INTERNAL_DND_PATH_MIME) ||
+      e.dataTransfer?.getData('text/plain') ||
+      draggingPath
+    ).trim()
+    const hasExternalFiles = hasExternalFileType(e.dataTransfer)
+    if (!hasExternalFiles && !internalPath) return
+    e.preventDefault()
+    e.stopPropagation()
+
+    if (internalPath) {
+      const sourcePath = internalPath
+      if (sourcePath === path) return
+      const sourcePrefix = sourcePath.endsWith('/') ? sourcePath : `${sourcePath}/`
+      if (path.startsWith(sourcePrefix)) return
+      await onMovePathsToDir(path, [sourcePath])
+      onSetDraggingPath('')
+      return
+    }
+    const droppedFiles = Array.from(e.dataTransfer.files || [])
+    if (!droppedFiles.length) {
+      alert('检测到外部拖拽，但未读取到文件列表。请把文件拖到文件夹名称行后松开，或直接使用上传入口。')
+      return
+    }
+    await onDropFilesToDir(path, droppedFiles)
+  }
+
+  const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
+    if (isRoot) return
+    onSetDraggingPath(path)
+    e.dataTransfer.setData(INTERNAL_DND_PATH_MIME, path)
+    e.dataTransfer.setData('text/plain', path)
+    e.dataTransfer.effectAllowed = 'move'
+  }
+
+  const handleDragEnd = () => {
+    onSetDraggingPath('')
+    onSetDragOverDirPath('')
+  }
+
   return (
     <div>
       <div 
-        className={`flex items-center gap-1.5 py-1 px-2 rounded cursor-pointer text-sm select-none transition-colors ${selectedPath === path ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'}`}
+        className={`flex items-center gap-1.5 py-1 px-2 rounded cursor-pointer text-sm select-none transition-colors ${
+          dragOverDirPath === path
+            ? 'bg-primary/15 ring-1 ring-primary/30'
+            : selectedPath === path
+              ? 'bg-accent text-accent-foreground'
+              : 'hover:bg-accent/50'
+        } ${uploadingDirPath === path ? 'opacity-70' : ''}`}
         onClick={toggleExpand}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={(e) => {
+          void handleDrop(e)
+        }}
+        draggable={!isRoot}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
         style={{ paddingLeft: isDirectory ? undefined : '20px' }}
       >
         {isDirectory && (
@@ -522,7 +838,7 @@ const FileTreeItem: React.FC<{
         )}
         <div className="shrink-0">
           {isDirectory ? (
-            expanded ? <FolderOpen className="w-4 h-4 text-primary" /> : <Folder className="w-4 h-4 text-primary" />
+            getFolderIcon(name, expanded, isRoot)
           ) : (
             getFileIcon(name)
           )}
@@ -530,13 +846,28 @@ const FileTreeItem: React.FC<{
         <span className="truncate">{name}</span>
       </div>
       {isDirectory && expanded && (
-        <div className="pl-3 border-l border-black/10 ml-2.5">
+        <div
+          className="pl-3 border-l border-black/10 ml-2.5"
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => {
+            void handleDrop(e)
+          }}
+        >
           {children.map(child => (
             <FileTreeItem 
               key={child.path} 
               {...child} 
+              isRoot={false}
               onSelect={onSelect}
               selectedPath={selectedPath}
+              dragOverDirPath={dragOverDirPath}
+              uploadingDirPath={uploadingDirPath}
+              draggingPath={draggingPath}
+              onSetDragOverDirPath={onSetDragOverDirPath}
+              onSetDraggingPath={onSetDraggingPath}
+              onDropFilesToDir={onDropFilesToDir}
+              onMovePathsToDir={onMovePathsToDir}
             />
           ))}
         </div>
@@ -654,7 +985,7 @@ const FilePreview: React.FC<{ file: SelectedFile, loading: boolean, onClose: () 
 
           {file.type === 'other' && (
             <div className="flex flex-col items-center justify-center h-full p-8 text-center space-y-4">
-              <FileIcon className="w-16 h-16 text-muted-foreground/20" />
+              <img src={resolveIconUrlByThemeKey(String(materialTheme.file || 'file'))} alt="file" className="w-16 h-16 opacity-20" draggable={false} />
               <div className="space-y-1">
                 <p className="text-sm font-medium">Preview not available</p>
                 <p className="text-xs text-muted-foreground">This file type cannot be previewed directly.</p>

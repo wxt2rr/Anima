@@ -18,7 +18,10 @@ const animaAPI = {
     readDir: (path: string) => ipcRenderer.invoke('fs:readDir', path),
     readFile: (path: string) => ipcRenderer.invoke('fs:readFile', path),
     readFileBinary: (path: string) => ipcRenderer.invoke('fs:readFileBinary', path),
-    getCwd: () => ipcRenderer.invoke('fs:getCwd')
+    getCwd: () => ipcRenderer.invoke('fs:getCwd'),
+    copyFilesToDir: (params: { sourcePaths: string[]; targetDir: string }) => ipcRenderer.invoke('fs:copyFilesToDir', params),
+    movePathsToDir: (params: { sourcePaths: string[]; targetDir: string }) => ipcRenderer.invoke('fs:movePathsToDir', params),
+    writeFilesToDir: (params: { files: Array<{ name: string; bytes: number[] }>; targetDir: string }) => ipcRenderer.invoke('fs:writeFilesToDir', params)
   },
   git: {
     checkIsRepo: (cwd: string) => ipcRenderer.invoke('git:checkIsRepo', cwd),

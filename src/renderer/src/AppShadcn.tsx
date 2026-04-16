@@ -36,7 +36,7 @@ import {
   renderSlashCommandTemplate,
   type SlashCommandEntry
 } from './lib/slashCommands'
-import animaLogo from '../../../images/logo.gif'
+import animaLogo from '../../../images/logo.png'
 import loadingGif from '../../../images/loding.gif'
 
 type BackendUsage = {
@@ -238,7 +238,17 @@ function normalizeChatMarkdown(input: string): string {
   const s = String(input || '')
   const hasUnescapedFence = /(^|\n)[ \t]{0,3}```/.test(s)
   if (hasUnescapedFence) return s
-  return s.replace(/(^|\n)([ \t]{0,3})\\```/g, '$1$2```')
+  return s
+    .replace(/(^|\n)([ \t]{0,3})\\```/g, '$1$2```')
+    .replace(/``\s*`([^`\n]+)`\s*``/g, '`$1`')
+}
+
+function stripWrappedBackticks(input: string): string {
+  let text = String(input || '').trim()
+  while (text.length >= 2 && text.startsWith('`') && text.endsWith('`')) {
+    text = text.slice(1, -1).trim()
+  }
+  return text
 }
 
 function linkifyQuotedFileNames(input: string): string {
@@ -269,6 +279,80 @@ function toolTraceSignature(trace: any): string {
     }
   }
   return `${name}:${normalizeSigText(argsText)}`
+}
+
+type ToolTraceCategory = 'explored' | 'edited' | 'ran' | 'context'
+
+function normalizeToolTraceName(raw: unknown): string {
+  return String(raw || '')
+    .trim()
+    .replace(/^tool_start:/, '')
+    .replace(/^tool_done:/, '')
+    .replace(/^tool_end:/, '')
+    .trim()
+}
+
+function getToolTraceCategory(trace: any): ToolTraceCategory {
+  const name = normalizeToolTraceName(trace?.name).toLowerCase()
+  if (!name) return 'ran'
+  if (name === 'load_skill') return 'context'
+  if (
+    name === 'read_file' ||
+    name === 'list_dir' ||
+    name === 'glob_files' ||
+    name === 'rg_search' ||
+    name === 'websearch' ||
+    name === 'webfetch'
+  ) {
+    return 'explored'
+  }
+  if (
+    name === 'apply_patch' ||
+    name === 'write_file' ||
+    name === 'create_file' ||
+    name === 'delete_file' ||
+    name === 'move_file' ||
+    name === 'rename_file' ||
+    name === 'insert_edit_into_file'
+  ) {
+    return 'edited'
+  }
+  return 'ran'
+}
+
+function summarizeToolTraceCategories(traces: any[]): Record<ToolTraceCategory, number> {
+  const summary: Record<ToolTraceCategory, number> = { explored: 0, edited: 0, ran: 0, context: 0 }
+  for (const tr of traces) {
+    summary[getToolTraceCategory(tr)] += 1
+  }
+  return summary
+}
+
+function formatToolTraceSummary(summary: Record<ToolTraceCategory, number>): string {
+  const parts: string[] = []
+  if (summary.explored > 0) parts.push(`Explored ${summary.explored}`)
+  if (summary.edited > 0) parts.push(`Edited ${summary.edited}`)
+  if (summary.ran > 0) parts.push(`Ran ${summary.ran}`)
+  if (summary.context > 0) parts.push(`Context ${summary.context}`)
+  return parts.join(' · ')
+}
+
+function isToolStageMarker(stage: unknown): boolean {
+  const st = String(stage || '').trim()
+  return st.startsWith('tool_start:') || st.startsWith('tool_done:') || st.startsWith('tool_end:')
+}
+
+function isStageOnlyAssistantMessage(msg: any): boolean {
+  if (String(msg?.role || '') !== 'assistant') return false
+  if (String(msg?.content || '').trim()) return false
+  const meta = (msg?.meta && typeof msg.meta === 'object') ? msg.meta : {}
+  if (!isToolStageMarker(meta.stage)) return false
+  if (typeof meta.reasoningText === 'string' && meta.reasoningText.trim()) return false
+  if (meta.compressionState === 'running' || meta.compressionState === 'done') return false
+  if (Array.isArray(meta.artifacts) && meta.artifacts.length > 0) return false
+  if (meta.memoryInjection && typeof meta.memoryInjection === 'object') return false
+  if (meta.dangerousCommandApproval && typeof meta.dangerousCommandApproval === 'object') return false
+  return true
 }
 
 async function fetchBackendJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -452,6 +536,7 @@ function AppLoaded(): JSX.Element {
   const [popoverPanel, setPopoverPanel] = useState<'' | 'attachments' | 'tools' | 'skills' | 'model' | 'thinking' | 'permission' | 'completion' | 'git_branch'>('')
   
   const [traceDetailOpenByKey, setTraceDetailOpenByKey] = useState<Record<string, boolean>>({})
+  const [toolTraceGroupOpenByMsgId, setToolTraceGroupOpenByMsgId] = useState<Record<string, boolean>>({})
   const [reasoningOpenByMsgId, setReasoningOpenByMsgId] = useState<Record<string, boolean>>({})
   const [memoryInjectionOpenByMsgId, setMemoryInjectionOpenByMsgId] = useState<Record<string, boolean>>({})
   const [collapsedTurnOpenById, setCollapsedTurnOpenById] = useState<Record<string, boolean>>({})
@@ -2427,6 +2512,13 @@ function AppLoaded(): JSX.Element {
     const dict = {
       en: {
         empty: 'No matching commands',
+        commandSection: 'Commands',
+        skillSection: 'Skills',
+        kindCommand: 'Command',
+        kindSkill: 'Skill',
+        personal: 'Personal',
+        system: 'System',
+        noSkills: 'No skills',
         builtIn: 'Built-in',
         project: 'Project',
         menuTitle: 'Slash Commands',
@@ -2471,6 +2563,13 @@ function AppLoaded(): JSX.Element {
       },
       zh: {
         empty: '没有匹配的命令',
+        commandSection: '命令',
+        skillSection: '技能',
+        kindCommand: '命令',
+        kindSkill: '技能',
+        personal: '个人',
+        system: '系统',
+        noSkills: '暂无技能',
         builtIn: '内建',
         project: '项目',
         menuTitle: 'Slash 命令',
@@ -2515,6 +2614,13 @@ function AppLoaded(): JSX.Element {
       },
       ja: {
         empty: '一致するコマンドがありません',
+        commandSection: 'コマンド',
+        skillSection: 'スキル',
+        kindCommand: 'コマンド',
+        kindSkill: 'スキル',
+        personal: '個人',
+        system: 'システム',
+        noSkills: 'スキルがありません',
         builtIn: '内蔵',
         project: 'プロジェクト',
         menuTitle: 'Slash コマンド',
@@ -3330,16 +3436,6 @@ function AppLoaded(): JSX.Element {
                void persistMessageById(activeChatId, msgId, existing?.content || '', nextMeta)
              }
           } else {
-             // Finalize current assistant message
-             const finalizedAssistantMeta =
-               typeof assistantMeta?.reasoningText === 'string' && assistantMeta.reasoningText.trim()
-                 ? { ...assistantMeta, reasoningStatus: 'done' as const }
-                 : assistantMeta
-             updateLastMessage(fullContent, finalizedAssistantMeta)
-             if (activeChatId) {
-               void persistMessageById(activeChatId, currentAssistantId, fullContent, finalizedAssistantMeta)
-             }
-
              msgId = crypto.randomUUID()
              traceMessageIds[trace.id] = msgId
              
@@ -3350,22 +3446,6 @@ function AppLoaded(): JSX.Element {
                content: '',
                turnId,
                meta: { toolTraces: [trace] }
-             } as any)
-
-             // Create NEW Assistant Message
-             const newAssistantId = crypto.randomUUID()
-             currentAssistantId = newAssistantId
-             
-             fullContent = ''
-             reasoningText = ''
-             assistantMeta = { reasoningStatus: 'pending', reasoningText: '' }
-             
-             addMessage({
-               id: newAssistantId,
-               role: 'assistant',
-               content: '',
-               turnId,
-               meta: assistantMeta
              } as any)
           }
 
@@ -3941,6 +4021,40 @@ function AppLoaded(): JSX.Element {
     return Array.from(merged.values()).sort((a, b) => a.name.localeCompare(b.name))
   }, [builtinSlashCommands, bundledSlashCommands, projectSlashCommands])
 
+  const effectiveEnabledSkillIds = useMemo(() => {
+    const fromComposer = Array.isArray(composer.enabledSkillIds) ? composer.enabledSkillIds : []
+    if (fromComposer.length) return fromComposer.map((x) => String(x || '').trim()).filter(Boolean)
+    const fromSettings = Array.isArray(settings.skillsEnabledIds) ? settings.skillsEnabledIds : []
+    return fromSettings.map((x) => String(x || '').trim()).filter(Boolean)
+  }, [composer.enabledSkillIds, settings.skillsEnabledIds])
+
+  const slashSkills = useMemo(() => {
+    const enabledSet = new Set(effectiveEnabledSkillIds)
+    const items = (Array.isArray(skillsCache) ? skillsCache : [])
+      .map((s) => {
+        const id = String((s as any)?.id || '').trim()
+        if (!id) return null
+        const file = String((s as any)?.file || '').trim()
+        const dir = String((s as any)?.dir || '').trim()
+        const src = `${file} ${dir}`.toLowerCase()
+        const source: 'personal' | 'system' =
+          src.includes('/skills/.system/') || src.includes('/.system/') ? 'system' : 'personal'
+        return {
+          id,
+          name: String((s as any)?.name || id).trim() || id,
+          description: String((s as any)?.description || '').trim(),
+          source,
+          isEnabled: enabledSet.has(id)
+        }
+      })
+      .filter((x): x is { id: string; name: string; description: string; source: 'personal' | 'system'; isEnabled: boolean } => Boolean(x))
+      .sort((a, b) => {
+        if (a.isEnabled !== b.isEnabled) return a.isEnabled ? -1 : 1
+        return a.name.localeCompare(b.name)
+      })
+    return items
+  }, [effectiveEnabledSkillIds, skillsCache])
+
   const appendSlashAssistantMessage = useCallback(async (content: string) => {
     const pid = String(useStore.getState().ui.activeProjectId || '').trim()
     if (!pid) {
@@ -4148,15 +4262,16 @@ function AppLoaded(): JSX.Element {
                         const lang = match ? match[1] : 'text'
                         const value = String(children).replace(/\n$/, '')
                         const trimmed = value.trim()
+                        const displayText = inline ? stripWrappedBackticks(trimmed) : trimmed
                         const isFileToken =
-                          !/^https?:\/\//i.test(trimmed) &&
-                          (trimmed.startsWith('file://') ||
-                            trimmed.startsWith('/') ||
-                            trimmed.startsWith('\\') ||
-                            trimmed.startsWith('./') ||
-                            trimmed.startsWith('../') ||
-                            trimmed.startsWith('~/') ||
-                            /\.(ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)$/i.test(trimmed))
+                          !/^https?:\/\//i.test(displayText) &&
+                          (displayText.startsWith('file://') ||
+                            displayText.startsWith('/') ||
+                            displayText.startsWith('\\') ||
+                            displayText.startsWith('./') ||
+                            displayText.startsWith('../') ||
+                            displayText.startsWith('~/') ||
+                            /\.(ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)$/i.test(displayText))
                         const isShortFence = !inline && !match && trimmed && !trimmed.includes('\n') && trimmed.length <= 80
                         if (isShortFence) {
                           return (
@@ -4179,17 +4294,17 @@ function AppLoaded(): JSX.Element {
                               onClick={(e) => {
                                 e.preventDefault()
                                 e.stopPropagation()
-                                openLinkTarget(trimmed)
+                                openLinkTarget(displayText)
                               }}
-                              title={trimmed}
+                              title={displayText}
                             >
-                              {trimmed}
+                              {displayText}
                             </button>
                           )
                         }
                         return (
                           <code className={className} {...props}>
-                            {children}
+                            {displayText}
                           </code>
                         )
                       },
@@ -4335,7 +4450,14 @@ function AppLoaded(): JSX.Element {
                       </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={createChat}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={() => {
+                              void createChat({ expandSidebar: false })
+                            }}
+                          >
                             <MessageSquarePlus className="w-4 h-4" />
                           </Button>
                         </TooltipTrigger>
@@ -4462,9 +4584,18 @@ function AppLoaded(): JSX.Element {
                         (msg.role === 'assistant' && !isFinalAssistantOfTurn) || msg.role === 'tool'
                       const processRowVisible = !(isCollapsibleProcessRow && shouldHideProcess)
                       const showOnlyFinalAssistantArtifacts = Boolean(shouldHideProcess && msg.role === 'assistant' && isFinalAssistantOfTurn)
+                      let prevVisibleMsg: any = null
+                      for (let j = index - 1; j >= 0; j -= 1) {
+                        const candidate = displayMessages[j]
+                        if (isStageOnlyAssistantMessage(candidate)) continue
+                        prevVisibleMsg = candidate
+                        break
+                      }
+                      const isToolGroupHead = msg.role === 'tool' && String(prevVisibleMsg?.role || '') !== 'tool'
 
                       // 历史轮次折叠时，非标题行的过程消息应完全移除，避免空行继续占用 flex gap 间距。
                       if (isCollapsibleProcessRow && !processRowVisible && !showTurnProcessSummary) return null
+                      if (msg.role === 'tool' && !isToolGroupHead) return null
 
                       const turnDangerousApprovals = turnId ? dangerousApprovalsByTurn[turnId] || [] : []
 
@@ -4727,7 +4858,7 @@ function AppLoaded(): JSX.Element {
                       ) : msg.role === 'tool' ? (
                         <div className="py-0.5 group">
                             <AnimatePresence initial={false}>
-                              {!shouldHideProcess && Array.isArray(msg.meta?.toolTraces) && msg.meta?.toolTraces.length > 0 ? (
+                              {!shouldHideProcess ? (
                                 <motion.div
                                   key={`tool-traces:${String(msg.id || '')}`}
                                   initial={false}
@@ -4739,7 +4870,22 @@ function AppLoaded(): JSX.Element {
                                 >
                                   <div className="min-h-0 overflow-hidden">
                                   {(() => {
-                              const rawTraces = msg.meta?.toolTraces || []
+                              const segmentToolMessages: any[] = []
+                              for (let i = index; i < displayMessages.length; i += 1) {
+                                const nextMsg = displayMessages[i]
+                                const nextMsgId = String(nextMsg?.id || '').trim()
+                                const nextTurnId = nextMsgId ? String(effectiveTurnIdByMessageId[nextMsgId] || '').trim() : ''
+                                if (turnId && nextTurnId && nextTurnId !== turnId) break
+                                if (String(nextMsg?.role || '') === 'tool') {
+                                  segmentToolMessages.push(nextMsg)
+                                  continue
+                                }
+                                if (isStageOnlyAssistantMessage(nextMsg)) continue
+                                break
+                              }
+                              const rawTraces = segmentToolMessages.flatMap((m: any) =>
+                                Array.isArray(m?.meta?.toolTraces) ? m.meta.toolTraces : []
+                              )
                               const traces = rawTraces.filter((tr: any) => {
                                 if (String(tr?.status || '') !== 'running') return true
                                 const sig = toolTraceSignature(tr)
@@ -4751,9 +4897,58 @@ function AppLoaded(): JSX.Element {
                                   return toolTraceSignature(x) === sig
                                 })
                               })
+                              const toolMsgId = String(msg.id || '')
+                              const hasStoredGroupOpen = Object.prototype.hasOwnProperty.call(toolTraceGroupOpenByMsgId, toolMsgId)
+                              const groupOpen = hasStoredGroupOpen
+                                ? Boolean(toolTraceGroupOpenByMsgId[toolMsgId])
+                                : Boolean(isLoading && isLatestTurn)
+                              const summary = summarizeToolTraceCategories(traces)
+                              const summaryText = formatToolTraceSummary(summary)
+                              if (!traces.length) return null
 
                               return (
                                 <div className="space-y-0.5">
+                                  <button
+                                    type="button"
+                                    className="group w-full flex items-center gap-2 min-w-0 py-0.5 rounded-md text-left hover:bg-muted/10 transition-colors motion-reduce:transition-none"
+                                    onClick={(e) => {
+                                      e.preventDefault()
+                                      e.stopPropagation()
+                                      setToolTraceGroupOpenByMsgId((prev) => ({ ...prev, [toolMsgId]: !groupOpen }))
+                                    }}
+                                    aria-expanded={groupOpen}
+                                  >
+                                    <span className="min-w-0 truncate text-[12px] text-muted-foreground/80">
+                                      {summaryText}
+                                    </span>
+                                    <span
+                                      aria-hidden="true"
+                                      className={`h-4 w-4 shrink-0 text-muted-foreground/70 transition-opacity motion-reduce:transition-none flex items-center justify-center ${
+                                        groupOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                                      }`}
+                                    >
+                                      <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-300 motion-reduce:transition-none ${groupOpen ? 'rotate-0' : '-rotate-90'}`} />
+                                    </span>
+                                  </button>
+                                  <AnimatePresence initial={false}>
+                                    {groupOpen ? (
+                                      <motion.div
+                                        key={`tool-trace-group:${toolMsgId}`}
+                                        initial={{ gridTemplateRows: '0fr' }}
+                                        animate={{ gridTemplateRows: '1fr' }}
+                                        exit={{ gridTemplateRows: '0fr' }}
+                                        transition={collapseAnimTransition}
+                                        className="overflow-hidden"
+                                        style={{ display: 'grid', willChange: 'grid-template-rows' }}
+                                      >
+                                        <div className="min-h-0 overflow-hidden">
+                                          <motion.div
+                                            className="space-y-0.5"
+                                            initial={collapseContentAnim.initial}
+                                            animate={collapseContentAnim.animate}
+                                            exit={collapseContentAnim.exit}
+                                            transition={collapseContentAnim.transition}
+                                          >
                                   {traces.map((tr: any) => {
                                     const detailKey = `${msg.id}:${tr.id}`
                                     const detailOpen = !!traceDetailOpenByKey[detailKey]
@@ -5236,16 +5431,17 @@ function AppLoaded(): JSX.Element {
                                                       code({ inline, className, children, ...props }: any) {
                                                         const value = String(children).replace(/\n$/, '')
                                                         const trimmed = value.trim()
+                                                        const displayText = inline ? stripWrappedBackticks(trimmed) : trimmed
                                                         const isFileToken =
                                                           Boolean(inline) &&
-                                                          !/^https?:\/\//i.test(trimmed) &&
-                                                          (trimmed.startsWith('file://') ||
-                                                            trimmed.startsWith('/') ||
-                                                            trimmed.startsWith('\\') ||
-                                                            trimmed.startsWith('./') ||
-                                                            trimmed.startsWith('../') ||
-                                                            trimmed.startsWith('~/') ||
-                                                            /\.(ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)$/i.test(trimmed))
+                                                          !/^https?:\/\//i.test(displayText) &&
+                                                          (displayText.startsWith('file://') ||
+                                                            displayText.startsWith('/') ||
+                                                            displayText.startsWith('\\') ||
+                                                            displayText.startsWith('./') ||
+                                                            displayText.startsWith('../') ||
+                                                            displayText.startsWith('~/') ||
+                                                            /\.(ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)$/i.test(displayText))
                                                         if (isFileToken) {
                                                           return (
                                                             <button
@@ -5254,15 +5450,15 @@ function AppLoaded(): JSX.Element {
                                                               onClick={(e) => {
                                                                 e.preventDefault()
                                                                 e.stopPropagation()
-                                                                openLinkTarget(trimmed)
+                                                                openLinkTarget(displayText)
                                                               }}
-                                                              title={trimmed}
+                                                              title={displayText}
                                                             >
-                                                              {trimmed}
+                                                              {displayText}
                                                             </button>
                                                           )
                                                         }
-                                                        return <code className={className} {...props}>{children}</code>
+                                                        return <code className={className} {...props}>{displayText}</code>
                                                       },
                                                       a({ href, children, ...props }: any) {
                                                         const target = String(href || '').trim()
@@ -5313,6 +5509,11 @@ function AppLoaded(): JSX.Element {
                                       </div>
                                     )
                                   })}
+                                          </motion.div>
+                                        </div>
+                                      </motion.div>
+                                    ) : null}
+                                  </AnimatePresence>
                                 </div>
                               )
                                   })()}
@@ -5528,15 +5729,16 @@ function AppLoaded(): JSX.Element {
                                       const lang = match ? match[1] : 'text'
                                       const value = String(children).replace(/\n$/, '')
                                       const trimmed = value.trim()
+                                      const displayText = inline ? stripWrappedBackticks(trimmed) : trimmed
                                       const isFileToken =
-                                        !/^https?:\/\//i.test(trimmed) &&
-                                        (trimmed.startsWith('file://') ||
-                                          trimmed.startsWith('/') ||
-                                          trimmed.startsWith('\\') ||
-                                          trimmed.startsWith('./') ||
-                                          trimmed.startsWith('../') ||
-                                          trimmed.startsWith('~/') ||
-                                          /\.(ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)$/i.test(trimmed))
+                                        !/^https?:\/\//i.test(displayText) &&
+                                        (displayText.startsWith('file://') ||
+                                          displayText.startsWith('/') ||
+                                          displayText.startsWith('\\') ||
+                                          displayText.startsWith('./') ||
+                                          displayText.startsWith('../') ||
+                                          displayText.startsWith('~/') ||
+                                          /\.(ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)$/i.test(displayText))
                                       const isShortFence = !inline && !match && trimmed && !trimmed.includes('\n') && trimmed.length <= 80
                                       if (isShortFence) {
                                         return (
@@ -5562,15 +5764,15 @@ function AppLoaded(): JSX.Element {
                                             onClick={(e) => {
                                               e.preventDefault()
                                               e.stopPropagation()
-                                              openLinkTarget(trimmed)
+                                              openLinkTarget(displayText)
                                             }}
-                                            title={trimmed}
+                                            title={displayText}
                                           >
-                                            {trimmed}
+                                            {displayText}
                                           </button>
                                         )
                                       }
-                                      return <code className={className} {...props}>{children}</code>
+                                      return <code className={className} {...props}>{displayText}</code>
                                     },
                                     img({ src, alt, ...props }: any) {
                                       const raw = String(src || '').trim()
@@ -5667,7 +5869,7 @@ function AppLoaded(): JSX.Element {
                                 {renderArtifacts(msg.meta.artifacts, 'md')}
                               </div>
                             )}
-                            {String(msg.content || '').trim() ? (
+                            {isFinalAssistantOfTurn && String(msg.content || '').trim() ? (
                               <button
                                 type="button"
                                 className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-all ${
@@ -5864,6 +6066,16 @@ function AppLoaded(): JSX.Element {
                     slashMenuTitle={slashText.menuTitle}
                     slashMenuHint={slashText.menuHint}
                     slashSourceLabels={{ builtin: slashText.builtIn, project: slashText.project }}
+                    slashCommandSectionLabel={slashText.commandSection}
+                    slashSkillSectionLabel={slashText.skillSection}
+                    slashCommandKindLabel={slashText.kindCommand}
+                    slashSkillKindLabel={slashText.kindSkill}
+                    slashSkills={slashSkills}
+                    slashSkillSourceLabels={{ personal: slashText.personal, system: slashText.system }}
+                    slashNoSkillsLabel={slashText.noSkills}
+                    onNeedLoadSkills={() => {
+                      void ensureSkills()
+                    }}
                     tabApplyHint={t.composer.completionApplyHint}
                     onExecuteSlashCommand={handleExecuteSlashCommand}
                     onStop={handleStop}
@@ -6382,6 +6594,14 @@ function ChatComposer({
   slashMenuTitle,
   slashMenuHint,
   slashSourceLabels,
+  slashCommandSectionLabel,
+  slashSkillSectionLabel,
+  slashCommandKindLabel,
+  slashSkillKindLabel,
+  slashSkills,
+  slashSkillSourceLabels,
+  slashNoSkillsLabel,
+  onNeedLoadSkills,
   tabApplyHint,
   onExecuteSlashCommand,
   onStop,
@@ -6401,6 +6621,14 @@ function ChatComposer({
   slashMenuTitle: string
   slashMenuHint: string
   slashSourceLabels: { builtin: string; project: string }
+  slashCommandSectionLabel: string
+  slashSkillSectionLabel: string
+  slashCommandKindLabel: string
+  slashSkillKindLabel: string
+  slashSkills: Array<{ id: string; name: string; description?: string; source: 'personal' | 'system'; isEnabled: boolean }>
+  slashSkillSourceLabels: { personal: string; system: string }
+  slashNoSkillsLabel: string
+  onNeedLoadSkills?: () => void
   tabApplyHint: string
   onExecuteSlashCommand: (rawInput: string) => Promise<{ handled: boolean; clearValue?: boolean; nextValue?: string }>
   onStop: () => void
@@ -6444,6 +6672,17 @@ function ChatComposer({
     if (!slashInput?.shouldSuggest) return []
     return filterSlashCommands(slashCommands, slashInput.query)
   }, [slashCommands, slashInput])
+  const slashSkillSuggestions = useMemo(() => {
+    if (!slashInput?.shouldSuggest) return []
+    const q = String(slashInput.query || '').trim().toLowerCase()
+    if (!q) return slashSkills
+    return slashSkills.filter((item) => {
+      const name = String(item.name || '').toLowerCase()
+      const id = String(item.id || '').toLowerCase()
+      const desc = String(item.description || '').toLowerCase()
+      return name.includes(q) || id.includes(q) || desc.includes(q)
+    })
+  }, [slashInput, slashSkills])
   const slashMenuOpen = Boolean(slashInput?.shouldSuggest && !slashDismissed)
   const activeSlashSuggestion = slashSuggestions[Math.min(slashIndex, Math.max(0, slashSuggestions.length - 1))] || null
   const selectedSlashCommand = useMemo(() => {
@@ -6485,6 +6724,12 @@ function ChatComposer({
     if (!node) return
     node.scrollIntoView({ block: 'nearest' })
   }, [slashIndex, slashMenuOpen, slashSuggestions.length])
+
+  useEffect(() => {
+    if (!slashMenuOpen) return
+    if (!onNeedLoadSkills) return
+    onNeedLoadSkills()
+  }, [slashMenuOpen, onNeedLoadSkills])
 
   const api = useMemo(() => {
     const ensureAnchor = (prev: string) => {
@@ -6635,9 +6880,10 @@ function ChatComposer({
             </div>
             <div className="text-[11px] text-muted-foreground">{slashMenuHint}</div>
           </div>
-          {slashSuggestions.length > 0 ? (
-            <div ref={slashMenuRef} className="h-[240px] overflow-y-auto p-1.5 custom-scrollbar">
-              {slashSuggestions.map((command, index) => {
+          <div ref={slashMenuRef} className="max-h-[320px] overflow-y-auto p-1.5 custom-scrollbar">
+            <div className="px-1 pb-1 text-[11px] font-medium text-muted-foreground">{slashCommandSectionLabel}</div>
+            {slashSuggestions.length > 0 ? (
+              slashSuggestions.map((command, index) => {
                 const selected = index === Math.min(slashIndex, Math.max(0, slashSuggestions.length - 1))
                 return (
                   <button
@@ -6647,10 +6893,8 @@ function ChatComposer({
                     }}
                     type="button"
                     aria-selected={selected}
-                    className={`group flex w-full items-start gap-2 rounded-md border px-2 py-2 text-left transition-colors ${
-                      selected
-                        ? 'border-border bg-accent text-accent-foreground'
-                        : 'border-transparent hover:bg-black/5'
+                    className={`group mb-1 flex w-full items-start gap-2 rounded-md border px-2 py-2 text-left transition-colors ${
+                      selected ? 'border-border bg-accent text-accent-foreground' : 'border-transparent hover:bg-black/5'
                     }`}
                     onMouseEnter={() => setSlashIndex(index)}
                     onMouseDown={(e) => {
@@ -6663,6 +6907,9 @@ function ChatComposer({
                       <div className="flex items-center gap-2">
                         <span className="text-[13px] font-medium leading-none">{command.title}</span>
                         <Badge variant="outline" className="h-5 rounded-full px-2 text-[10px] font-normal">
+                          {slashCommandKindLabel}
+                        </Badge>
+                        <Badge variant="outline" className="h-5 rounded-full px-2 text-[10px] font-normal">
                           {command.source === 'project' ? slashSourceLabels.project : slashSourceLabels.builtin}
                         </Badge>
                       </div>
@@ -6670,11 +6917,40 @@ function ChatComposer({
                     </div>
                   </button>
                 )
-              })}
+              })
+            ) : (
+              <div className="px-2 py-2 text-xs text-muted-foreground">{slashEmptyLabel}</div>
+            )}
+
+            <div className="mt-1 border-t pt-2">
+              <div className="px-1 pb-1 text-[11px] font-medium text-muted-foreground">{slashSkillSectionLabel}</div>
+              {slashSkillSuggestions.length > 0 ? (
+                slashSkillSuggestions.map((skill) => (
+                  <div
+                    key={`skill:${skill.id}`}
+                    className="mb-1 flex items-start gap-2 rounded-md border border-transparent px-2 py-2 hover:bg-black/5"
+                    title={skill.id}
+                  >
+                    <div className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${skill.isEnabled ? 'bg-primary' : 'bg-muted-foreground/35'}`} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[13px] font-medium leading-none truncate">{skill.name}</span>
+                        <Badge variant="outline" className="h-5 rounded-full px-2 text-[10px] font-normal">
+                          {slashSkillKindLabel}
+                        </Badge>
+                        <Badge variant="outline" className="h-5 rounded-full px-2 text-[10px] font-normal">
+                          {skill.source === 'system' ? slashSkillSourceLabels.system : slashSkillSourceLabels.personal}
+                        </Badge>
+                      </div>
+                      {skill.description ? <div className="mt-1 line-clamp-1 text-xs text-muted-foreground">{skill.description}</div> : null}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="px-2 py-2 text-xs text-muted-foreground">{slashNoSkillsLabel}</div>
+              )}
             </div>
-          ) : (
-            <div className="px-4 py-4 text-xs text-muted-foreground">{slashEmptyLabel}</div>
-          )}
+          </div>
         </div>
       ) : null}
       <div className="px-2">

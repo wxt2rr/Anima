@@ -45,8 +45,16 @@ from .memory import (
     handle_get_memory_metrics,
     handle_patch_memory_items,
     handle_post_memory_items,
+    handle_post_memory_query,
     handle_post_memory_embedding_models_download,
     handle_post_memory_embedding_models_download_cancel,
+)
+from .kb import (
+    handle_delete_kb_documents,
+    handle_get_kb_documents,
+    handle_get_kb_import_status,
+    handle_post_kb_import,
+    handle_post_kb_query,
 )
 from .mcp import (
     handle_get_mcp_config,
@@ -202,6 +210,7 @@ EXACT_ROUTES: Dict[Tuple[str, str], ExactHandler] = {
     ("GET", "/memory/metrics"): handle_get_memory_metrics,
     ("GET", "/memory/items"): handle_get_memory_items,
     ("POST", "/memory/items"): handle_post_memory_items,
+    ("POST", "/memory/query"): handle_post_memory_query,
     ("PATCH", "/memory/items"): handle_patch_memory_items,
     ("DELETE", "/memory/items"): handle_delete_memory_items,
     ("GET", "/memory/embedding/models/base_dir"): handle_get_memory_embedding_models_base_dir,
@@ -210,6 +219,11 @@ EXACT_ROUTES: Dict[Tuple[str, str], ExactHandler] = {
     ("GET", "/memory/embedding/models/download/status"): handle_get_memory_embedding_models_download_status,
     ("POST", "/memory/embedding/models/download"): handle_post_memory_embedding_models_download,
     ("POST", "/memory/embedding/models/download/cancel"): handle_post_memory_embedding_models_download_cancel,
+    ("GET", "/kb/documents"): handle_get_kb_documents,
+    ("POST", "/kb/import"): handle_post_kb_import,
+    ("GET", "/kb/import/status"): handle_get_kb_import_status,
+    ("DELETE", "/kb/documents"): handle_delete_kb_documents,
+    ("POST", "/kb/query"): handle_post_kb_query,
     ("GET", "/api/mcp/config"): handle_get_mcp_config,
     ("PUT", "/api/mcp/config"): handle_put_mcp_config,
     ("POST", "/api/mcp/validate"): handle_post_mcp_validate,

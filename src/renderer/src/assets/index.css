@@ -27,7 +27,7 @@
     --ring: 240 5.9% 10%;
     --radius: 1rem;
     --app-left-pane-width: 288px;
-    --app-left-pane-bg: #efefef;
+    --app-left-pane-bg: #fafafa;
     --app-left-pane-header-height: 44px;
     --app-left-pane-pad-x: 12px;
     --app-left-pane-leading-safe: 84px;
@@ -126,6 +126,12 @@
   }
   ::-webkit-scrollbar-thumb:hover {
     background: hsl(var(--muted-foreground) / 0.4);
+  }
+
+  .prose a code,
+  .prose-sm a code,
+  .prose-invert a code {
+    color: inherit;
   }
 }
 

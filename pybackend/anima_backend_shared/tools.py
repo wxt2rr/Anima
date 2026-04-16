@@ -6,6 +6,7 @@ import sys
 import base64
 import mimetypes
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import html
 import ipaddress
@@ -41,6 +42,19 @@ DEFAULT_DANGEROUS_COMMANDS = [
     "scp",
     "sftp",
 ]
+
+PARALLEL_MAX_WORKERS = 4
+PARALLEL_ALLOWED_TOOLS = {
+    "bash",
+    "read_file",
+    "list_dir",
+    "glob_files",
+    "rg_search",
+    "apply_patch",
+    "load_skill",
+    "WebSearch",
+    "WebFetch",
+}
 
 
 def _resolve_permission_mode(args: Dict[str, Any]) -> str:
@@ -601,6 +615,31 @@ def builtin_tools() -> List[Dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "multi_tool_use_parallel",
+                "description": "Run multiple tool calls concurrently and return aggregated results in original order.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "tool_uses": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "recipient_name": {"type": "string"},
+                                    "parameters": {"type": "object"},
+                                },
+                                "required": ["recipient_name", "parameters"],
+                            },
+                        },
+                        "max_parallel": {"type": "integer"},
+                    },
+                    "required": ["tool_uses"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "bash",
                 "description": "Run a safe bash command on this Mac and return stdout/stderr.",
                 "parameters": {
@@ -937,7 +976,132 @@ def mcp_tools(settings_obj: Dict[str, Any], composer: Dict[str, Any]) -> Tuple[L
     return tools, call_index
 
 
+def _parallel_resolve_tool_name(raw_name: str) -> str:
+    name = str(raw_name or "").strip()
+    if not name:
+        return ""
+    if name.startswith("functions."):
+        mapped = name.split(".", 1)[1].strip()
+        if mapped == "exec_command":
+            return "bash"
+        return mapped
+    if name in ("multi_tool_use_parallel", "multi_tool_use.parallel"):
+        return name
+    return name
+
+
+def _parallel_resolve_tool_args(*, recipient_name: str, params: Dict[str, Any], parent_args: Dict[str, Any]) -> Dict[str, Any]:
+    args = dict(params or {})
+    # 继承父调用里的执行安全上下文，确保并行子调用遵循同一审批与权限约束。
+    for k, v in (parent_args or {}).items():
+        if str(k).startswith("_anima") and k not in args:
+            args[k] = v
+    if recipient_name == "functions.exec_command":
+        out: Dict[str, Any] = {}
+        out["command"] = str(args.get("cmd") or args.get("command") or "").strip()
+        if not out["command"]:
+            raise RuntimeError("tool_uses[].parameters.cmd is required for functions.exec_command")
+        cwd = str(args.get("workdir") or args.get("cwd") or "").strip()
+        if cwd:
+            out["cwd"] = cwd
+        timeout_ms = args.get("yield_time_ms")
+        if timeout_ms is None:
+            timeout_ms = args.get("timeoutMs")
+        if timeout_ms is not None:
+            try:
+                out["timeoutMs"] = int(timeout_ms)
+            except Exception:
+                pass
+        for k, v in args.items():
+            if str(k).startswith("_anima"):
+                out[k] = v
+        return out
+    return args
+
+
 def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) -> str:
+    if name in ("multi_tool_use_parallel", "multi_tool_use.parallel"):
+        raw_uses = args.get("tool_uses")
+        if not isinstance(raw_uses, list) or not raw_uses:
+            raise RuntimeError("tool_uses must be a non-empty array")
+        try:
+            max_parallel = int(args.get("max_parallel") or PARALLEL_MAX_WORKERS)
+        except Exception:
+            max_parallel = PARALLEL_MAX_WORKERS
+        max_workers = max(1, min(max_parallel, PARALLEL_MAX_WORKERS, len(raw_uses)))
+        results: List[Optional[Dict[str, Any]]] = [None] * len(raw_uses)
+        started_at = int(time.time() * 1000)
+
+        def _run_one(i: int, item: Any) -> Dict[str, Any]:
+            call_started = int(time.time() * 1000)
+            if not isinstance(item, dict):
+                raise RuntimeError("each tool_uses item must be an object")
+            recipient_name = str(item.get("recipient_name") or item.get("name") or "").strip()
+            if not recipient_name:
+                raise RuntimeError("tool_uses[].recipient_name is required")
+            params = item.get("parameters")
+            if not isinstance(params, dict):
+                raise RuntimeError("tool_uses[].parameters must be an object")
+            tool_name = _parallel_resolve_tool_name(recipient_name)
+            if not tool_name:
+                raise RuntimeError("unable to resolve tool name")
+            if tool_name in ("multi_tool_use_parallel", "multi_tool_use.parallel"):
+                raise RuntimeError("nested multi_tool_use.parallel is not allowed")
+            if tool_name not in PARALLEL_ALLOWED_TOOLS:
+                raise RuntimeError(f"tool not allowed in parallel: {tool_name}")
+            call_args = _parallel_resolve_tool_args(recipient_name=recipient_name, params=params, parent_args=args)
+            raw = execute_builtin_tool(tool_name, call_args, workspace_dir)
+            try:
+                parsed_result: Any = json.loads(raw)
+            except Exception:
+                parsed_result = raw
+            call_ended = int(time.time() * 1000)
+            return {
+                "index": i,
+                "recipientName": recipient_name,
+                "toolName": tool_name,
+                "ok": True,
+                "durationMs": max(0, call_ended - call_started),
+                "result": parsed_result,
+            }
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            fut_to_idx = {pool.submit(_run_one, i, item): i for i, item in enumerate(raw_uses)}
+            for fut in as_completed(fut_to_idx):
+                i = fut_to_idx[fut]
+                try:
+                    results[i] = fut.result()
+                except Exception as e:
+                    call_ended = int(time.time() * 1000)
+                    item = raw_uses[i] if i < len(raw_uses) else {}
+                    recipient_name = str((item or {}).get("recipient_name") or (item or {}).get("name") or "").strip()
+                    tool_name = _parallel_resolve_tool_name(recipient_name)
+                    results[i] = {
+                        "index": i,
+                        "recipientName": recipient_name,
+                        "toolName": tool_name,
+                        "ok": False,
+                        "durationMs": 0,
+                        "error": str(e),
+                        "endedAt": call_ended,
+                    }
+
+        settled = [r for r in results if isinstance(r, dict)]
+        ended_at = int(time.time() * 1000)
+        ok = len(settled) == len(raw_uses) and all(bool((r or {}).get("ok")) for r in settled)
+        return json.dumps(
+            {
+                "ok": ok,
+                "tool": "multi_tool_use_parallel",
+                "maxWorkers": max_workers,
+                "startedAt": started_at,
+                "endedAt": ended_at,
+                "durationMs": max(0, ended_at - started_at),
+                "results": settled,
+            },
+            ensure_ascii=False,
+        )
+
     if name == "memory_metrics":
         if not workspace_dir:
             raise RuntimeError("No workspace directory selected")

@@ -323,6 +323,13 @@ export interface Settings {
   memoryScopeAutoEnabled?: boolean
   memoryDefaultWriteScope?: 'workspace' | 'global'
   memoryEmbeddingLocalModels?: Array<{ id: string; name: string; path: string; updatedAt?: number }>
+  kbEnabled?: boolean
+  kbAutoQueryEnabled?: boolean
+  kbMaxRetrieveCount?: number
+  kbSimilarityThreshold?: number
+  kbHybridEnabled?: boolean
+  kbChunkSize?: number
+  kbChunkOverlap?: number
 
   cron?: {
     enabled?: boolean
@@ -510,8 +517,8 @@ interface AppState {
   updateLastMessage: (content: string, meta?: Message['meta']) => void
   persistLastMessage: () => Promise<void>
   clearMessages: () => void
-  createChat: () => Promise<void>
-  createChatInProject: (projectId: string) => Promise<void>
+  createChat: (options?: { expandSidebar?: boolean }) => Promise<void>
+  createChatInProject: (projectId: string, options?: { expandSidebar?: boolean }) => Promise<void>
   ensureActiveChatInProject: (projectId?: string) => Promise<string>
   updateChat: (chatId: string, updates: Partial<ChatThread>) => Promise<void>
   setActiveChat: (chatId: string) => Promise<void>
@@ -838,6 +845,13 @@ const normalizeSettingsPayload = (rawSettings: any): any => {
   if (typeof rawSettings.memoryScopeAutoEnabled !== 'boolean') rawSettings.memoryScopeAutoEnabled = false
   rawSettings.memoryDefaultWriteScope =
     String(rawSettings.memoryDefaultWriteScope || '').trim().toLowerCase() === 'global' ? 'global' : 'workspace'
+  if (typeof rawSettings.kbEnabled !== 'boolean') rawSettings.kbEnabled = true
+  if (typeof rawSettings.kbAutoQueryEnabled !== 'boolean') rawSettings.kbAutoQueryEnabled = true
+  if (typeof rawSettings.kbHybridEnabled !== 'boolean') rawSettings.kbHybridEnabled = true
+  if (!Number.isFinite(Number(rawSettings.kbMaxRetrieveCount))) rawSettings.kbMaxRetrieveCount = 6
+  if (!Number.isFinite(Number(rawSettings.kbSimilarityThreshold))) rawSettings.kbSimilarityThreshold = 0.35
+  if (!Number.isFinite(Number(rawSettings.kbChunkSize))) rawSettings.kbChunkSize = 1200
+  if (!Number.isFinite(Number(rawSettings.kbChunkOverlap))) rawSettings.kbChunkOverlap = 200
   if (!Array.isArray(rawSettings.plugins)) rawSettings.plugins = []
   if (!Array.isArray(rawSettings.mcpServers)) rawSettings.mcpServers = []
 
@@ -1190,7 +1204,8 @@ export const useStore = create<AppState>()(
         }
       },
 
-      createChat: async () => {
+      createChat: async (options) => {
+        const expandSidebar = options?.expandSidebar !== false
         const pid = String(get().ui.activeProjectId || '').trim()
         if (!pid) {
           set((state) => ({
@@ -1198,7 +1213,7 @@ export const useStore = create<AppState>()(
             messages: [],
             ui: {
               ...state.ui,
-              sidebarCollapsed: false,
+              sidebarCollapsed: expandSidebar ? false : state.ui.sidebarCollapsed,
               sidebarSearchOpen: false,
               sidebarSearchQuery: '',
               composer: createDefaultComposer()
@@ -1206,10 +1221,11 @@ export const useStore = create<AppState>()(
           }))
           return
         }
-        await get().createChatInProject(pid)
+        await get().createChatInProject(pid, { expandSidebar })
       },
 
-      createChatInProject: async (projectId) => {
+      createChatInProject: async (projectId, options) => {
+        const expandSidebar = options?.expandSidebar !== false
         const pid = String(projectId || '').trim()
         if (!pid) return
         const st = get()
@@ -1222,7 +1238,7 @@ export const useStore = create<AppState>()(
           ui: {
             ...state.ui,
             activeProjectId: pid,
-            sidebarCollapsed: false,
+            sidebarCollapsed: expandSidebar ? false : state.ui.sidebarCollapsed,
             sidebarSearchOpen: false,
             sidebarSearchQuery: '',
             composer: createDefaultComposer()
@@ -1544,7 +1560,7 @@ export const useStore = create<AppState>()(
             }
             const chat = state.chats.find(c => c.id === activeChatId)
             if (chat && chat.title === 'New Chat' && created.role === 'user' && state.messages.length === 0) {
-              const newTitle = created.content.trim().slice(0, 32) || 'New Chat'
+              const newTitle = created.content.trim().slice(0, 28) || 'New Chat'
               api.updateChat(activeChatId, { title: newTitle }).catch(console.error)
             }
           }
@@ -1558,7 +1574,7 @@ export const useStore = create<AppState>()(
             const chatMessages = Array.isArray(c.messages) ? c.messages : []
             const nextTitle =
               c.title === 'New Chat' && created.role === 'user' && chatMessages.length === 0
-                ? created.content.trim().slice(0, 32) || 'New Chat'
+                ? created.content.trim().slice(0, 28) || 'New Chat'
                 : c.title
             return { ...c, title: nextTitle, updatedAt: now, messages: [...chatMessages, created] }
           })

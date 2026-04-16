@@ -1672,6 +1672,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           automation: 'Automation',
           im: 'IM',
           memory: 'Memory',
+          knowledgeBase: 'Knowledge Base',
           skills: 'Skills',
           network: 'Network',
           data: 'Data',
@@ -1780,6 +1781,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           automation: '自动化',
           im: 'IM',
           memory: '记忆',
+          knowledgeBase: '知识库',
           skills: '技能',
           network: '网络',
           data: '数据',
@@ -1888,6 +1890,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
           automation: '自動化',
           im: 'IM',
           memory: 'メモリー',
+          knowledgeBase: 'ナレッジベース',
           skills: 'スキル',
           network: 'ネットワーク',
           data: 'データ',
@@ -1993,6 +1996,8 @@ export const SettingsDialog = memo(function SettingsDialog() {
     { id: 'chat', label: t.tabs.chat, icon: MessageSquare },
     { id: 'mcp', label: t.tabs.mcp, icon: Database },
     { id: 'coder', label: t.tabs.coder, icon: Sparkles },
+    { id: 'knowledgeBase', label: t.tabs.knowledgeBase, icon: Search },
+    { id: 'memory', label: t.tabs.memory, icon: Search },
     { id: 'im', label: t.tabs.im, icon: ExternalLink },
     { id: 'skills', label: t.tabs.skills, icon: Wand2 },
     { id: 'network', label: t.tabs.network, icon: Globe },
@@ -2010,6 +2015,8 @@ export const SettingsDialog = memo(function SettingsDialog() {
     if (activeTab === 'chat') return <ChatSettings />
     if (activeTab === 'mcp') return <McpSettings />
     if (activeTab === 'coder') return <CoderSettings />
+    if (activeTab === 'knowledgeBase') return <KnowledgeBaseSettings />
+    if (activeTab === 'memory') return <MemorySettings />
     if (activeTab === 'im') return <ImSettings />
     if (activeTab === 'skills') return <SkillsSettings />
     if (activeTab === 'network') return <NetworkSettings />
@@ -2110,6 +2117,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           automation: 'Automation',
           im: 'IM',
           memory: 'Memory',
+          knowledgeBase: 'Knowledge Base',
           skills: 'Skills',
           network: 'Network',
           data: 'Data',
@@ -2147,6 +2155,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           automation: '自动化',
           im: 'IM',
           memory: '记忆',
+          knowledgeBase: '知识库',
           skills: '技能',
           network: '网络',
           data: '数据',
@@ -2184,6 +2193,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
           automation: '自動化',
           im: 'IM',
           memory: 'メモリー',
+          knowledgeBase: 'ナレッジベース',
           skills: 'スキル',
           network: 'ネットワーク',
           data: 'データ',
@@ -2254,6 +2264,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
     { id: 'mcp', label: t.tabs.mcp, icon: Database },
     { id: 'coder', label: t.tabs.coder, icon: Sparkles },
     { id: 'automation', label: t.tabs.automation, icon: Clock3 },
+    { id: 'knowledgeBase', label: t.tabs.knowledgeBase, icon: Search },
     { id: 'memory', label: t.tabs.memory, icon: Search },
     { id: 'im', label: t.tabs.im, icon: ExternalLink },
     { id: 'skills', label: t.tabs.skills, icon: Wand2 },
@@ -2273,6 +2284,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
     if (activeTab === 'mcp') return <McpSettings />
     if (activeTab === 'coder') return <CoderSettings />
     if (activeTab === 'automation') return <AutomationSettings />
+    if (activeTab === 'knowledgeBase') return <KnowledgeBaseSettings />
     if (activeTab === 'memory') return <MemorySettings />
     if (activeTab === 'im') return <ImSettings />
     if (activeTab === 'skills') return <SkillsSettings />
@@ -5099,6 +5111,7 @@ function NetworkSettings() {
           )}
         </div>
       </Card>
+
     </div>
   )
 }
@@ -7861,6 +7874,476 @@ function joinPath(...parts: string[]) {
   return parts.join('/').replace(/\/+/g, '/')
 }
 
+function KnowledgeBaseSettings() {
+  const { settings: settings0, updateSettings, ui } = useStore()
+  const settings = settings0!
+  const [kbDocs, setKbDocs] = useState<Array<{ id: string; path: string; fileName: string; chunkCount: number; updatedAt: number }>>([])
+  const [kbStats, setKbStats] = useState<{ documents: number; chunks: number }>({ documents: 0, chunks: 0 })
+  const [kbLoading, setKbLoading] = useState(false)
+  const [kbBusy, setKbBusy] = useState(false)
+  const [kbError, setKbError] = useState('')
+  const [kbImportProgress, setKbImportProgress] = useState(0)
+  const [kbImportMessage, setKbImportMessage] = useState('')
+  const [kbTestQuery, setKbTestQuery] = useState('')
+  const [kbTestLoading, setKbTestLoading] = useState(false)
+  const [kbTestError, setKbTestError] = useState('')
+  const [kbTestItems, setKbTestItems] = useState<
+    Array<{ id: string; fileName: string; documentPath: string; headerPath: string; content: string; score: number; similarity: number }>
+  >([])
+  const kbImportPollRef = useRef<number | null>(null)
+
+  const t = (() => {
+    const dict = {
+      en: {
+        feature: 'Knowledge Base (Markdown RAG)',
+        featureDesc: 'Import markdown files and inject retrieved chunks into chat context.',
+        enabled: 'Enable knowledge base retrieval',
+        autoQuery: 'Auto query on each user message',
+        hybrid: 'Hybrid retrieval (vector + keyword)',
+        maxRetrieve: 'Max retrieved chunks',
+        similarity: 'Similarity threshold',
+        chunkSize: 'Chunk size',
+        chunkOverlap: 'Chunk overlap',
+        import: 'Import Markdown',
+        refresh: 'Refresh',
+        empty: 'No markdown documents imported.',
+        docCount: 'Documents',
+        chunkCount: 'Chunks',
+        failedLoad: 'Failed to load knowledge base',
+        failedImport: 'Failed to import markdown files',
+        failedDelete: 'Failed to delete markdown file',
+        workspaceRequiredToManage: 'Please select a workspace before managing knowledge base.',
+        loading: 'Loading…',
+        noMarkdownPicked: 'No markdown files selected.',
+        importSummary: (i: number, s: number, f: number) => `Import finished: imported ${i}, skipped ${s}, failed ${f}`,
+        importing: 'Importing markdown files...',
+        testTitle: 'Retrieval test',
+        testPlaceholder: 'Input a query to test retrieval...',
+        testAction: 'Run retrieval',
+        testEmpty: 'No retrieval result.',
+        failedTest: 'Failed to run retrieval test',
+        testScoreLabel: 'Score',
+        testSimilarityLabel: 'Similarity'
+      },
+      zh: {
+        feature: '知识库（Markdown RAG）',
+        featureDesc: '导入 Markdown 文件，检索后自动注入到对话上下文。',
+        enabled: '启用知识库检索',
+        autoQuery: '每次提问自动检索',
+        hybrid: '混合检索（向量 + 关键词）',
+        maxRetrieve: '最大检索分块数',
+        similarity: '相似度阈值',
+        chunkSize: '分块大小',
+        chunkOverlap: '分块重叠',
+        import: '导入 Markdown',
+        refresh: '刷新',
+        empty: '暂无已导入的 Markdown 文档。',
+        docCount: '文档数',
+        chunkCount: '分块数',
+        failedLoad: '加载知识库失败',
+        failedImport: '导入 Markdown 失败',
+        failedDelete: '删除 Markdown 失败',
+        workspaceRequiredToManage: '请先选择工作区后再管理知识库。',
+        loading: '加载中…',
+        noMarkdownPicked: '未选择 Markdown 文件。',
+        importSummary: (i: number, s: number, f: number) => `导入完成：成功 ${i}，跳过 ${s}，失败 ${f}`,
+        importing: '正在导入 Markdown 文件...',
+        testTitle: '检索测试',
+        testPlaceholder: '输入问题后测试检索结果...',
+        testAction: '测试检索',
+        testEmpty: '没有检索结果。',
+        failedTest: '检索测试失败',
+        testScoreLabel: '综合分',
+        testSimilarityLabel: '相似度'
+      },
+      ja: {
+        feature: 'ナレッジベース（Markdown RAG）',
+        featureDesc: 'Markdown を取り込み、検索結果を会話コンテキストへ注入します。',
+        enabled: 'ナレッジベース検索を有効化',
+        autoQuery: '各ユーザーメッセージで自動検索',
+        hybrid: 'ハイブリッド検索（ベクトル + キーワード）',
+        maxRetrieve: '最大取得チャンク数',
+        similarity: '類似度しきい値',
+        chunkSize: 'チャンクサイズ',
+        chunkOverlap: 'チャンクオーバーラップ',
+        import: 'Markdown を取り込む',
+        refresh: '再読み込み',
+        empty: '取り込み済み Markdown はありません。',
+        docCount: 'ドキュメント数',
+        chunkCount: 'チャンク数',
+        failedLoad: 'ナレッジベースの読み込みに失敗しました',
+        failedImport: 'Markdown の取り込みに失敗しました',
+        failedDelete: 'Markdown の削除に失敗しました',
+        workspaceRequiredToManage: 'ナレッジベース管理の前にワークスペースを選択してください。',
+        loading: '読み込み中…',
+        noMarkdownPicked: 'Markdown ファイルが選択されていません。',
+        importSummary: (i: number, s: number, f: number) => `取り込み完了: 成功 ${i} / スキップ ${s} / 失敗 ${f}`,
+        importing: 'Markdown を取り込み中...',
+        testTitle: '検索テスト',
+        testPlaceholder: 'クエリを入力して検索結果を確認...',
+        testAction: '検索をテスト',
+        testEmpty: '検索結果がありません。',
+        failedTest: '検索テストに失敗しました',
+        testScoreLabel: 'スコア',
+        testSimilarityLabel: '類似度'
+      }
+    } as const
+    return dict[settings.language as keyof typeof dict] || dict.en
+  })()
+
+  const workspaceDir = useMemo(() => {
+    const projects = Array.isArray((settings as any)?.projects) ? (settings as any).projects : []
+    const pid = String((ui as any)?.activeProjectId || '').trim()
+    const p = pid ? projects.find((x: any) => String(x?.id || '').trim() === pid) : null
+    const dir = String((p as any)?.dir || '').trim()
+    if (dir) return dir
+    return String((settings as any)?.workspaceDir || '').trim()
+  }, [settings, ui])
+
+  const loadKbDocuments = useCallback(async () => {
+    if (!workspaceDir) {
+      setKbDocs([])
+      setKbStats({ documents: 0, chunks: 0 })
+      return
+    }
+    setKbLoading(true)
+    setKbError('')
+    try {
+      const q = new URLSearchParams({ workspaceDir, limit: '500' })
+      const res = await fetchBackendJson<{ ok: boolean; items?: Array<any>; stats?: any }>(`/kb/documents?${q.toString()}`, { method: 'GET' })
+      const items = Array.isArray(res.items) ? res.items : []
+      setKbDocs(
+        items
+          .map((it) => ({
+            id: String((it as any)?.id || '').trim(),
+            path: String((it as any)?.path || '').trim(),
+            fileName: String((it as any)?.fileName || '').trim(),
+            chunkCount: Number((it as any)?.chunkCount || 0),
+            updatedAt: Number((it as any)?.updatedAt || 0)
+          }))
+          .filter((it) => Boolean(it.id))
+      )
+      const s = (res as any)?.stats || {}
+      setKbStats({
+        documents: Number(s.documents || 0),
+        chunks: Number(s.chunks || 0)
+      })
+    } catch (e) {
+      setKbError(e instanceof Error ? e.message : t.failedLoad)
+    } finally {
+      setKbLoading(false)
+    }
+  }, [workspaceDir, t.failedLoad])
+
+  useEffect(() => {
+    void loadKbDocuments()
+  }, [loadKbDocuments])
+
+  useEffect(() => {
+    return () => {
+      const timer = kbImportPollRef.current
+      if (timer) window.clearTimeout(timer)
+      kbImportPollRef.current = null
+    }
+  }, [])
+
+  const pollKbImportTask = useCallback(
+    (taskId: string) => {
+      const tick = async () => {
+        try {
+          const res = await fetchBackendJson<{ ok: boolean; task?: any }>(`/kb/import/status?taskId=${encodeURIComponent(taskId)}`, { method: 'GET' })
+          const task = (res as any)?.task || {}
+          const status = String(task.status || '').trim()
+          const percent = Math.max(0, Math.min(100, Number(task.percent || 0)))
+          setKbImportProgress(percent)
+          const curFile = String(task.currentFile || '').trim()
+          setKbImportMessage(curFile ? `${t.importing} ${curFile}` : t.importing)
+          if (status === 'done') {
+            const rr = task.result || {}
+            setKbImportProgress(100)
+            setKbImportMessage(t.importSummary(Number(rr.imported || 0), Number(rr.skipped || 0), Number(rr.failed || 0)))
+            await loadKbDocuments()
+            setKbBusy(false)
+            kbImportPollRef.current = window.setTimeout(() => setKbImportProgress(0), 1200)
+            return
+          }
+          if (status === 'error') {
+            setKbBusy(false)
+            setKbImportProgress(0)
+            setKbImportMessage('')
+            setKbError(String(task.error || t.failedImport))
+            return
+          }
+        } catch (e) {
+          setKbBusy(false)
+          setKbImportProgress(0)
+          setKbImportMessage('')
+          setKbError(e instanceof Error ? e.message : t.failedImport)
+          return
+        }
+        kbImportPollRef.current = window.setTimeout(() => void tick(), 700)
+      }
+      kbImportPollRef.current = window.setTimeout(() => void tick(), 300)
+    },
+    [loadKbDocuments, t]
+  )
+
+  const importKbMarkdown = useCallback(async () => {
+    if (!workspaceDir) {
+      setKbError(t.workspaceRequiredToManage)
+      return
+    }
+    const picked = await window.anima?.window?.pickFiles?.()
+    if (!picked?.ok || picked.canceled) return
+    const allPaths = (Array.isArray(picked.paths) ? picked.paths : []).map((p: any) => String(p || '').trim()).filter(Boolean)
+    const paths = allPaths.filter((p) => /\.md$/i.test(p) || /\.markdown$/i.test(p))
+    if (!paths.length) {
+      setKbError(t.noMarkdownPicked)
+      return
+    }
+    if (kbImportPollRef.current) {
+      window.clearTimeout(kbImportPollRef.current)
+      kbImportPollRef.current = null
+    }
+    setKbBusy(true)
+    setKbError('')
+    setKbImportProgress(2)
+    setKbImportMessage(t.importing)
+    try {
+      const res = await fetchBackendJson<{ ok: boolean; taskId?: string }>('/kb/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspaceDir,
+          paths,
+          chunkSize: Number((settings as any).kbChunkSize || 1200),
+          chunkOverlap: Number((settings as any).kbChunkOverlap || 200)
+        })
+      })
+      const taskId = String((res as any)?.taskId || '').trim()
+      if (!taskId) throw new Error(t.failedImport)
+      pollKbImportTask(taskId)
+    } catch (e) {
+      setKbBusy(false)
+      setKbImportProgress(0)
+      setKbImportMessage('')
+      setKbError(e instanceof Error ? e.message : t.failedImport)
+    }
+  }, [workspaceDir, settings, t, pollKbImportTask])
+
+  const deleteKbDoc = useCallback(async (id: string) => {
+    const docId = String(id || '').trim()
+    if (!workspaceDir || !docId) return
+    setKbBusy(true)
+    setKbError('')
+    try {
+      await fetchBackendJson('/kb/documents', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceDir, ids: [docId] })
+      })
+      await loadKbDocuments()
+    } catch (e) {
+      setKbError(e instanceof Error ? e.message : t.failedDelete)
+    } finally {
+      setKbBusy(false)
+    }
+  }, [workspaceDir, loadKbDocuments, t.failedDelete])
+
+  const runKbRetrievalTest = useCallback(async () => {
+    const query = String(kbTestQuery || '').trim()
+    if (!query) {
+      setKbTestItems([])
+      setKbTestError('')
+      return
+    }
+    if (!workspaceDir) {
+      setKbTestItems([])
+      setKbTestError(t.workspaceRequiredToManage)
+      return
+    }
+    setKbTestLoading(true)
+    setKbTestError('')
+    try {
+      const res = await fetchBackendJson<{ ok: boolean; items?: Array<any> }>('/kb/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspaceDir,
+          query,
+          topK: Number((settings as any).kbMaxRetrieveCount || 6),
+          threshold: Number((settings as any).kbSimilarityThreshold ?? 0.35),
+          hybridEnabled: Boolean((settings as any).kbHybridEnabled ?? true),
+          keywordTopK: Math.max(20, Number((settings as any).kbMaxRetrieveCount || 6) * 5),
+          maxContentChars: 420
+        })
+      })
+      const rows = Array.isArray(res.items) ? res.items : []
+      setKbTestItems(
+        rows
+          .map((it) => ({
+            id: String((it as any)?.id || '').trim(),
+            fileName: String((it as any)?.fileName || '').trim(),
+            documentPath: String((it as any)?.documentPath || '').trim(),
+            headerPath: String((it as any)?.headerPath || '').trim(),
+            content: String((it as any)?.content || '').trim(),
+            score: Number((it as any)?.score || 0),
+            similarity: Number((it as any)?.similarity || 0)
+          }))
+          .filter((it) => Boolean(it.id))
+      )
+    } catch (e) {
+      setKbTestItems([])
+      setKbTestError(e instanceof Error ? e.message : t.failedTest)
+    } finally {
+      setKbTestLoading(false)
+    }
+  }, [kbTestQuery, workspaceDir, settings, t.workspaceRequiredToManage, t.failedTest])
+
+  const kbThresholdPercent = Math.round(Math.min(1, Math.max(0, Number((settings as any).kbSimilarityThreshold || 0))) * 100)
+
+  return (
+    <div className="p-6 space-y-6">
+      <Card className="p-5 space-y-4">
+        <div className="space-y-1">
+          <div className="text-[13px] font-semibold">{t.feature}</div>
+          <div className="text-xs text-muted-foreground">{t.featureDesc}</div>
+        </div>
+
+        <div className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2">
+          <Label>{t.enabled}</Label>
+          <Switch checked={Boolean((settings as any).kbEnabled ?? true)} onCheckedChange={(c) => updateSettings({ kbEnabled: Boolean(c) } as any)} />
+        </div>
+        <div className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2">
+          <Label>{t.autoQuery}</Label>
+          <Switch checked={Boolean((settings as any).kbAutoQueryEnabled ?? true)} onCheckedChange={(c) => updateSettings({ kbAutoQueryEnabled: Boolean(c) } as any)} />
+        </div>
+        <div className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2">
+          <Label>{t.hybrid}</Label>
+          <Switch checked={Boolean((settings as any).kbHybridEnabled ?? true)} onCheckedChange={(c) => updateSettings({ kbHybridEnabled: Boolean(c) } as any)} />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <Label>{t.maxRetrieve}</Label>
+            <Input type="number" min={1} max={20} value={Number((settings as any).kbMaxRetrieveCount || 6)} onChange={(e) => updateSettings({ kbMaxRetrieveCount: Math.max(1, Math.min(20, Number(e.target.value || 6))) } as any)} />
+          </div>
+          <div className="space-y-1">
+            <Label>{t.similarity} {kbThresholdPercent}%</Label>
+            <Input type="number" min={0} max={100} value={kbThresholdPercent} onChange={(e) => updateSettings({ kbSimilarityThreshold: Math.min(1, Math.max(0, Number(e.target.value || 0) / 100)) } as any)} />
+          </div>
+          <div className="space-y-1">
+            <Label>{t.chunkSize}</Label>
+            <Input type="number" min={200} max={4000} value={Number((settings as any).kbChunkSize || 1200)} onChange={(e) => updateSettings({ kbChunkSize: Math.max(200, Math.min(4000, Number(e.target.value || 1200))) } as any)} />
+          </div>
+          <div className="space-y-1">
+            <Label>{t.chunkOverlap}</Label>
+            <Input type="number" min={0} max={1000} value={Number((settings as any).kbChunkOverlap || 200)} onChange={(e) => updateSettings({ kbChunkOverlap: Math.max(0, Math.min(1000, Number(e.target.value || 200))) } as any)} />
+          </div>
+        </div>
+      </Card>
+
+      <Card className="p-5 space-y-3">
+        <div className="text-[13px] font-semibold">{t.testTitle}</div>
+        <div className="flex items-center gap-2">
+          <Input value={kbTestQuery} onChange={(e) => setKbTestQuery(e.target.value)} placeholder={t.testPlaceholder} />
+          <Button size="sm" className="gap-2" onClick={() => void runKbRetrievalTest()} disabled={kbTestLoading || kbBusy}>
+            <Play className="w-4 h-4" />
+            {t.testAction}
+          </Button>
+        </div>
+        {kbTestError ? <div className="text-[12px] text-destructive">{kbTestError}</div> : null}
+        <div className="space-y-2">
+          {kbTestLoading ? (
+            <div className="text-[13px] text-muted-foreground">{t.loading}</div>
+          ) : kbTestItems.length === 0 ? (
+            <div className="text-[13px] text-muted-foreground">{t.testEmpty}</div>
+          ) : (
+            kbTestItems.map((it) => (
+              <div key={it.id} className="rounded-md border border-border bg-background px-3 py-2 space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[12px] font-medium truncate">{it.fileName || it.documentPath}</div>
+                  <div className="text-[11px] text-muted-foreground shrink-0">
+                    {t.testScoreLabel} {(it.score || 0).toFixed(3)} / {t.testSimilarityLabel} {(it.similarity || 0).toFixed(3)}
+                  </div>
+                </div>
+                {it.headerPath ? <div className="text-[11px] text-muted-foreground truncate">{it.headerPath}</div> : null}
+                <div className="text-[12px] whitespace-pre-wrap break-words">{it.content}</div>
+              </div>
+            ))
+          )}
+        </div>
+      </Card>
+
+      <Card className="p-5 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="grid grid-cols-2 gap-3 flex-1">
+            <div className="rounded-lg border border-border bg-background px-4 py-3">
+              <div className="text-xs text-muted-foreground">{t.docCount}</div>
+              <div className="text-xl font-semibold">{kbStats.documents}</div>
+            </div>
+            <div className="rounded-lg border border-border bg-background px-4 py-3">
+              <div className="text-xs text-muted-foreground">{t.chunkCount}</div>
+              <div className="text-xl font-semibold">{kbStats.chunks}</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="gap-2" onClick={() => void loadKbDocuments()} disabled={kbLoading || kbBusy}>
+              <RefreshCw className="w-4 h-4" />
+              {t.refresh}
+            </Button>
+            <Button size="sm" className="gap-2" onClick={() => void importKbMarkdown()} disabled={kbBusy}>
+              <FolderOpen className="w-4 h-4" />
+              {t.import}
+            </Button>
+          </div>
+        </div>
+
+        {kbError ? <div className="text-[12px] text-destructive">{kbError}</div> : null}
+        {kbImportProgress > 0 ? (
+          <div className="space-y-1">
+            <div className="h-2 w-full overflow-hidden rounded bg-muted">
+              <div className="h-full bg-primary transition-all duration-300" style={{ width: `${Math.min(100, Math.max(0, kbImportProgress))}%` }} />
+            </div>
+            <div className="text-[12px] text-muted-foreground">{kbImportMessage || t.loading}</div>
+          </div>
+        ) : null}
+        {!kbBusy && kbImportMessage ? <div className="text-[12px] text-muted-foreground">{kbImportMessage}</div> : null}
+        {!workspaceDir ? <div className="text-[13px] text-muted-foreground">{t.workspaceRequiredToManage}</div> : null}
+
+        <div className="space-y-2">
+          {kbLoading ? (
+            <div className="text-[13px] text-muted-foreground">{t.loading}</div>
+          ) : kbDocs.length === 0 ? (
+            <div className="text-[13px] text-muted-foreground">{t.empty}</div>
+          ) : (
+            kbDocs.map((doc) => (
+              <div key={doc.id} className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13px] truncate">{doc.fileName || doc.path}</div>
+                  <div className="text-[11px] text-muted-foreground truncate">{doc.path}</div>
+                </div>
+                <Badge variant="outline" className="shrink-0 text-[10px] px-1.5 py-0.5">
+                  {doc.chunkCount}
+                </Badge>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => void deleteKbDoc(doc.id)}
+                  className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                  disabled={kbBusy}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              </div>
+            ))
+          )}
+        </div>
+      </Card>
+    </div>
+  )
+}
+
 function MemorySettings() {
   const { settings: settings0, updateSettings, providers: providers0, ui } = useStore()
   const settings = settings0!
@@ -7870,6 +8353,12 @@ function MemorySettings() {
   const [memoryItems, setMemoryItems] = useState<Array<{ id: string; content: string; isEnabled: boolean; status: string; scope: 'workspace' | 'global' }>>([])
   const [memoryLoading, setMemoryLoading] = useState(false)
   const [memoryError, setMemoryError] = useState('')
+  const [memoryTestQuery, setMemoryTestQuery] = useState('')
+  const [memoryTestLoading, setMemoryTestLoading] = useState(false)
+  const [memoryTestError, setMemoryTestError] = useState('')
+  const [memoryTestItems, setMemoryTestItems] = useState<
+    Array<{ id: string; scope: 'workspace' | 'global'; type: string; content: string; score: number; similarity: number }>
+  >([])
   const [editingContentById, setEditingContentById] = useState<Record<string, string>>({})
   const [addScope, setAddScope] = useState<'workspace' | 'global' | 'auto'>('workspace')
   const [listScopeFilter, setListScopeFilter] = useState<'all' | 'workspace' | 'global'>('all')
@@ -7936,6 +8425,10 @@ function MemorySettings() {
         addPlaceholder: 'Add a memory item…',
         searchMemory: 'Search memory',
         searchPlaceholder: 'Search memories…',
+        testTitle: 'Retrieval test',
+        testPlaceholder: 'Input a query to test retrieval...',
+        testAction: 'Run retrieval',
+        testEmpty: 'No retrieval result.',
         memoryList: 'Memory list',
         clearAll: 'Clear all',
         empty: 'No memories yet.',
@@ -7947,7 +8440,10 @@ function MemorySettings() {
         failedAdd: 'Failed to add memory',
         failedUpdate: 'Failed to update memory',
         failedDelete: 'Failed to delete memory',
-        failedClear: 'Failed to clear memories'
+        failedClear: 'Failed to clear memories',
+        failedTest: 'Failed to run retrieval test',
+        testScoreLabel: 'Score',
+        testSimilarityLabel: 'Similarity'
       },
       zh: {
         feature: '记忆功能',
@@ -7994,6 +8490,10 @@ function MemorySettings() {
         addPlaceholder: '写下你想长期记住的内容…',
         searchMemory: '搜索记忆',
         searchPlaceholder: '输入关键词搜索…',
+        testTitle: '检索测试',
+        testPlaceholder: '输入问题后测试检索结果...',
+        testAction: '测试检索',
+        testEmpty: '没有检索结果。',
         memoryList: '记忆列表',
         clearAll: '全部清空',
         empty: '暂无记忆内容。',
@@ -8005,7 +8505,10 @@ function MemorySettings() {
         failedAdd: '添加记忆失败',
         failedUpdate: '更新记忆失败',
         failedDelete: '删除记忆失败',
-        failedClear: '清空记忆失败'
+        failedClear: '清空记忆失败',
+        failedTest: '检索测试失败',
+        testScoreLabel: '综合分',
+        testSimilarityLabel: '相似度'
       },
       ja: {
         feature: 'メモリー',
@@ -8052,6 +8555,10 @@ function MemorySettings() {
         addPlaceholder: 'メモリーを追加…',
         searchMemory: '検索',
         searchPlaceholder: 'キーワードで検索…',
+        testTitle: '検索テスト',
+        testPlaceholder: 'クエリを入力して検索結果を確認...',
+        testAction: '検索をテスト',
+        testEmpty: '検索結果がありません。',
         memoryList: '一覧',
         clearAll: '全て削除',
         empty: 'メモリーはまだありません。',
@@ -8063,7 +8570,10 @@ function MemorySettings() {
         failedAdd: 'メモリーの追加に失敗しました',
         failedUpdate: 'メモリーの更新に失敗しました',
         failedDelete: 'メモリーの削除に失敗しました',
-        failedClear: 'メモリーの全削除に失敗しました'
+        failedClear: 'メモリーの全削除に失敗しました',
+        failedTest: '検索テストに失敗しました',
+        testScoreLabel: 'スコア',
+        testSimilarityLabel: '類似度'
       }
     } as const
     return dict[settings.language as keyof typeof dict] || dict.en
@@ -8420,6 +8930,55 @@ function MemorySettings() {
     }
   }, [ensureScopeAllowed, filteredMemories, workspaceDir, loadMemoryItems, t.failedClear])
 
+  const runMemoryRetrievalTest = useCallback(async () => {
+    const query = String(memoryTestQuery || '').trim()
+    if (!query) {
+      setMemoryTestItems([])
+      setMemoryTestError('')
+      return
+    }
+    if (!workspaceDir && !memoryGlobalEnabled) {
+      setMemoryTestItems([])
+      setMemoryTestError(t.workspaceRequiredToManage)
+      return
+    }
+    setMemoryTestLoading(true)
+    setMemoryTestError('')
+    try {
+      const res = await fetchBackendJson<{ ok: boolean; items?: Array<any> }>('/memory/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspaceDir,
+          query,
+          topK: Number(settings.memoryMaxRetrieveCount || 8),
+          threshold: Number(settings.memorySimilarityThreshold ?? 0.25),
+          includeGlobal: memoryGlobalEnabled,
+          globalTopK: Number((settings as any).memoryGlobalRetrieveCount || 3),
+          maxContentChars: 420
+        })
+      })
+      const rows = Array.isArray(res.items) ? res.items : []
+      setMemoryTestItems(
+        rows
+          .map((it) => ({
+            id: String((it as any)?.id || '').trim(),
+            scope: (String((it as any)?.scope || 'workspace').trim() === 'global' ? 'global' : 'workspace') as 'workspace' | 'global',
+            type: String((it as any)?.type || '').trim(),
+            content: String((it as any)?.content || '').trim(),
+            score: Number((it as any)?.score || 0),
+            similarity: Number((it as any)?.similarity || 0)
+          }))
+          .filter((it) => Boolean(it.id))
+      )
+    } catch (e) {
+      setMemoryTestItems([])
+      setMemoryTestError(e instanceof Error ? e.message : t.failedTest)
+    } finally {
+      setMemoryTestLoading(false)
+    }
+  }, [memoryTestQuery, workspaceDir, memoryGlobalEnabled, settings, t.workspaceRequiredToManage, t.failedTest])
+
   const thresholdPercent = Math.round(Math.min(1, Math.max(0, settings.memorySimilarityThreshold || 0)) * 100)
 
   return (
@@ -8769,6 +9328,42 @@ function MemorySettings() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t.searchPlaceholder}
           />
+        </div>
+      </Card>
+
+      <Card className="p-5 space-y-3">
+        <div className="text-[13px] font-semibold">{t.testTitle}</div>
+        <div className="flex items-center gap-2">
+          <Input value={memoryTestQuery} onChange={(e) => setMemoryTestQuery(e.target.value)} placeholder={t.testPlaceholder} />
+          <Button size="sm" className="gap-2" onClick={() => void runMemoryRetrievalTest()} disabled={memoryTestLoading}>
+            <Play className="w-4 h-4" />
+            {t.testAction}
+          </Button>
+        </div>
+        {memoryTestError ? <div className="text-[12px] text-destructive">{memoryTestError}</div> : null}
+        <div className="space-y-2">
+          {memoryTestLoading ? (
+            <div className="text-[13px] text-muted-foreground">{t.loading}</div>
+          ) : memoryTestItems.length === 0 ? (
+            <div className="text-[13px] text-muted-foreground">{t.testEmpty}</div>
+          ) : (
+            memoryTestItems.map((it) => (
+              <div key={it.id} className="rounded-md border border-border bg-background px-3 py-2 space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Badge variant="outline" className="shrink-0 text-[10px] px-1.5 py-0.5">
+                      {it.scope === 'global' ? t.scopeGlobal : t.scopeWorkspace}
+                    </Badge>
+                    <span className="text-[12px] text-muted-foreground truncate">{it.type}</span>
+                  </div>
+                  <div className="text-[11px] text-muted-foreground shrink-0">
+                    {t.testScoreLabel} {(it.score || 0).toFixed(3)} / {t.testSimilarityLabel} {(it.similarity || 0).toFixed(3)}
+                  </div>
+                </div>
+                <div className="text-[12px] whitespace-pre-wrap break-words">{it.content}</div>
+              </div>
+            ))
+          )}
         </div>
       </Card>
 

@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from anima_backend_shared.knowledge_base import query_kb_chunks
 from anima_backend_shared.memory_store import query_memory_graph, query_memory_items_scoped
 from anima_backend_shared.util import extract_reasoning_text, is_within, norm_abs, read_text_file
 
@@ -52,6 +53,8 @@ _DEFAULT_TELEGRAM_TOOL_GUIDANCE = (
 _DEFAULT_HARD_RULES = [
     "结论必须有可检查依据；无法确认时明确不确定性。",
     "涉及代码、文件、命令时必须先执行工具再回答，禁止伪执行。",
+    "准备调用工具前，先把当前句子写完整并结束；禁止以逗号、顿号、冒号、连词等未闭合片段结束再去调用工具。",
+    "工具调用后的新回复必须独立成句，禁止以上一条回复的前导标点（如“，”“、”“：”）或半句续写开头。",
     "写文件优先使用 apply_patch；不要用 bash 重定向（>, >>, <, <<）生成文件。",
     "使用 apply_patch 编辑文件前，必须先读取目标文件的当前完整内容；如果读取结果被截断，先继续读取完整，禁止基于截断内容直接生成 patch。",
     "生成 apply_patch 时只修改当前必需的小范围片段，补丁必须以刚读取到的原文为依据，不要凭记忆复用旧 patch。",
@@ -702,6 +705,12 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
     mem_max_k = max(0, int(s.get("memoryMaxRetrieveCount") or 0))
     threshold = float(s.get("memorySimilarityThreshold") or 0)
     threshold = 0.0 if threshold < 0 else 1.0 if threshold > 1 else threshold
+    kb_enabled = bool(s.get("kbEnabled", True))
+    kb_auto_query_enabled = bool(s.get("kbAutoQueryEnabled", True))
+    kb_hybrid_enabled = bool(s.get("kbHybridEnabled", True))
+    kb_max_k = max(0, int(s.get("kbMaxRetrieveCount") or 6))
+    kb_threshold = float(s.get("kbSimilarityThreshold") if s.get("kbSimilarityThreshold") is not None else 0.35)
+    kb_threshold = 0.0 if kb_threshold < 0 else 1.0 if kb_threshold > 1 else kb_threshold
 
     enabled_memories: List[str] = []
     for m in memories:
@@ -723,7 +732,9 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
             if picked:
                 memory_block = "User memory:\n" + "\n".join([f"- {x}" for x in picked])
     runtime_memory_block = ""
+    runtime_kb_block = ""
     composer.pop("runtimeMemoryInjection", None)
+    composer.pop("runtimeKbInjection", None)
     workspace_dir = str(composer.get("workspaceDir") or "").strip()
     if (
         memory_enabled
@@ -804,6 +815,50 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
                                 runtime_memory_block += "\n\nRuntime memory graph related:\n" + "\n".join(related_lines)
         except Exception:
             runtime_memory_block = ""
+    if kb_enabled and kb_auto_query_enabled and user_message.strip() and kb_max_k > 0 and workspace_dir:
+        kb_started_at = int(time.time() * 1000)
+        try:
+            kb_rows = query_kb_chunks(
+                workspace_dir=workspace_dir,
+                query=user_message,
+                top_k=kb_max_k,
+                similarity_threshold=kb_threshold,
+                hybrid_enabled=kb_hybrid_enabled,
+                keyword_top_k=max(20, kb_max_k * 5),
+                max_content_chars=460,
+            )
+            if kb_rows:
+                lines = []
+                injected_items: List[Dict[str, Any]] = []
+                for row in kb_rows[:kb_max_k]:
+                    content = str(row.get("content") or "").strip()
+                    if not content:
+                        continue
+                    file_name = str(row.get("fileName") or "").strip() or "unknown.md"
+                    header = str(row.get("headerPath") or "").strip()
+                    prefix = f"{file_name} / {header}" if header else file_name
+                    lines.append(f"- [{prefix}] {content}")
+                    injected_items.append(
+                        {
+                            "id": str(row.get("id") or "").strip(),
+                            "documentId": str(row.get("documentId") or "").strip(),
+                            "fileName": file_name,
+                            "documentPath": str(row.get("documentPath") or "").strip(),
+                            "headerPath": header,
+                            "chunkIndex": int(row.get("chunkIndex") or 0),
+                            "similarity": float(row.get("similarity") or 0.0),
+                            "score": float(row.get("score") or 0.0),
+                        }
+                    )
+                if lines:
+                    runtime_kb_block = "Runtime knowledge base retrieval:\n" + "\n".join(lines)
+                    composer["runtimeKbInjection"] = {
+                        "count": len(injected_items),
+                        "durationMs": max(0, int(time.time() * 1000) - kb_started_at),
+                        "items": injected_items,
+                    }
+        except Exception:
+            runtime_kb_block = ""
     history_summary = str(composer.get("historySummary") or "").strip()
     history_block = f"对话摘要（自动压缩）:\n{history_summary}" if history_summary else ""
 
@@ -927,6 +982,7 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
         history_block,
         memory_block,
         runtime_memory_block,
+        runtime_kb_block,
         skills_block,
         plugins_block,
         coder_block,

@@ -4249,12 +4249,62 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         tools = shared_tools.builtin_tools()
         names = [str(((t.get("function") or {}) if isinstance(t, dict) else {}).get("name") or "") for t in tools]
         self.assertIn("apply_patch", names)
+        self.assertIn("multi_tool_use_parallel", names)
         self.assertIn("memory_add", names)
         self.assertIn("memory_query", names)
         self.assertIn("memory_link", names)
         self.assertIn("memory_graph_query", names)
         self.assertNotIn("write_file", names)
         self.assertNotIn("edit_file", names)
+
+    def test_multi_tool_parallel_runs_and_keeps_input_order(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        with tempfile.TemporaryDirectory() as td:
+            with open(os.path.join(td, "a.txt"), "w", encoding="utf-8") as f:
+                f.write("hello\n")
+            out = json.loads(
+                shared_tools.execute_builtin_tool(
+                    "multi_tool_use_parallel",
+                    {
+                        "tool_uses": [
+                            {"recipient_name": "functions.read_file", "parameters": {"path": "a.txt"}},
+                            {"recipient_name": "functions.exec_command", "parameters": {"cmd": "echo ok"}},
+                        ]
+                    },
+                    workspace_dir=td,
+                )
+            )
+            self.assertTrue(bool(out.get("ok")))
+            results = out.get("results") if isinstance(out.get("results"), list) else []
+            self.assertEqual(len(results), 2)
+            self.assertEqual(int((results[0] or {}).get("index", -1)), 0)
+            self.assertEqual(int((results[1] or {}).get("index", -1)), 1)
+            self.assertEqual(str((results[0] or {}).get("toolName") or ""), "read_file")
+            self.assertEqual(str((results[1] or {}).get("toolName") or ""), "bash")
+            self.assertTrue(bool((results[0] or {}).get("ok")))
+            self.assertTrue(bool((results[1] or {}).get("ok")))
+
+    def test_multi_tool_parallel_rejects_disallowed_tool(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        with tempfile.TemporaryDirectory() as td:
+            out = json.loads(
+                shared_tools.execute_builtin_tool(
+                    "multi_tool_use_parallel",
+                    {
+                        "tool_uses": [
+                            {"recipient_name": "functions.spawn_agent", "parameters": {"message": "x"}},
+                        ]
+                    },
+                    workspace_dir=td,
+                )
+            )
+            self.assertFalse(bool(out.get("ok")))
+            results = out.get("results") if isinstance(out.get("results"), list) else []
+            self.assertEqual(len(results), 1)
+            self.assertFalse(bool((results[0] or {}).get("ok")))
+            self.assertIn("tool not allowed", str((results[0] or {}).get("error") or ""))
 
     def test_system_prompt_includes_write_rule(self) -> None:
         from anima_backend_core.runtime.graph import build_system_prompt_text

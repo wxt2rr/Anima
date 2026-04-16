@@ -519,8 +519,8 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
                                     >
                                       {/* 占位与项目图标同宽，保证对话标题与项目标题左对齐 */}
                                       <span className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                                      <span className="truncate text-[13px] flex-1 leading-5 text-foreground">{title}</span>
-                                      <div className="w-[76px] flex items-center justify-end">
+                                      <span className="truncate text-[13px] flex-1 min-w-0 leading-5 text-foreground">{title}</span>
+                                      <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center justify-end">
                                         <Tooltip>
                                           <TooltipTrigger asChild>
                                             <button

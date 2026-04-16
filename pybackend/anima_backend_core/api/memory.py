@@ -16,6 +16,7 @@ from anima_backend_shared.memory_embedding import (
 from anima_backend_shared.memory_store import get_memory_metrics_summary
 from anima_backend_shared.memory_store import add_memory_item_scoped, delete_memory_item, list_memory_items, update_memory_item
 from anima_backend_shared.memory_store import global_memory_workspace_dir
+from anima_backend_shared.memory_store import query_memory_items_scoped
 from anima_backend_shared.settings import load_settings
 
 
@@ -159,6 +160,35 @@ def handle_get_memory_items(handler: Any) -> None:
             return
         items.sort(key=lambda x: int((x or {}).get("createdAt") or 0), reverse=True)
         json_response(handler, HTTPStatus.OK, {"ok": True, "items": items})
+    except Exception as e:
+        json_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(e)})
+
+
+def handle_post_memory_query(handler: Any) -> None:
+    try:
+        body = read_body_json(handler)
+        if not isinstance(body, dict):
+            json_response(handler, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Invalid JSON body"})
+            return
+        workspace_dir = str(body.get("workspaceDir") or "").strip() or _resolve_workspace_dir(handler)
+        query = str(body.get("query") or "").strip()
+        if not query:
+            json_response(handler, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "query is required"})
+            return
+        include_global = bool(body.get("includeGlobal"))
+        if not workspace_dir and not include_global:
+            json_response(handler, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "workspaceDir is required"})
+            return
+        rows = query_memory_items_scoped(
+            workspace_dir=workspace_dir,
+            query=query,
+            top_k=int(body.get("topK") or 8),
+            similarity_threshold=float(body.get("threshold") if body.get("threshold") is not None else 0.25),
+            max_content_chars=int(body.get("maxContentChars") or 360),
+            include_global=include_global,
+            global_top_k=int(body.get("globalTopK") or 3),
+        )
+        json_response(handler, HTTPStatus.OK, {"ok": True, "items": rows})
     except Exception as e:
         json_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(e)})
 

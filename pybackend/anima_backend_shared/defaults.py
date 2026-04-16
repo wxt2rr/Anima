@@ -80,6 +80,13 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "memoryGlobalRetrieveCount": 3,
     "memoryScopeAutoEnabled": False,
     "memoryDefaultWriteScope": "workspace",
+    "kbEnabled": True,
+    "kbAutoQueryEnabled": True,
+    "kbMaxRetrieveCount": 6,
+    "kbSimilarityThreshold": 0.35,
+    "kbHybridEnabled": True,
+    "kbChunkSize": 1200,
+    "kbChunkOverlap": 200,
     "voice": {
         "enabled": True,
         "model": "openai/whisper-large-v3-turbo",

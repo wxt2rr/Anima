@@ -189,7 +189,7 @@ export const RightSidebar: React.FC<{ width?: number; onResizeStart?: () => void
             <div className="flex-1 overflow-hidden relative min-w-0 bg-white" style={{ contain: 'layout paint' }}>
               {tabs.map((tab) => {
                 const isActive = currentPanel === tab.id
-                const shouldMount = Boolean(mountedPanels[tab.id]) && (expandedReady || !isActive)
+                const shouldMount = Boolean(mountedPanels[tab.id])
                 const show = isActive
                 if (!shouldMount && isActive) {
                   return (
