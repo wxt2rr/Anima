@@ -628,7 +628,6 @@ function AppLoaded(): JSX.Element {
     addMessage, 
     updateMessageById,
     persistMessageById,
-    persistLastMessage, 
     activeChatId,
     updateChat,
     settings: settings0, 
@@ -3263,6 +3262,11 @@ function AppLoaded(): JSX.Element {
         void persistMessageById(activeChatId, msgId, String(firstAssistant?.content || ''), nextMeta as any)
       }
     }
+    const persistCurrentAssistantMessage = async (content: string, meta?: Message['meta']) => {
+      const { activeChatId, persistMessageById } = useStore.getState()
+      if (!activeChatId) return
+      await persistMessageById(activeChatId, currentAssistantId, content, meta)
+    }
     const runSend = async () => {
       const composerPayload = buildComposerPayload({
         dangerousCommandApprovals: opts?.dangerousCommandApprovals || [],
@@ -3317,6 +3321,7 @@ function AppLoaded(): JSX.Element {
         let dangerousApprovalFromTrace: DangerousCommandApprovalPayload | null = null
         let gotDone = false
         let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
+        let latestAssistantStep: number | null = null
         let compressionMsgId: string | null = null
         let compressionSeenStart = false
         let compressionEnded = false
@@ -3355,6 +3360,47 @@ function AppLoaded(): JSX.Element {
             playStreamingTick()
             updateLastMessage(fullContent)
           }, 12)
+        }
+
+        const normalizeStep = (raw: unknown): number | null => {
+          const n = Number(raw)
+          return Number.isFinite(n) ? n : null
+        }
+
+        const handleAssistantStep = (rawStep: unknown) => {
+          const step = normalizeStep(rawStep)
+          if (step == null) return
+          if (latestAssistantStep == null) {
+            latestAssistantStep = step
+            return
+          }
+          if (step <= latestAssistantStep) return
+          latestAssistantStep = step
+          const hasCurrentAssistantBody = Boolean(
+            String(fullContent || '').trim() ||
+            String(pendingContent || '').trim() ||
+            String(reasoningText || '').trim()
+          )
+          if (!hasCurrentAssistantBody) return
+          stopTyping()
+          updateLastMessage(fullContent, assistantMeta)
+          const { activeChatId, persistMessageById } = useStore.getState()
+          if (activeChatId) {
+            void persistMessageById(activeChatId, currentAssistantId, fullContent, assistantMeta)
+          }
+          const newAssistantId = crypto.randomUUID()
+          currentAssistantId = newAssistantId
+          fullContent = ''
+          pendingContent = ''
+          reasoningText = ''
+          assistantMeta = shouldShowAnalysis ? { reasoningStatus: 'pending', reasoningText: '' } : {}
+          addMessage({
+            id: newAssistantId,
+            role: 'assistant',
+            content: '',
+            turnId,
+            meta: shouldShowAnalysis ? { reasoningStatus: 'pending', reasoningText: '' } : undefined
+          } as any)
         }
 
         const stopCompressionTyping = () => {
@@ -3436,10 +3482,14 @@ function AppLoaded(): JSX.Element {
                void persistMessageById(activeChatId, msgId, existing?.content || '', nextMeta)
              }
           } else {
+             updateLastMessage(fullContent, assistantMeta)
+             if (activeChatId) {
+               void persistMessageById(activeChatId, currentAssistantId, fullContent, assistantMeta)
+             }
+
              msgId = crypto.randomUUID()
              traceMessageIds[trace.id] = msgId
              
-             // Add Tool Message
              addMessage({
                id: msgId,
                role: 'tool',
@@ -3522,6 +3572,7 @@ function AppLoaded(): JSX.Element {
                   error?: string
                 }
                 if (e.type === 'delta' && typeof e.content === 'string' && e.content) {
+                  handleAssistantStep(e.step)
                   pendingContent += e.content
                   startTyping()
                   return
@@ -3697,6 +3748,7 @@ function AppLoaded(): JSX.Element {
                   error?: string
                 }
                 if (evt.type === 'delta' && typeof evt.content === 'string' && evt.content) {
+                  handleAssistantStep(evt.step)
                   pendingContent += evt.content
                   startTyping()
                 } else if (evt.type === 'run') {
@@ -3853,7 +3905,7 @@ function AppLoaded(): JSX.Element {
           }
         }
         updateLastMessage(fullContent, assistantMeta)
-        await persistLastMessage()
+        await persistCurrentAssistantMessage(fullContent, assistantMeta)
         await speakAssistantIfNeeded(fullContent)
       } else {
         const baseUrl = await resolveBackendBaseUrl()
@@ -3972,7 +4024,7 @@ function AppLoaded(): JSX.Element {
           assignMemoryInjectionToTurnFirstAssistant(memoryInjection)
         }
         updateLastMessage(content, assistantMeta)
-        await persistLastMessage()
+        await persistCurrentAssistantMessage(content, assistantMeta)
         await speakAssistantIfNeeded(content)
       }
       
@@ -3987,7 +4039,11 @@ function AppLoaded(): JSX.Element {
           ? `Error: ${errMsg}\n\nPlease check the ACP provider command, arguments, and workspace settings.`
           : t.proxyOrKeyError(errMsg)
       )
-      await persistLastMessage()
+      await persistCurrentAssistantMessage(
+        String(effectiveProvider?.type || '').trim() === 'acp'
+          ? `Error: ${errMsg}\n\nPlease check the ACP provider command, arguments, and workspace settings.`
+          : t.proxyOrKeyError(errMsg)
+      )
     } finally {
       setIsLoading(false)
       abortControllerRef.current = null
@@ -4575,7 +4631,6 @@ function AppLoaded(): JSX.Element {
                         assistantHasDangerousApproval ||
                         assistantHasMemoryInjection
                       )
-
                       if (msg.role !== 'user' && msg.role !== 'tool') {
                         if (!assistantHasVisibleBody && !showTurnProcessSummary) return null
                       }
@@ -5856,7 +5911,7 @@ function AppLoaded(): JSX.Element {
                               if (showOnlyFinalAssistantArtifacts) return null
                               if (!st) return null
                               if (st === 'verify') return null
-                              if (st === 'model_call' || st === 'tool_call') return null
+                              if (st === 'model' || st === 'tool' || st === 'model_call' || st === 'tool_call') return null
                               if (st.startsWith('tool_start:') || st.startsWith('tool_done:') || st.startsWith('tool_end:')) return null
                               return (
                               <div className="text-[11px] text-muted-foreground pt-1">
@@ -5869,7 +5924,7 @@ function AppLoaded(): JSX.Element {
                                 {renderArtifacts(msg.meta.artifacts, 'md')}
                               </div>
                             )}
-                            {isFinalAssistantOfTurn && String(msg.content || '').trim() ? (
+                            {isFinalAssistantOfTurn && String(msg.content || '').trim() && !(isLoading && isLatestTurn) ? (
                               <button
                                 type="button"
                                 className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-all ${
