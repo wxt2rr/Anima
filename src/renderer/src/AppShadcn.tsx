@@ -82,8 +82,9 @@ type DangerousCommandApprovalPayload = {
 }
 
 type TabCompleteResult = {
-  mode: 'complete' | 'translate'
+  mode: 'complete' | 'translate' | 'spell_suggest'
   text: string
+  candidates?: string[]
 }
 
 const DANGEROUS_COMMAND_APPROVAL_PREFIX = 'ANIMA_DANGEROUS_COMMAND_APPROVAL:'
@@ -2296,6 +2297,7 @@ function AppLoaded(): JSX.Element {
           completion: 'Completion',
           completionEnable: 'Enable Tab completion',
           completionTranslate: 'Enable mixed CN/EN translation',
+          completionSpellSuggest: 'Enable misspelling suggestion popup',
           completionContextLimit: 'Recent context messages',
           completionApplyHint: 'Tab to apply suggestion, Esc to cancel',
           preview: 'Preview',
@@ -2394,6 +2396,7 @@ function AppLoaded(): JSX.Element {
           completion: '补全',
           completionEnable: '启用 Tab 补全',
           completionTranslate: '启用中英混输翻译补全',
+          completionSpellSuggest: '启用拼写纠错提示弹框',
           completionContextLimit: '最近上下文消息数',
           completionApplyHint: 'Tab 应用建议，Esc 取消',
           preview: '预览',
@@ -2493,6 +2496,7 @@ function AppLoaded(): JSX.Element {
           completion: '補完',
           completionEnable: 'Tab 補完を有効化',
           completionTranslate: '中英混在入力の翻訳補完を有効化',
+          completionSpellSuggest: 'スペル修正候補ポップアップを有効化',
           completionContextLimit: '直近コンテキスト件数',
           completionApplyHint: 'Tab で適用、Esc でキャンセル',
           preview: 'プレビュー',
@@ -3117,7 +3121,11 @@ function AppLoaded(): JSX.Element {
   }
 
   const handleTabComplete = useCallback(
-    async (rawInput: string, mode: 'complete' | 'translate' = 'complete'): Promise<TabCompleteResult | null> => {
+    async (
+      rawInput: string,
+      mode: 'complete' | 'translate' | 'spell_suggest' = 'complete',
+      options?: { clickedWord?: string }
+    ): Promise<TabCompleteResult | null> => {
       const input = String(rawInput || '')
       if (!input.trim()) return null
       const composerPayload = buildComposerPayload()
@@ -3143,7 +3151,8 @@ function AppLoaded(): JSX.Element {
             composer: composerPayload,
             contextLimit: composerPayload.completionContextLimit,
             tabMode: mode,
-            translateEnabled: mode === 'translate'
+            translateEnabled: mode === 'translate',
+            clickedWord: String(options?.clickedWord || '').trim() || undefined
           })
         })
         const text = await res.text()
@@ -3151,12 +3160,24 @@ function AppLoaded(): JSX.Element {
         const data = text ? JSON.parse(text) : {}
         const modeRaw = String((data as any)?.mode || '').trim().toLowerCase()
         const resolvedMode: TabCompleteResult['mode'] =
-          modeRaw === 'translate' || modeRaw === 'complete' ? modeRaw : mode
+          modeRaw === 'translate' || modeRaw === 'complete' || modeRaw === 'spell_suggest' ? modeRaw : mode
+        const candidates = Array.isArray((data as any)?.candidates)
+          ? (data as any).candidates.map((x: any) => String(x || '').trim()).filter(Boolean)
+          : []
+        if (resolvedMode === 'spell_suggest') {
+          if (!candidates.length) return null
+          return {
+            mode: resolvedMode,
+            text: candidates[0] || '',
+            candidates
+          }
+        }
         const out = String((data as any)?.text || '').trim()
         if (!out) return null
         return {
           mode: resolvedMode,
-          text: out
+          text: out,
+          candidates: candidates.length ? candidates : undefined
         }
       } catch {
         return null
@@ -4002,11 +4023,11 @@ function AppLoaded(): JSX.Element {
           }
         }
 
-        // Insert tool messages for non-streaming response
-        const { insertMessageBefore } = useStore.getState()
+        // 非流式工具轨迹与流式保持一致：直接追加 tool 消息并持久化，避免刷新后丢失。
+        const { addMessage } = useStore.getState()
         for (const trace of traces) {
           const msgId = crypto.randomUUID()
-          insertMessageBefore(currentAssistantId, {
+          addMessage({
             id: msgId,
             role: 'tool',
             content: '',
@@ -6276,6 +6297,7 @@ function AppLoaded(): JSX.Element {
                       void ensureSkills()
                     }}
                     tabApplyHint={t.composer.completionApplyHint}
+                    spellSuggestEnabled={composer.completionSpellSuggestEnabled !== false}
                     onExecuteSlashCommand={handleExecuteSlashCommand}
                     onStop={handleStop}
                     onPasteImage={handleComposerPaste}
@@ -6670,6 +6692,14 @@ function AppLoaded(): JSX.Element {
                           />
                         </div>
                         <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs">{t.composer.completionSpellSuggest}</span>
+                          <Switch
+                            checked={composer.completionSpellSuggestEnabled !== false}
+                            disabled={composer.completionEnabled === false}
+                            onCheckedChange={(checked) => updateComposer({ completionSpellSuggestEnabled: Boolean(checked) })}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
                           <span className="text-xs">{t.composer.completionContextLimit}</span>
                           <select
                             className="h-7 rounded-md border bg-background px-2 text-xs"
@@ -6802,6 +6832,7 @@ function ChatComposer({
   slashNoSkillsLabel,
   onNeedLoadSkills,
   tabApplyHint,
+  spellSuggestEnabled,
   onExecuteSlashCommand,
   onStop,
   onPasteImage,
@@ -6814,7 +6845,11 @@ function ChatComposer({
   placeholder: string
   isLoading: boolean
   onSend: (text: string) => Promise<boolean>
-  onTabComplete?: (text: string, mode?: 'complete' | 'translate') => Promise<TabCompleteResult | null>
+  onTabComplete?: (
+    text: string,
+    mode?: 'complete' | 'translate' | 'spell_suggest',
+    options?: { clickedWord?: string }
+  ) => Promise<TabCompleteResult | null>
   slashCommands: SlashCommandEntry[]
   slashEmptyLabel: string
   slashMenuTitle: string
@@ -6829,6 +6864,7 @@ function ChatComposer({
   slashNoSkillsLabel: string
   onNeedLoadSkills?: () => void
   tabApplyHint: string
+  spellSuggestEnabled: boolean
   onExecuteSlashCommand: (rawInput: string) => Promise<{ handled: boolean; clearValue?: boolean; nextValue?: string }>
   onStop: () => void
   onPasteImage?: (e: ClipboardEvent<HTMLTextAreaElement>) => void
@@ -6850,10 +6886,19 @@ function ChatComposer({
     mode: TabCompleteResult['mode']
     nextValue: string
   } | null>(null)
+  const [spellSuggestState, setSpellSuggestState] = useState<{
+    start: number
+    end: number
+    word: string
+    candidates: string[]
+    activeIndex: number
+  } | null>(null)
   const [slashIndex, setSlashIndex] = useState(0)
   const [slashDismissed, setSlashDismissed] = useState(false)
   const voiceAnchorRef = useRef<number | null>(null)
   const tabCompleteRunningRef = useRef(false)
+  const spellSuggestRunningRef = useRef(false)
+  const lastAutoSpellKeyRef = useRef('')
   const tabChordTimerRef = useRef<number | null>(null)
   const tabChordBaseRef = useRef('')
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
@@ -6861,6 +6906,201 @@ function ChatComposer({
   const slashItemRefs = useRef<Array<HTMLButtonElement | null>>([])
   const reduceMotion = useReducedMotion()
   const actionButtonSizeClass = 'h-8 w-8 p-0 rounded-full'
+
+  const isSpellTokenChar = (ch: string): boolean => /[A-Za-z'-]/.test(ch)
+  const isEnglishToken = (word: string): boolean => /^[A-Za-z][A-Za-z'-]{0,39}$/.test(word)
+  const resolveWordRangeAtCaret = useCallback((text: string, caret: number) => {
+    const s = String(text || '')
+    const n = s.length
+    if (!n) return null
+    const pos = Math.max(0, Math.min(n, Number.isFinite(caret) ? caret : 0))
+    const anchor = pos > 0 && isSpellTokenChar(s[pos - 1] || '') ? pos - 1 : pos
+    if (!isSpellTokenChar(s[anchor] || '')) return null
+    let start = anchor
+    while (start > 0 && isSpellTokenChar(s[start - 1] || '')) start -= 1
+    let end = anchor + 1
+    while (end < n && isSpellTokenChar(s[end] || '')) end += 1
+    const word = s.slice(start, end)
+    if (!isEnglishToken(word)) return null
+    return { start, end, word }
+  }, [])
+  const applySpellCandidate = useCallback((candidate: string) => {
+    const picked = String(candidate || '').trim()
+    if (!picked || !spellSuggestState) return
+    const { start, end } = spellSuggestState
+    setValue((prev) => `${prev.slice(0, start)}${picked}${prev.slice(end)}`)
+    setSpellSuggestState(null)
+    window.requestAnimationFrame(() => inputRef.current?.focus())
+  }, [spellSuggestState])
+  const handleWordClickSuggest = useCallback((clientX: number, clientY: number) => {
+    if (!spellSuggestEnabled) return
+    if (!onTabComplete) return
+    const probe = window.anima?.spell?.probeAtPoint
+    if (!probe) return
+    window.setTimeout(() => {
+      const el = inputRef.current
+      if (!el) return
+      const caret = Number(el.selectionStart ?? 0)
+      const range = resolveWordRangeAtCaret(value, caret)
+      if (!range) {
+        setSpellSuggestState(null)
+        return
+      }
+      void (async () => {
+        const probeRes = await probe({ x: Math.round(clientX), y: Math.round(clientY) }).catch(() => null)
+        if (!probeRes || !probeRes.ok) {
+          setSpellSuggestState(null)
+          return
+        }
+        if (parseSlashInput(value)?.shouldSuggest) {
+          setSpellSuggestState(null)
+          return
+        }
+        const misspelledWord = String(probeRes.misspelledWord || '').trim()
+        if (!misspelledWord) {
+          setSpellSuggestState(null)
+          return
+        }
+        if (misspelledWord.toLowerCase() !== range.word.toLowerCase()) {
+          setSpellSuggestState(null)
+          return
+        }
+        const completed = await onTabComplete(value, 'spell_suggest', { clickedWord: range.word })
+        const candidates = Array.isArray(completed?.candidates) ? completed!.candidates!.map((x) => String(x || '').trim()).filter(Boolean) : []
+        if (!candidates.length) {
+          setSpellSuggestState(null)
+          return
+        }
+        setSpellSuggestState({
+          start: range.start,
+          end: range.end,
+          word: range.word,
+          candidates,
+          activeIndex: 0
+        })
+      })()
+    }, 0)
+  }, [onTabComplete, resolveWordRangeAtCaret, spellSuggestEnabled, value])
+  const resolvePrevWordRangeBeforeCaret = useCallback((text: string, caret: number) => {
+    const s = String(text || '')
+    const n = s.length
+    if (!n) return null
+    let i = Math.max(0, Math.min(n, Number.isFinite(caret) ? caret : 0)) - 1
+    while (i >= 0 && !isSpellTokenChar(s[i] || '')) i -= 1
+    if (i < 0) return null
+    const end = i + 1
+    while (i >= 0 && isSpellTokenChar(s[i] || '')) i -= 1
+    const start = i + 1
+    const word = s.slice(start, end)
+    if (!isEnglishToken(word)) return null
+    return { start, end, word }
+  }, [])
+  const resolveWordProbePoint = useCallback((
+    el: HTMLTextAreaElement,
+    text: string,
+    range: { start: number; end: number }
+  ): { x: number; y: number } | null => {
+    if (!document?.body) return null
+    const computed = window.getComputedStyle(el)
+    const mirror = document.createElement('div')
+    mirror.style.position = 'fixed'
+    mirror.style.left = '-100000px'
+    mirror.style.top = '0'
+    mirror.style.visibility = 'hidden'
+    mirror.style.whiteSpace = 'pre-wrap'
+    mirror.style.wordBreak = 'break-word'
+    mirror.style.overflowWrap = 'break-word'
+    mirror.style.width = `${el.clientWidth}px`
+    mirror.style.font = computed.font
+    mirror.style.fontSize = computed.fontSize
+    mirror.style.fontFamily = computed.fontFamily
+    mirror.style.fontWeight = computed.fontWeight
+    mirror.style.fontStyle = computed.fontStyle
+    mirror.style.letterSpacing = computed.letterSpacing
+    mirror.style.lineHeight = computed.lineHeight
+    mirror.style.padding = computed.padding
+    mirror.style.border = '0'
+    mirror.style.boxSizing = computed.boxSizing
+    mirror.style.textTransform = computed.textTransform
+    mirror.style.textIndent = computed.textIndent
+    mirror.style.tabSize = computed.tabSize
+    mirror.style.webkitTextSizeAdjust = computed.webkitTextSizeAdjust
+
+    const before = text.slice(0, range.start)
+    const word = text.slice(range.start, range.end) || ' '
+    mirror.textContent = before
+    const span = document.createElement('span')
+    span.textContent = word
+    mirror.appendChild(span)
+    document.body.appendChild(mirror)
+
+    try {
+      const mirrorRect = mirror.getBoundingClientRect()
+      const wordRect = span.getBoundingClientRect()
+      const hostRect = el.getBoundingClientRect()
+      const offsetX = wordRect.left - mirrorRect.left - el.scrollLeft
+      const offsetY = wordRect.top - mirrorRect.top - el.scrollTop
+      const width = Math.max(1, wordRect.width)
+      const height = Math.max(1, wordRect.height)
+      const x = Math.round(hostRect.left + offsetX + Math.min(width - 1, Math.max(1, width / 2)))
+      const y = Math.round(hostRect.top + offsetY + Math.min(height - 1, Math.max(1, height / 2)))
+      return { x, y }
+    } catch {
+      return null
+    } finally {
+      mirror.remove()
+    }
+  }, [])
+  const triggerAutoSpellSuggestOnBlur = useCallback((nextValue: string, caret: number | null | undefined) => {
+    if (!spellSuggestEnabled) return
+    if (!onTabComplete) return
+    const probe = window.anima?.spell?.probeAtPoint
+    const el = inputRef.current
+    if (!probe || !el) return
+    if (Boolean(parseSlashInput(nextValue)?.shouldSuggest)) return
+    if (spellSuggestRunningRef.current) return
+    const text = String(nextValue || '')
+    if (!text.trim()) return
+    const pos = Number.isFinite(Number(caret)) ? Number(caret) : text.length
+    if (pos > 0 && isSpellTokenChar(text[pos - 1] || '')) return
+    const range = resolvePrevWordRangeBeforeCaret(text, pos)
+    if (!range) return
+    const probePoint = resolveWordProbePoint(el, text, range)
+    if (!probePoint) return
+    const key = `${range.start}:${range.end}:${range.word}:${text}`
+    if (lastAutoSpellKeyRef.current === key) return
+    spellSuggestRunningRef.current = true
+    void (async () => {
+      try {
+        const probeRes = await probe({ x: probePoint.x, y: probePoint.y }).catch(() => null)
+        if (!probeRes || !probeRes.ok) {
+          setSpellSuggestState(null)
+          return
+        }
+        const misspelledWord = String(probeRes.misspelledWord || '').trim()
+        if (!misspelledWord || misspelledWord.toLowerCase() !== range.word.toLowerCase()) {
+          setSpellSuggestState(null)
+          return
+        }
+        lastAutoSpellKeyRef.current = key
+        const completed = await onTabComplete(text, 'spell_suggest', { clickedWord: range.word })
+        const candidates = Array.isArray(completed?.candidates) ? completed!.candidates!.map((x) => String(x || '').trim()).filter(Boolean) : []
+        if (!candidates.length) {
+          setSpellSuggestState(null)
+          return
+        }
+        setSpellSuggestState({
+          start: range.start,
+          end: range.end,
+          word: range.word,
+          candidates,
+          activeIndex: 0
+        })
+      } finally {
+        spellSuggestRunningRef.current = false
+      }
+    })()
+  }, [onTabComplete, resolvePrevWordRangeBeforeCaret, resolveWordProbePoint, spellSuggestEnabled])
 
   const slashInput = useMemo(() => parseSlashInput(value), [value])
   const exactSlashCommand = useMemo(
@@ -6906,6 +7146,24 @@ function ChatComposer({
       setPendingTabCompletion(null)
     }
   }, [pendingTabCompletion, value])
+
+  useEffect(() => {
+    if (spellSuggestEnabled) return
+    setSpellSuggestState(null)
+  }, [spellSuggestEnabled])
+
+  useEffect(() => {
+    if (!spellSuggestState) return
+    const { start, end } = spellSuggestState
+    if (start < 0 || end <= start || end > value.length) {
+      setSpellSuggestState(null)
+      return
+    }
+    const nextWord = value.slice(start, end)
+    if (!nextWord || nextWord.toLowerCase() !== spellSuggestState.word.toLowerCase()) {
+      setSpellSuggestState(null)
+    }
+  }, [spellSuggestState, value])
 
   useEffect(() => {
     return () => {
@@ -7031,6 +7289,7 @@ function ChatComposer({
       onStop()
       return
     }
+    if (spellSuggestState) setSpellSuggestState(null)
     if (tabChordTimerRef.current != null) {
       window.clearTimeout(tabChordTimerRef.current)
       tabChordTimerRef.current = null
@@ -7066,6 +7325,7 @@ function ChatComposer({
     onStop,
     pendingTabCompletion,
     slashInput,
+    spellSuggestState,
     value
   ])
 
@@ -7152,6 +7412,33 @@ function ChatComposer({
           </div>
         </div>
       ) : null}
+      {spellSuggestState && !slashMenuOpen ? (
+        <div className="absolute left-0 bottom-full z-40 mb-2 w-[260px] max-w-[min(100vw-2.5rem,260px)] overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-md">
+          <div className="border-b px-3 py-2 text-[11px] text-muted-foreground">
+            拼写建议：{spellSuggestState.word}
+          </div>
+          <div className="max-h-[220px] overflow-y-auto p-1.5 custom-scrollbar">
+            {spellSuggestState.candidates.map((candidate, idx) => {
+              const selected = idx === spellSuggestState.activeIndex
+              return (
+                <button
+                  key={`${spellSuggestState.word}:${candidate}:${idx}`}
+                  type="button"
+                  className={`mb-1 flex w-full items-center rounded-md border px-2 py-2 text-left text-[13px] transition-colors ${
+                    selected ? 'border-border bg-accent text-accent-foreground' : 'border-transparent hover:bg-black/5'
+                  }`}
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    applySpellCandidate(candidate)
+                  }}
+                >
+                  {candidate}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      ) : null}
       <div className="px-2">
         <div className="flex items-start gap-2">
           {selectedSlashCommand ? (
@@ -7172,6 +7459,7 @@ function ChatComposer({
               onChange={(e) => {
                 const next = e.target.value
                 if (pendingTabCompletion) setPendingTabCompletion(null)
+                if (spellSuggestState) setSpellSuggestState(null)
                 if (tabChordTimerRef.current != null) {
                   window.clearTimeout(tabChordTimerRef.current)
                   tabChordTimerRef.current = null
@@ -7179,14 +7467,60 @@ function ChatComposer({
                 }
                 if (selectedSlashCommand) {
                   const normalized = String(next || '')
-                  setValue(normalized ? `${selectedSlashPrefix} ${normalized}` : selectedSlashPrefix)
+                  const mergedValue = normalized ? `${selectedSlashPrefix} ${normalized}` : selectedSlashPrefix
+                  setValue(mergedValue)
                   return
                 }
                 setSlashDismissed(false)
                 setValue(next)
               }}
               onPaste={onPasteImage}
+              onClick={(e) => {
+                const x = Number(e.clientX)
+                const y = Number(e.clientY)
+                if (!Number.isFinite(x) || !Number.isFinite(y)) return
+                handleWordClickSuggest(x, y)
+              }}
+              onBlur={(e) => {
+                const el = e.currentTarget as HTMLTextAreaElement
+                const text = String(el.value || '')
+                const caret = Number(el.selectionStart ?? text.length)
+                triggerAutoSpellSuggestOnBlur(text, caret)
+              }}
               onKeyDown={(e) => {
+                if (spellSuggestState) {
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault()
+                    const len = spellSuggestState.candidates.length
+                    if (!len) return
+                    setSpellSuggestState((prev) => {
+                      if (!prev) return prev
+                      return { ...prev, activeIndex: (prev.activeIndex + 1) % len }
+                    })
+                    return
+                  }
+                  if (e.key === 'ArrowUp') {
+                    e.preventDefault()
+                    const len = spellSuggestState.candidates.length
+                    if (!len) return
+                    setSpellSuggestState((prev) => {
+                      if (!prev) return prev
+                      return { ...prev, activeIndex: (prev.activeIndex - 1 + len) % len }
+                    })
+                    return
+                  }
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    const picked = spellSuggestState.candidates[spellSuggestState.activeIndex] || ''
+                    if (picked) applySpellCandidate(picked)
+                    return
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setSpellSuggestState(null)
+                    return
+                  }
+                }
                 if (slashMenuOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
                   e.preventDefault()
                   if (!slashSuggestions.length) return

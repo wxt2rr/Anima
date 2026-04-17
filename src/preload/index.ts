@@ -8,6 +8,9 @@ const animaAPI = {
   backend: {
     getBaseUrl: () => ipcRenderer.invoke('anima:backend:getBaseUrl')
   },
+  spell: {
+    probeAtPoint: (params: { x: number; y: number }) => ipcRenderer.invoke('anima:spell:probeAtPoint', params)
+  },
   window: {
     pickFiles: () => ipcRenderer.invoke('anima:dialog:pickFiles'),
     pickDirectory: () => ipcRenderer.invoke('anima:dialog:pickDirectory'),

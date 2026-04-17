@@ -498,6 +498,7 @@ interface AppState {
       thinkingLevel: 'default' | 'off' | 'low' | 'medium' | 'high' | 'xhigh'
       completionEnabled: boolean
       completionTranslateEnabled: boolean
+      completionSpellSuggestEnabled: boolean
       completionContextLimit: number
     }
   }
@@ -673,6 +674,7 @@ const createDefaultComposer = (): AppState['ui']['composer'] => ({
   thinkingLevel: 'medium',
   completionEnabled: true,
   completionTranslateEnabled: true,
+  completionSpellSuggestEnabled: true,
   completionContextLimit: 4
 })
 

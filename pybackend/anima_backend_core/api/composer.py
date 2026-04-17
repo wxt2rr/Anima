@@ -13,6 +13,7 @@ from ..llm.adapter import call_chat_completion, create_provider
 from .runs_common import extract_assistant_text
 
 _APPEND_TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z'-]{0,23}$")
+_SPELL_CANDIDATE_RE = re.compile(r"^[A-Za-z][A-Za-z'-]{0,39}$")
 
 
 def _to_plain_text(content: Any) -> str:
@@ -124,6 +125,54 @@ def _normalize_translate_text(draft: str, raw_text: str) -> str:
     return out
 
 
+def _normalize_spell_candidates(word: str, raw_text: str) -> List[str]:
+    base_word = str(word or "").strip().lower()
+    payload = _extract_raw_text_payload(raw_text)
+    raw_items: List[str] = []
+    text = str(payload or "").strip()
+    if not text:
+        return []
+
+    parsed: Any = None
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        parsed = None
+
+    if isinstance(parsed, dict):
+        arr = parsed.get("candidates")
+        if isinstance(arr, list):
+            raw_items = [str(x or "").strip() for x in arr]
+    elif isinstance(parsed, list):
+        raw_items = [str(x or "").strip() for x in parsed]
+    else:
+        raw_items = [x.strip() for x in re.split(r"[,\n|;/]+", text) if str(x).strip()]
+
+    out: List[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        if not item:
+            continue
+        token = _sanitize_single_line_text(item, limit=48).strip()
+        if not token:
+            continue
+        token = token.split()[0].strip(".,!?;:，。；：")
+        if not token:
+            continue
+        if not _SPELL_CANDIDATE_RE.fullmatch(token):
+            continue
+        key = token.lower()
+        if base_word and key == base_word:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(token)
+        if len(out) >= 6:
+            break
+    return out
+
+
 def _format_context_before_text(context: List[Dict[str, str]]) -> str:
     lines: List[str] = []
     for item in context:
@@ -137,12 +186,25 @@ def _format_context_before_text(context: List[Dict[str, str]]) -> str:
     return " | ".join(lines)
 
 
-def _build_completion_messages(*, context: List[Dict[str, str]], draft: str, tab_mode: str) -> List[Dict[str, str]]:
-    mode = "translate" if str(tab_mode or "").strip().lower() == "translate" else "complete"
+def _build_completion_messages(*, context: List[Dict[str, str]], draft: str, tab_mode: str, spell_word: str = "") -> List[Dict[str, str]]:
+    mode_raw = str(tab_mode or "").strip().lower()
+    if mode_raw == "translate":
+        mode = "translate"
+    elif mode_raw == "spell_suggest":
+        mode = "spell_suggest"
+    else:
+        mode = "complete"
     if mode == "translate":
         system_text = (
             "You are an English inline translation assistant. Rewrite current_segment into concise natural English while preserving meaning."
             " Return only the rewritten text; return empty text if no change is needed."
+        )
+    elif mode == "spell_suggest":
+        system_text = (
+            "You are an English spelling correction assistant."
+            " Return ONLY a JSON object: {\"candidates\": [\"word1\", \"word2\", ...]}."
+            " Provide 3-6 likely corrections for misspelled_word using context."
+            " Candidates must be single English words."
         )
     else:
         system_text = (
@@ -158,6 +220,7 @@ def _build_completion_messages(*, context: List[Dict[str, str]], draft: str, tab
                 f"mode: {mode}\n"
                 f"context_before: {_format_context_before_text(context)}\n"
                 f"current_segment: {draft}\n"
+                f"misspelled_word: {spell_word}\n"
                 "context_after: "
             ),
         },
@@ -183,6 +246,8 @@ def handle_post_composer_tab_complete(handler: Any) -> None:
         tab_mode_raw = str(body.get("tabMode") or "").strip().lower()
         if tab_mode_raw in ("translate", "rewrite"):
             tab_mode = "translate"
+        elif tab_mode_raw in ("spell_suggest", "spell", "correct"):
+            tab_mode = "spell_suggest"
         elif tab_mode_raw in ("complete", "completion", "append"):
             tab_mode = "complete"
         else:
@@ -230,7 +295,8 @@ def handle_post_composer_tab_complete(handler: Any) -> None:
             model_override = completion_model_id or None
         else:
             model_override = str(composer.get("modelOverride") or "").strip() or None
-        messages = _build_completion_messages(context=context, draft=draft, tab_mode=tab_mode)
+        spell_word = str(body.get("word") or body.get("clickedWord") or "").strip()
+        messages = _build_completion_messages(context=context, draft=draft, tab_mode=tab_mode, spell_word=spell_word)
         out = call_chat_completion(
             provider,
             messages,
@@ -244,12 +310,17 @@ def handle_post_composer_tab_complete(handler: Any) -> None:
         raw_payload = _extract_raw_text_payload(str(raw_text or ""))
         if tab_mode == "translate":
             text = _normalize_translate_text(draft, raw_payload)
+            candidates: List[str] = []
+        elif tab_mode == "spell_suggest":
+            candidates = _normalize_spell_candidates(spell_word, raw_payload)
+            text = candidates[0] if candidates else ""
         else:
             text = _normalize_complete_text(draft, raw_payload)
+            candidates = []
         json_response(
             handler,
             HTTPStatus.OK,
-            {"ok": True, "mode": tab_mode, "text": text, "raw": str(raw_text or ""), "applied": bool(text)},
+            {"ok": True, "mode": tab_mode, "text": text, "raw": str(raw_text or ""), "candidates": candidates, "applied": bool(text)},
         )
     except Exception as e:
         json_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(e)})

@@ -336,6 +336,33 @@ class ComposerCompletionApiTests(unittest.TestCase):
         final_user = str(messages[-1].get("content") or "")
         self.assertIn("mode: translate", final_user)
 
+    def test_tab_complete_spell_suggest_returns_candidates(self) -> None:
+        with (
+            patch("anima_backend_core.api.composer.load_settings", return_value={"settings": {}}),
+            patch("anima_backend_core.api.composer.create_provider", return_value=object()),
+            patch("anima_backend_core.api.composer.get_chat", return_value={"messages": []}),
+            patch(
+                "anima_backend_core.api.composer.call_chat_completion",
+                return_value={"choices": [{"message": {"content": '{"candidates":["example","sample","explain"]}'}}]},
+            ),
+        ):
+            code, out = self._dispatch(
+                "POST",
+                "/api/composer/tab_complete",
+                {
+                    "input": "can you show me the exeplce",
+                    "word": "exeplce",
+                    "tabMode": "spell_suggest",
+                    "composer": {"completionEnabled": True},
+                },
+            )
+
+        self.assertEqual(code, 200)
+        self.assertTrue(bool(out.get("ok")))
+        self.assertEqual(str(out.get("mode") or ""), "spell_suggest")
+        self.assertEqual(str(out.get("text") or ""), "example")
+        self.assertEqual(out.get("candidates"), ["example", "sample", "explain"])
+
     def test_tab_complete_requires_input(self) -> None:
         code, out = self._dispatch("POST", "/api/composer/tab_complete", {"input": "  "})
         self.assertEqual(code, 400)

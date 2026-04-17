@@ -16,6 +16,13 @@ import { createStatusCenterService } from './services/statusCenterService'
 let mainWindow: BrowserWindow | null = null
 let backendProcess: ChildProcessWithoutNullStreams | null = null
 let statusCenterService: ReturnType<typeof createStatusCenterService> | null = null
+let pendingSpellProbe:
+  | {
+      webContentsId: number
+      resolve: (result: { ok: boolean; misspelledWord?: string; suggestions?: string[]; error?: string }) => void
+      timer: NodeJS.Timeout
+    }
+  | null = null
 
 type WindowState = {
   bounds?: { x?: number; y?: number; width: number; height: number }
@@ -443,6 +450,48 @@ function registerIpcHandlers(): void {
     return { ok: true, baseUrl: backendBaseUrl }
   })
 
+  ipcMain.handle('anima:spell:probeAtPoint', async (evt, params: any) => {
+    const wc = evt.sender
+    const x = Number(params?.x)
+    const y = Number(params?.y)
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return { ok: false, error: 'Invalid point' }
+    }
+
+    if (pendingSpellProbe) {
+      try {
+        clearTimeout(pendingSpellProbe.timer)
+        pendingSpellProbe.resolve({ ok: false, error: 'Interrupted' })
+      } catch {
+        //
+      }
+      pendingSpellProbe = null
+    }
+
+    return await new Promise<{ ok: boolean; misspelledWord?: string; suggestions?: string[]; error?: string }>((resolve) => {
+      const timer = setTimeout(() => {
+        if (!pendingSpellProbe || pendingSpellProbe.webContentsId !== wc.id) return
+        pendingSpellProbe = null
+        resolve({ ok: true, misspelledWord: '', suggestions: [] })
+      }, 350)
+
+      pendingSpellProbe = {
+        webContentsId: wc.id,
+        resolve,
+        timer
+      }
+
+      try {
+        wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'right', clickCount: 1 })
+        wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'right', clickCount: 1 })
+      } catch (error: any) {
+        clearTimeout(timer)
+        pendingSpellProbe = null
+        resolve({ ok: false, error: error?.message || String(error) })
+      }
+    })
+  })
+
   ipcMain.handle('anima:statusCenter:getState', async () => {
     if (!statusCenterService) return { ok: false, error: 'status center not ready' }
     return { ok: true, ...statusCenterService.getState() }
@@ -771,6 +820,20 @@ async function createWindow(): Promise<void> {
   })
 
   mainWindow.webContents.on('context-menu', (_event, params) => {
+    if (pendingSpellProbe && pendingSpellProbe.webContentsId === mainWindow?.webContents.id) {
+      try {
+        clearTimeout(pendingSpellProbe.timer)
+        const misspelledWord = String(params.misspelledWord || '').trim()
+        const suggestions = Array.isArray(params.dictionarySuggestions) ? params.dictionarySuggestions.map((s) => String(s || '').trim()).filter(Boolean) : []
+        pendingSpellProbe.resolve({ ok: true, misspelledWord, suggestions })
+      } catch (error: any) {
+        pendingSpellProbe.resolve({ ok: false, error: error?.message || String(error) })
+      } finally {
+        pendingSpellProbe = null
+      }
+      return
+    }
+
     const items: MenuItemConstructorOptions[] = []
     const suggestions = Array.isArray(params.dictionarySuggestions) ? params.dictionarySuggestions : []
     const misspelledWord = String(params.misspelledWord || '').trim()

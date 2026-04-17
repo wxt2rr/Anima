@@ -12,6 +12,9 @@ declare global {
       backend: {
         getBaseUrl: () => Promise<{ ok: boolean; baseUrl: string }>
       }
+      spell: {
+        probeAtPoint: (params: { x: number; y: number }) => Promise<{ ok: boolean; misspelledWord?: string; suggestions?: string[]; error?: string }>
+      }
       window: {
         pickFiles: () => Promise<{ ok: boolean; canceled: boolean; paths: string[] }>
         pickDirectory: () => Promise<{ ok: boolean; canceled: boolean; path: string }>
