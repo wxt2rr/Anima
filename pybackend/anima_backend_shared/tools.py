@@ -19,6 +19,7 @@ import urllib.parse
 import urllib.request
 
 from .constants import MAX_FILE_BYTES_TOOL
+from .os_sandbox_runner import run_bash_with_os_sandbox
 from .util import is_within, norm_abs, read_text_file, safe_env
 
 ANIMA_COMMAND_WHITELIST_ROOT = norm_abs("/Users/wangxt/.config/anima")
@@ -1712,38 +1713,17 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
             run_cwd = target
 
         timeout_ms = int(args.get("timeoutMs") or 20000)
-        timeout_ms = max(1000, min(timeout_ms, 120000))
-
-        p = subprocess.run(
-            ["/bin/bash", "-c", cmd],
+        out = run_bash_with_os_sandbox(
+            command=cmd,
             cwd=run_cwd,
-            capture_output=True,
-            text=True,
+            timeout_ms=timeout_ms,
+            permission_mode=permission_mode,
+            workspace_dir=base_cwd,
+            allowed_roots=[ANIMA_COMMAND_WHITELIST_ROOT],
             env=safe_env(),
-            timeout=timeout_ms / 1000.0,
+            max_chars=20000,
         )
-        stdout = p.stdout or ""
-        stderr = p.stderr or ""
-
-        max_chars = 20000
-        out_trunc = len(stdout) > max_chars
-        err_trunc = len(stderr) > max_chars
-        if out_trunc:
-            stdout = stdout[:max_chars]
-        if err_trunc:
-            stderr = stderr[:max_chars]
-
-        return json.dumps(
-            {
-                "ok": True,
-                "exitCode": int(p.returncode),
-                "stdout": stdout,
-                "stderr": stderr,
-                "truncated": {"stdout": out_trunc, "stderr": err_trunc},
-                "cwd": run_cwd,
-            },
-            ensure_ascii=False,
-        )
+        return json.dumps(out, ensure_ascii=False)
 
     if name == "list_dir":
         if not workspace_dir:

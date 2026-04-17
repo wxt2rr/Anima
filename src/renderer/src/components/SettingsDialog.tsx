@@ -3425,7 +3425,7 @@ function ProvidersSettings() {
   const [draggedProviderId, setDraggedProviderId] = useState('')
   const [dragOverProviderId, setDragOverProviderId] = useState('')
   const [qwenAuthProfiles, setQwenAuthProfiles] = useState<Array<{ profileId: string; state: string; expiresAt?: number | null }>>([])
-  const [codexAuthProfiles, setCodexAuthProfiles] = useState<Array<{ profileId: string; state: string; expiresAt?: number | null }>>([])
+  const [codexAuthProfiles, setCodexAuthProfiles] = useState<Array<{ profileId: string; state: string; expiresAt?: number | null; email?: string }>>([])
   const [qwenLogin, setQwenLogin] = useState<{
     open: boolean
     providerRecordId: string
@@ -3447,6 +3447,7 @@ function ProvidersSettings() {
     state: 'idle' | 'pending' | 'success' | 'error'
     error?: string
   }>({ open: false, providerRecordId: '', flowId: '', verificationUrl: '', expiresAt: 0, pollIntervalMs: 1000, state: 'idle' })
+  const [codexSyncing, setCodexSyncing] = useState(false)
   const [fetchModelsError, setFetchModelsError] = useState<{ open: boolean; message: string }>({ open: false, message: '' })
 
   useEffect(() => {
@@ -3537,9 +3538,14 @@ function ProvidersSettings() {
         detectLocalFailedHint: 'Failed to detect local models. Please ensure local server is running: Ollama http://127.0.0.1:11434 , LM Studio http://127.0.0.1:1234.',
         qwenOAuthDesc: 'Device code login; credentials stay in local backend',
         codexOAuthDesc: 'Browser login; credentials stay in local backend',
+        codexAuthRootDir: 'Codex auth root dir',
+        codexAuthRootDirHint: 'Default is ~/.codex. Sync reads auth.json from this directory.',
+        syncAccount: 'Sync account',
+        syncing: 'Syncing...',
         signIn: 'Sign in',
         logout: 'Logout',
         profile: 'Profile',
+        email: 'Email',
         status: 'Status',
         loggedIn: 'Logged in',
         expired: 'Expired',
@@ -3605,9 +3611,14 @@ function ProvidersSettings() {
         detectLocalFailedHint: '本地模型探测失败。请确认本地服务已启动：Ollama http://127.0.0.1:11434 ，LM Studio http://127.0.0.1:1234。',
         qwenOAuthDesc: '使用设备码登录，凭据仅保存在本地后端',
         codexOAuthDesc: '浏览器登录，凭据仅保存在本地后端',
+        codexAuthRootDir: 'Codex 授权根目录',
+        codexAuthRootDirHint: '默认是 ~/.codex。同步账号会读取该目录下的 auth.json。',
+        syncAccount: '同步账号',
+        syncing: '同步中...',
         signIn: '登录',
         logout: '退出',
         profile: 'Profile',
+        email: '邮箱',
         status: '状态',
         loggedIn: '已登录',
         expired: '已过期',
@@ -3673,9 +3684,14 @@ function ProvidersSettings() {
         detectLocalFailedHint: 'ローカルモデルの検出に失敗しました。ローカルサーバーが起動していることを確認してください: Ollama http://127.0.0.1:11434 , LM Studio http://127.0.0.1:1234.',
         qwenOAuthDesc: 'デバイスコードでログイン。認証情報はローカルバックエンドのみに保存されます',
         codexOAuthDesc: 'ブラウザログイン。認証情報はローカルバックエンドのみに保存されます',
+        codexAuthRootDir: 'Codex 認証ルート',
+        codexAuthRootDirHint: '既定値は ~/.codex。このディレクトリの auth.json を同期します。',
+        syncAccount: 'アカウント同期',
+        syncing: '同期中...',
         signIn: 'ログイン',
         logout: 'ログアウト',
         profile: 'Profile',
+        email: 'メール',
         status: '状態',
         loggedIn: 'ログイン済み',
         expired: '期限切れ',
@@ -3732,6 +3748,7 @@ function ProvidersSettings() {
   const isOAuthProvider = !isAcp && (isQwen || isCodex)
   const qwenProfileId = String(activeProvider?.auth?.profileId || 'default').trim() || 'default'
   const codexProfileId = String(activeProvider?.auth?.profileId || 'default').trim() || 'default'
+  const codexAuthRootDir = String((activeProvider?.config as any)?.authRootDir || '~/.codex').trim() || '~/.codex'
   const acpConfig = ((activeProvider?.config as any)?.acp || {}) as any
   
   const filteredProviders = visibleProviders.filter(p => 
@@ -3943,7 +3960,7 @@ function ProvidersSettings() {
 
   const refreshCodexProfiles = useCallback(async () => {
     if (!isCodex || !activeProvider) return
-    const res = await fetchBackendJson<{ ok: boolean; profiles?: Array<{ profileId: string; state: string; expiresAt?: number | null }> }>(
+    const res = await fetchBackendJson<{ ok: boolean; profiles?: Array<{ profileId: string; state: string; expiresAt?: number | null; email?: string | null }> }>(
       `/api/providers/auth/profiles?providerId=${encodeURIComponent(activeProvider.id)}`,
       { method: 'GET' }
     )
@@ -3953,7 +3970,8 @@ function ProvidersSettings() {
         .map((p: any) => ({
           profileId: String(p?.profileId || '').trim(),
           state: String(p?.state || '').trim(),
-          expiresAt: p?.expiresAt == null ? null : Number(p.expiresAt)
+          expiresAt: p?.expiresAt == null ? null : Number(p.expiresAt),
+          email: String(p?.email || '').trim() || undefined
         }))
         .filter((p: any) => Boolean(p.profileId))
     )
@@ -4006,6 +4024,39 @@ function ProvidersSettings() {
     await refreshCodexProfiles().catch(() => {})
     updateProvider(activeProvider.id, { auth: { mode: 'oauth_openai_codex', profileId: codexProfileId } })
   }, [activeProvider, codexProfileId, refreshCodexProfiles, updateProvider])
+
+  const syncCodexAccount = useCallback(async () => {
+    if (!activeProvider) return
+    setCodexSyncing(true)
+    try {
+      const res = await fetchBackendJson<any>('/api/providers/auth/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          providerId: activeProvider.id,
+          profileId: codexProfileId,
+          authRootDir: codexAuthRootDir
+        })
+      })
+      const patch = res?.configPatch || {}
+      updateProvider(activeProvider.id, { auth: { mode: 'oauth_openai_codex', profileId: codexProfileId } })
+      updateProvider(activeProvider.id, {
+        baseUrl: patch.baseUrl || (activeProvider?.config?.baseUrl || ''),
+        models: Array.isArray(patch.models) ? patch.models : (activeProvider?.config?.models || []),
+        selectedModel: patch.selectedModel || (activeProvider?.config?.selectedModel || ''),
+        modelsFetched: true,
+        authRootDir: String(res?.source?.authRootDir || codexAuthRootDir).trim() || codexAuthRootDir,
+        apiKey: ''
+      } as any)
+      await refreshCodexProfiles().catch(() => {})
+      await loadRemoteConfig().catch(() => {})
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : String(e || 'Sync failed')
+      setFetchModelsError({ open: true, message: raw })
+    } finally {
+      setCodexSyncing(false)
+    }
+  }, [activeProvider, codexProfileId, codexAuthRootDir, refreshCodexProfiles, loadRemoteConfig, updateProvider])
 
   useEffect(() => {
     if (!codexLogin.open || !codexLogin.flowId) return
@@ -4394,16 +4445,38 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                         <Button variant="outline" size="sm" onClick={() => void startCodexLogin()}>
                           {t.signIn}
                         </Button>
+                        <Button variant="secondary" size="sm" onClick={() => void syncCodexAccount()} disabled={codexSyncing}>
+                          {codexSyncing ? t.syncing : t.syncAccount}
+                        </Button>
                         <Button variant="ghost" size="sm" onClick={() => void logoutCodex()}>
                           {t.logout}
                         </Button>
                       </div>
                     </div>
 
+                    <div className="space-y-1">
+                      <Label>{t.codexAuthRootDir}</Label>
+                      <Input
+                        value={codexAuthRootDir}
+                        onChange={(e) => updateProvider(activeProvider.id, { authRootDir: e.target.value } as any)}
+                        placeholder="~/.codex"
+                      />
+                      <p className="text-xs text-muted-foreground">{t.codexAuthRootDirHint}</p>
+                    </div>
+
                     <div className="text-[13px]">
                       <div className="flex items-center justify-between">
                         <span className="text-muted-foreground">{t.profile}</span>
                         <span className="font-mono">{codexProfileId}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">{t.email}</span>
+                        <span className="font-mono">
+                          {(() => {
+                            const p = codexAuthProfiles.find(x => x.profileId === codexProfileId) || codexAuthProfiles[0]
+                            return String(p?.email || '--')
+                          })()}
+                        </span>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-muted-foreground">{t.status}</span>

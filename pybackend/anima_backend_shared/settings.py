@@ -312,6 +312,10 @@ def _normalize_provider_models(existing: Dict[str, Any]) -> bool:
             p["config"] = cfg
             changed = True
         if str(p.get("type") or "").strip().lower() == "openai_codex":
+            auth_root_dir = str(cfg.get("authRootDir") or "").strip()
+            if not auth_root_dir:
+                cfg["authRootDir"] = "~/.codex"
+                changed = True
             models = cfg.get("models")
             existing_ids = set()
             if isinstance(models, list):

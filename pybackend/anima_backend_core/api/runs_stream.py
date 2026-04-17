@@ -19,6 +19,7 @@ from anima_backend_shared.util import as_text, extract_reasoning_text, norm_abs,
 from ..llm.adapter import call_chat_completion, call_chat_completion_stream, create_provider, get_last_rate_limit
 from ..tools.executor import execute_tool, make_tool_message, select_tools
 from ..runtime.graph import inject_system_message
+from ..runtime.sandbox_policy import normalize_composer_sandbox_fields
 from ..runtime.sanitize import sanitize_history_messages
 from .runs_compression import apply_persistent_compression, apply_thinking_level, build_usage_state, normalize_or_estimate_usage
 from .runs_request import prepare_messages_for_run, resolve_runtime_options
@@ -1141,6 +1142,7 @@ def handle_post_runs_non_stream_via_stream_executor(body: Dict[str, Any]) -> Tup
         composer = {}
 
     settings_obj = load_settings()
+    composer = normalize_composer_sandbox_fields(composer=composer, settings_obj=settings_obj)
     workspace_warning = _workspace_preflight_warning(settings_obj, composer)
     try:
         provider = create_provider(settings_obj, composer)
@@ -1167,6 +1169,7 @@ def handle_post_runs_non_stream_via_stream_executor(body: Dict[str, Any]) -> Tup
         messages, composer, compression_evt = _apply_persistent_compression(
             chat_id=thread_id, messages=messages, settings_obj=settings_obj, provider=provider, composer=composer, extra_body=extra_body
         )
+        composer = normalize_composer_sandbox_fields(composer=composer, settings_obj=settings_obj)
     orchestration_plan = _plan_worker_execution(
         provider=provider,
         messages=messages,
@@ -1343,6 +1346,7 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
         composer = {}
 
     settings_obj = load_settings()
+    composer = normalize_composer_sandbox_fields(composer=composer, settings_obj=settings_obj)
     workspace_warning = _workspace_preflight_warning(settings_obj, composer)
     try:
         provider = create_provider(settings_obj, composer)
@@ -1407,6 +1411,7 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
             extra_body=extra_body,
             emit_event=emit,
         )
+        composer = normalize_composer_sandbox_fields(composer=composer, settings_obj=settings_obj)
     orchestration_plan = _plan_worker_execution(
         provider=provider,
         messages=messages,

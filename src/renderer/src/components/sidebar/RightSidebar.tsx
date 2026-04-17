@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Folder, GitBranch, TerminalSquare, Globe, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { FileExplorer } from './FileExplorer';
 import { GitPanel } from './GitPanel';
 import { TerminalPanel } from './TerminalPanel';
@@ -82,7 +81,7 @@ export const RightSidebar: React.FC<{ width?: number; onResizeStart?: () => void
     { id: 'preview', label: 'Preview', icon: Globe },
   ] as const;
 
-  const collapsedWidth = 60
+  const collapsedWidth = 0
   const expandedWidth = Math.max(300, Math.min(1200, Number(width) || 600))
   const sidebarWidth = rightSidebarOpen ? expandedWidth : collapsedWidth
   const sidebarStyle = useMemo(() => {
@@ -100,33 +99,6 @@ export const RightSidebar: React.FC<{ width?: number; onResizeStart?: () => void
       style={sidebarStyle}
     >
       <div className="relative w-full h-full">
-        <div
-          className={cn(
-            "absolute inset-0 flex flex-col items-center pt-12 transition-all duration-300",
-            rightSidebarOpen ? "opacity-0 pointer-events-none scale-95" : "opacity-100 scale-100"
-          )}
-        >
-          <div className="flex flex-col gap-3">
-            {tabs.map(tab => (
-              <TooltipProvider key={tab.id}>
-                <Tooltip delayDuration={0}>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-primary hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10 rounded-lg transition-all"
-                      onClick={() => setActiveRightPanel(tab.id)}
-                    >
-                      <tab.icon className="w-4 h-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="left" className="text-xs font-medium">{tab.label}</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            ))}
-          </div>
-        </div>
-
         <div
           className={cn(
             "absolute inset-0 flex flex-col bg-white",

@@ -770,6 +770,43 @@ async function createWindow(): Promise<void> {
     return { action: 'deny' }
   })
 
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    const items: MenuItemConstructorOptions[] = []
+    const suggestions = Array.isArray(params.dictionarySuggestions) ? params.dictionarySuggestions : []
+    const misspelledWord = String(params.misspelledWord || '').trim()
+
+    if (misspelledWord && suggestions.length > 0) {
+      for (const suggestion of suggestions.slice(0, 6)) {
+        items.push({
+          label: suggestion,
+          click: () => {
+            mainWindow?.webContents.replaceMisspelling(suggestion)
+          }
+        })
+      }
+      items.push({ type: 'separator' })
+    } else if (misspelledWord) {
+      items.push({ label: 'No spelling suggestions', enabled: false })
+      items.push({ type: 'separator' })
+    }
+
+    if (params.isEditable) {
+      items.push({ role: 'undo' })
+      items.push({ role: 'redo' })
+      items.push({ type: 'separator' })
+      items.push({ role: 'cut' })
+      items.push({ role: 'copy' })
+      items.push({ role: 'paste' })
+      items.push({ role: 'selectAll' })
+    } else if (String(params.selectionText || '').trim()) {
+      items.push({ role: 'copy' })
+      items.push({ role: 'selectAll' })
+    }
+
+    if (!items.length) return
+    Menu.buildFromTemplate(items).popup({ window: mainWindow || undefined })
+  })
+
   if (is.dev) {
     mainWindow.webContents.on('did-fail-load', (_, errorCode, errorDescription, validatedURL) => {
       console.error('[mainWindow did-fail-load]', { errorCode, errorDescription, validatedURL })

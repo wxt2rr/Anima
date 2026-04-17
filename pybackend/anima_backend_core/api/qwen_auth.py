@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import base64
+import json
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from http import HTTPStatus
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from anima_backend_shared.http import json_response, read_body_json
@@ -30,6 +34,205 @@ _FLOW_LOCK = threading.Lock()
 _CODEX_CB_LOCK = threading.Lock()
 _CODEX_CB_SERVER: Any = None
 _CODEX_CB_THREAD: Any = None
+
+
+def _codex_default_auth_root_dir() -> str:
+    return "~/.codex"
+
+
+def _parse_timestamp_ms(value: Any, now_ms: int) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        n = int(value)
+        if n <= 0:
+            return 0
+        return n * 1000 if n < 10_000_000_000 else n
+    s = str(value or "").strip()
+    if not s:
+        return 0
+    if s.isdigit():
+        n = int(s)
+        if n <= 0:
+            return 0
+        return n * 1000 if n < 10_000_000_000 else n
+    try:
+        iso = s.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(iso)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp() * 1000)
+    except Exception:
+        return 0
+
+
+def _decode_jwt_payload(token: str) -> Dict[str, Any]:
+    tok = str(token or "").strip()
+    if tok.count(".") < 2:
+        return {}
+    try:
+        part = tok.split(".")[1]
+        pad = "=" * ((4 - (len(part) % 4)) % 4)
+        raw = base64.urlsafe_b64decode((part + pad).encode("utf-8"))
+        obj = json.loads(raw.decode("utf-8", errors="ignore"))
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+
+def _jwt_exp_ms(token: str) -> int:
+    payload = _decode_jwt_payload(token)
+    exp = payload.get("exp")
+    if isinstance(exp, (int, float)):
+        n = int(exp)
+        if n > 0:
+            return n * 1000
+    return 0
+
+
+def _pick_first_text(obj: Dict[str, Any], keys: list[str]) -> str:
+    for k in keys:
+        v = obj.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+
+def _normalize_email(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    s = value.strip()
+    if not s or "@" not in s or " " in s:
+        return ""
+    return s
+
+
+def _pick_first_email(obj: Dict[str, Any], keys: list[str]) -> str:
+    for k in keys:
+        v = obj.get(k)
+        email = _normalize_email(v)
+        if email:
+            return email
+    return ""
+
+
+def _extract_codex_email(payload: Dict[str, Any], candidates: list[Dict[str, Any]], access_token: str = "") -> str:
+    email_keys = ["email", "userEmail", "user_email", "preferred_username", "upn"]
+    nested_keys = ["user", "profile", "account"]
+
+    access_email = _pick_first_email(_decode_jwt_payload(access_token), email_keys)
+    if access_email:
+        return access_email
+
+    for cand in candidates + [payload]:
+        if not isinstance(cand, dict):
+            continue
+        direct = _pick_first_email(cand, email_keys)
+        if direct:
+            return direct
+        for nk in nested_keys:
+            nv = cand.get(nk)
+            if isinstance(nv, dict):
+                nested = _pick_first_email(nv, email_keys)
+                if nested:
+                    return nested
+        for tk in ["idToken", "id_token", "accessToken", "access_token", "token"]:
+            token_raw = str(cand.get(tk) or "").strip()
+            if not token_raw:
+                continue
+            token_email = _pick_first_email(_decode_jwt_payload(token_raw), email_keys)
+            if token_email:
+                return token_email
+    return ""
+
+
+def _load_codex_auth_json(root_dir_raw: str) -> tuple[Dict[str, Any], str, str]:
+    root_dir = str(root_dir_raw or "").strip() or _codex_default_auth_root_dir()
+    root = Path(root_dir).expanduser()
+    auth_file = root / "auth.json"
+    if not auth_file.exists():
+        raise ValueError(f"auth.json not found: {auth_file}")
+    if not auth_file.is_file():
+        raise ValueError(f"auth.json is not a file: {auth_file}")
+    try:
+        size = int(auth_file.stat().st_size)
+    except Exception:
+        size = 0
+    if size <= 0:
+        raise ValueError(f"auth.json is empty: {auth_file}")
+    if size > 5 * 1024 * 1024:
+        raise ValueError(f"auth.json is too large: {auth_file}")
+    try:
+        raw = auth_file.read_text(encoding="utf-8")
+    except Exception as e:
+        raise ValueError(f"failed to read auth.json: {e}")
+    try:
+        obj = json.loads(raw)
+    except Exception as e:
+        raise ValueError(f"failed to parse auth.json: {e}")
+    if not isinstance(obj, dict):
+        raise ValueError("auth.json must be a JSON object")
+    return obj, str(root.resolve()), str(auth_file.resolve())
+
+
+def _extract_codex_credential(payload: Dict[str, Any], now_ms: int) -> Dict[str, Any]:
+    keys_access = ["accessToken", "access_token", "idToken", "id_token", "token"]
+    keys_refresh = ["refreshToken", "refresh_token"]
+    keys_expires_at = ["expiresAt", "expires_at", "expires", "exp"]
+    keys_expires_in = ["expiresIn", "expires_in"]
+    keys_account = ["chatgptAccountId", "chatgpt_account_id", "accountId", "account_id", "resourceUrl", "resource_url"]
+
+    candidates: list[Dict[str, Any]] = [payload]
+    for k in ["auth", "oauth", "token", "tokens", "credential", "credentials", "session", "data"]:
+        v = payload.get(k)
+        if isinstance(v, dict):
+            candidates.append(v)
+
+    for cand in candidates:
+        access = _pick_first_text(cand, keys_access)
+        refresh = _pick_first_text(cand, keys_refresh)
+        if not access or not refresh:
+            continue
+        expires_at = _parse_timestamp_ms(cand.get("expiresAt"), now_ms)
+        if expires_at <= 0:
+            for k in keys_expires_at:
+                expires_at = _parse_timestamp_ms(cand.get(k), now_ms)
+                if expires_at > 0:
+                    break
+        if expires_at <= 0:
+            for k in keys_expires_in:
+                raw_in = cand.get(k)
+                if isinstance(raw_in, bool):
+                    continue
+                if isinstance(raw_in, (int, float)):
+                    sec = int(raw_in)
+                else:
+                    s = str(raw_in or "").strip()
+                    sec = int(s) if s.isdigit() else 0
+                if sec > 0:
+                    expires_at = now_ms + sec * 1000
+                    break
+        if expires_at <= 0:
+            expires_at = _jwt_exp_ms(access)
+        if expires_at <= 0:
+            continue
+
+        account_id = _pick_first_text(cand, keys_account)
+        if not account_id:
+            account_id = _pick_first_text(payload, keys_account)
+        if not account_id:
+            account_id = codex_extract_chatgpt_account_id(access)
+        if not account_id:
+            continue
+        email = _extract_codex_email(payload, candidates, access)
+        return {
+            "accessToken": access,
+            "refreshToken": refresh,
+            "expiresAt": expires_at,
+            "resourceUrl": account_id,
+            "email": email or None,
+        }
+    raise ValueError("auth.json missing valid access/refresh token data")
 
 
 def _resolve_provider_kind(provider_record_id: str) -> str:
@@ -403,6 +606,7 @@ def handle_get_provider_auth_status(handler: Any) -> None:
                     patch_flow_data(flow_id, {"finalState": "error", "finalError": "missing chatgpt account id", "exchanging": False})
                 json_response(handler, HTTPStatus.OK, {"ok": True, "state": "error", "error": "missing chatgpt account id"})
                 return
+            email = _extract_codex_email({}, [], str(token.get("accessToken") or ""))
             try:
                 upsert_oauth_credential(
                     {
@@ -412,6 +616,7 @@ def handle_get_provider_auth_status(handler: Any) -> None:
                         "refreshToken": token.get("refreshToken"),
                         "expiresAt": token.get("expiresAt"),
                         "resourceUrl": account_id,
+                        "email": email or None,
                     }
                 )
                 config_patch = _apply_openai_codex_config_patch(profile_id, provider_record_id)
@@ -430,7 +635,7 @@ def handle_get_provider_auth_status(handler: Any) -> None:
                 {
                     "ok": True,
                     "state": "success",
-                    "authSummary": {"providerId": "openai_codex", "profileId": profile_id, "expiresAt": token.get("expiresAt")},
+                    "authSummary": {"providerId": "openai_codex", "profileId": profile_id, "expiresAt": token.get("expiresAt"), "email": email or None},
                     "configPatch": config_patch,
                 },
             )
@@ -513,6 +718,61 @@ def handle_post_provider_auth_logout(handler: Any) -> None:
         else:
             delete_credential("qwen", profile_id)
         json_response(handler, HTTPStatus.OK, {"ok": True})
+    except Exception as e:
+        json_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(e)})
+
+
+def handle_post_provider_auth_sync(handler: Any) -> None:
+    try:
+        body = read_body_json(handler)
+        if not isinstance(body, dict):
+            json_response(handler, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Invalid JSON body"})
+            return
+        provider_record_id = str(body.get("providerId") or "").strip()
+        if not provider_record_id:
+            json_response(handler, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "providerId is required"})
+            return
+        profile_id = str(body.get("profileId") or "").strip() or "default"
+        kind = _resolve_provider_kind(provider_record_id)
+        if kind != "openai_codex":
+            json_response(handler, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "sync is only supported for Codex Auth provider"})
+            return
+
+        now_ms = int(time.time() * 1000)
+        auth_root_dir = str(body.get("authRootDir") or "").strip() or _codex_default_auth_root_dir()
+        payload, normalized_root, auth_file = _load_codex_auth_json(auth_root_dir)
+        token = _extract_codex_credential(payload, now_ms)
+
+        upsert_oauth_credential(
+            {
+                "providerId": "openai_codex",
+                "profileId": profile_id,
+                "accessToken": token.get("accessToken"),
+                "refreshToken": token.get("refreshToken"),
+                "expiresAt": token.get("expiresAt"),
+                "resourceUrl": token.get("resourceUrl"),
+                "email": token.get("email"),
+            }
+        )
+        config_patch = _apply_openai_codex_config_patch(profile_id, provider_record_id)
+        json_response(
+            handler,
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "state": "success",
+                "authSummary": {
+                    "providerId": "openai_codex",
+                    "profileId": profile_id,
+                    "expiresAt": token.get("expiresAt"),
+                    "email": token.get("email"),
+                },
+                "configPatch": config_patch,
+                "source": {"authRootDir": normalized_root, "authFile": auth_file},
+            },
+        )
+    except ValueError as e:
+        json_response(handler, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})
     except Exception as e:
         json_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(e)})
 

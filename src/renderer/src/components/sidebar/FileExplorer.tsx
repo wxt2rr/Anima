@@ -847,7 +847,7 @@ const FileTreeItem: React.FC<{
       </div>
       {isDirectory && expanded && (
         <div
-          className="pl-3 border-l border-black/10 ml-2.5"
+          className="relative pl-3 ml-2.5 before:content-[''] before:absolute before:left-0 before:top-0 before:bottom-0 before:w-px before:bg-[repeating-linear-gradient(to_bottom,_#d4d4d8_0px,_#d4d4d8_3px,_transparent_3px,_transparent_11px)]"
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={(e) => {

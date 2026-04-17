@@ -11,6 +11,7 @@ from anima_backend_shared.tools import execute_builtin_tool
 from anima_backend_shared.util import is_within, norm_abs, now_ms, preview_json, preview_tool_result
 
 from ..mcp import get_mcp_runtime_manager
+from ..runtime.sandbox_policy import normalize_composer_sandbox_fields, normalize_permission_mode, resolve_workspace_dir
 
 
 def _sanitize_artifacts(
@@ -206,14 +207,31 @@ def execute_tool(
             )
             out = json.dumps(res, ensure_ascii=False)
         else:
-            mode = str(((composer or {}).get("permissionMode") or "workspace_whitelist")).strip() or "workspace_whitelist"
+            normalized_composer = normalize_composer_sandbox_fields(composer=composer, settings_obj=None)
+            mode = normalize_permission_mode(normalized_composer.get("permissionMode"))
             tool_args = dict(args or {})
             tool_args["_animaPermissionMode"] = mode
-            approvals = (composer or {}).get("dangerousCommandApprovals")
+            approvals = normalized_composer.get("dangerousCommandApprovals")
+            approvals_count = 0
             if isinstance(approvals, list):
-                tool_args["_animaDangerousCommandApprovals"] = [str(x) for x in approvals if str(x).strip()]
-            if bool((composer or {}).get("dangerousCommandAllowForThread")):
+                normalized_approvals = [str(x).strip() for x in approvals if str(x).strip()]
+                approvals_count = len(normalized_approvals)
+                tool_args["_animaDangerousCommandApprovals"] = normalized_approvals
+            allow_for_thread = bool(normalized_composer.get("dangerousCommandAllowForThread"))
+            if allow_for_thread:
                 tool_args["_animaDangerousCommandAllowForThread"] = True
+            sandbox_workspace_dir = resolve_workspace_dir(composer=normalized_composer, settings_obj=None)
+            if not sandbox_workspace_dir:
+                try:
+                    sandbox_workspace_dir = norm_abs(str(workspace_dir or "").strip()) if str(workspace_dir or "").strip() else ""
+                except Exception:
+                    sandbox_workspace_dir = ""
+            trace["sandbox"] = {
+                "permissionMode": mode,
+                "workspaceDir": sandbox_workspace_dir,
+                "dangerousCommandApprovalsCount": approvals_count,
+                "dangerousCommandAllowForThread": allow_for_thread,
+            }
             out = execute_builtin_tool(tool_name, tool_args, workspace_dir=workspace_dir)
         tool_content = out
         ended_at = now_ms()

@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { test } from 'node:test'
 import { buildKey, isWithin, mapAcpUpdateToUiEvent, resolvePathInWorkspace, toLines } from '../src/main/services/acpCore'
 
@@ -7,6 +10,38 @@ test('isWithin: child path inside workspace', () => {
   assert.equal(isWithin('/a/b', '/a/b/c'), true)
   assert.equal(isWithin('/a/b', '/a/b/c/d'), true)
   assert.equal(isWithin('/a/b', '/a/x'), false)
+})
+
+test('isWithin: symlink escape to outside workspace is blocked for existing target', { skip: process.platform === 'win32' }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-core-'))
+  try {
+    const workspace = path.join(root, 'workspace')
+    const outside = path.join(root, 'outside')
+    fs.mkdirSync(workspace)
+    fs.mkdirSync(outside)
+    const outsideFile = path.join(outside, 'secret.txt')
+    fs.writeFileSync(outsideFile, 'secret', 'utf8')
+    fs.symlinkSync(outside, path.join(workspace, 'link-out'))
+
+    assert.equal(isWithin(workspace, path.join(workspace, 'link-out', 'secret.txt')), false)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('isWithin: symlink escape to outside workspace is blocked for non-existing target', { skip: process.platform === 'win32' }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-core-'))
+  try {
+    const workspace = path.join(root, 'workspace')
+    const outside = path.join(root, 'outside')
+    fs.mkdirSync(workspace)
+    fs.mkdirSync(outside)
+    fs.symlinkSync(outside, path.join(workspace, 'link-out'))
+
+    assert.equal(isWithin(workspace, path.join(workspace, 'link-out', 'new-dir', 'new-file.txt')), false)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('resolvePathInWorkspace: relative joins, absolute preserved', () => {

@@ -171,6 +171,7 @@ export interface Provider {
   config: {
     apiKey?: string
     baseUrl?: string
+    authRootDir?: string
     models: ProviderModel[]
     selectedModel?: string
     thinkingEnabled?: boolean
@@ -469,6 +470,7 @@ interface AppState {
   messages: Message[]
   chats: ChatThread[]
   activeChatId: string
+  chatInitDone: boolean
   configLoaded: boolean
   configError: string
   ui: {
@@ -1110,6 +1112,7 @@ export const useStore = create<AppState>()(
           }
         ],
         activeChatId: initialChatId,
+        chatInitDone: false,
         configLoaded: false,
         configError: '',
         ui: createDefaultUi(),
@@ -1132,51 +1135,13 @@ export const useStore = create<AppState>()(
           const state = get()
           const curSettings = state.settings
           const curProjects = Array.isArray(curSettings?.projects) ? (curSettings!.projects as Project[]) : []
-          const hasAnyChats = chats.length > 0
-
-          let nextProjects = curProjects
-          if (!nextProjects.length && hasAnyChats) {
-            const dir = String(curSettings?.workspaceDir || '').trim()
-            const parts = dir.split(/[\\/]/).filter(Boolean)
-            const name = (parts[parts.length - 1] || '').trim() || '历史项目'
-            const pid = nanoid()
-            const ts = Date.now()
-            nextProjects = [{ id: pid, name, dir, pinned: false, createdAt: ts, updatedAt: ts }]
-            set((s) => ({ ui: { ...s.ui, activeProjectId: pid } }))
-            if (curSettings) get().updateSettings({ projects: nextProjects })
-          }
+          const nextProjects = curProjects
 
           const uiActiveProjectId = String(state.ui.activeProjectId || '').trim()
-          if (nextProjects.length && (!uiActiveProjectId || !nextProjects.some((p) => p.id === uiActiveProjectId))) {
+          if (nextProjects.length && uiActiveProjectId && !nextProjects.some((p) => p.id === uiActiveProjectId)) {
             const pinned = nextProjects.find((p) => p.pinned)
             const pick = pinned || nextProjects[0]
             if (pick) set((s) => ({ ui: { ...s.ui, activeProjectId: pick.id } }))
-          }
-
-          if (nextProjects.length) {
-            const fallbackPid = String((get().ui.activeProjectId || '').trim() || nextProjects[0].id)
-            const toPatch: Array<{ id: string; meta: any }> = []
-            for (const c of chats) {
-              const meta = (c as any)?.meta
-              const pid = String(meta?.projectId || '').trim()
-              if (!pid) {
-                const nextMeta = { ...(meta && typeof meta === 'object' ? meta : {}), projectId: fallbackPid }
-                ;(c as any).meta = nextMeta
-                toPatch.push({ id: String(c.id || ''), meta: nextMeta })
-              }
-            }
-            if (toPatch.length) {
-              set((s) => ({
-                chats: s.chats.map((c) => {
-                  const patched = toPatch.find((x) => x.id === c.id)
-                  return patched ? ({ ...c, meta: patched.meta } as any) : c
-                })
-              }))
-              for (const p of toPatch) {
-                if (!p.id) continue
-                api.updateChat(p.id, { meta: p.meta }).catch(console.error)
-              }
-            }
           }
 
           let activeId = String(state.activeChatId || '').trim()
@@ -1194,13 +1159,15 @@ export const useStore = create<AppState>()(
                 }))
 
                 const pid = String(chat?.meta?.projectId || '').trim()
-                if (pid) set((s) => ({ ui: { ...s.ui, activeProjectId: pid } }))
+                set((s) => ({ ui: { ...s.ui, activeProjectId: pid } }))
              }
           } else {
              set({ activeChatId: '', messages: [] })
           }
         } catch (e) {
             console.error(e)
+        } finally {
+          set({ chatInitDone: true })
         }
       },
 
@@ -1208,16 +1175,19 @@ export const useStore = create<AppState>()(
         const expandSidebar = options?.expandSidebar !== false
         const pid = String(get().ui.activeProjectId || '').trim()
         if (!pid) {
+          const newChat = await api.createChat('New Chat')
           set((state) => ({
-            activeChatId: '',
+            activeChatId: String((newChat as any)?.id || ''),
             messages: [],
             ui: {
               ...state.ui,
+              activeProjectId: '',
               sidebarCollapsed: expandSidebar ? false : state.ui.sidebarCollapsed,
               sidebarSearchOpen: false,
               sidebarSearchQuery: '',
               composer: createDefaultComposer()
-            }
+            },
+            chats: [{ ...(newChat as any), todoState: (newChat as any)?.meta?.todoState }, ...state.chats]
           }))
           return
         }
@@ -1303,7 +1273,7 @@ export const useStore = create<AppState>()(
             chats: state.chats.map(c => c.id === chatId ? { ...c, ...chat, todoState: chat.meta?.todoState } : c)
         }))
         const pid = String(chat?.meta?.projectId || '').trim()
-        if (pid) set((s) => ({ ui: { ...s.ui, activeProjectId: pid } }))
+        set((s) => ({ ui: { ...s.ui, activeProjectId: pid } }))
       },
 
       addProject: async (dir, name) => {
@@ -1346,12 +1316,11 @@ export const useStore = create<AppState>()(
 
       setActiveProject: (projectId) => {
         const pid = String(projectId || '').trim()
-        if (!pid) return
         set((s) => ({ ui: { ...s.ui, activeProjectId: pid } }))
         const st = get()
         const curChat = st.chats.find((c: any) => c.id === st.activeChatId)
         const curPid = String((curChat as any)?.meta?.projectId || '').trim()
-        if (curPid && curPid !== pid) set({ activeChatId: '', messages: [] })
+        if ((curPid || pid) && curPid !== pid) set({ activeChatId: '', messages: [] })
       },
 
       toggleProjectCollapsed: (projectId) => {
@@ -1385,6 +1354,7 @@ export const useStore = create<AppState>()(
 
         const nextActiveProjectId = (() => {
           const curActive = String(st.ui.activeProjectId || '').trim()
+          if (!curActive) return ''
           if (curActive && curActive !== pid) return curActive
           const pinned = nextProjects.find((p) => p.pinned)
           return (pinned || nextProjects[0])?.id || ''
@@ -1411,24 +1381,42 @@ export const useStore = create<AppState>()(
 
       deleteChat: async (chatId) => {
         const state = get()
+        const deletingChat = state.chats.find((c) => c.id === chatId)
+        const deletingProjectId = String((deletingChat as any)?.meta?.projectId || '').trim()
+        const activeProjectId = String(state.ui.activeProjectId || '').trim()
         const nextChats = state.chats.filter((c) => c.id !== chatId)
+        const shouldCreateNewChatInProject =
+          Boolean(deletingProjectId) &&
+          deletingProjectId === activeProjectId &&
+          !nextChats.some((c: any) => String(c?.meta?.projectId || '').trim() === deletingProjectId)
         
         // 1. If deleting inactive chat, just update list and sync backend
         if (state.activeChatId !== chatId) {
           set({ chats: nextChats })
           await api.deleteChat(chatId).catch(console.error)
+          if (shouldCreateNewChatInProject) {
+            await get().createChatInProject(deletingProjectId, { expandSidebar: true })
+          }
           return
         }
 
         // 2. If deleting active chat
-        // 2a. If no chats left, keep empty and let user create a new chat under a project
+        // 2a. If current project has no chats left, auto-create a new chat in this project
+        if (shouldCreateNewChatInProject) {
+          set({ chats: nextChats, activeChatId: '', messages: [] })
+          await api.deleteChat(chatId).catch(console.error)
+          await get().createChatInProject(deletingProjectId, { expandSidebar: true })
+          return
+        }
+
+        // 2b. If no chats left, keep empty
         if (nextChats.length === 0) {
           set({ chats: [], activeChatId: '', messages: [] })
           await api.deleteChat(chatId).catch(console.error)
           return
         }
         
-        // 2b. Switch to next chat
+        // 2c. Switch to next chat
         const nextChatId = nextChats[0].id
         // Optimistic update: switch to next chat immediately
         set({
@@ -2035,6 +2023,7 @@ export const useStore = create<AppState>()(
           const configKeys = new Set([
             'apiKey',
             'baseUrl',
+            'authRootDir',
             'selectedModel',
             'models',
             'modelsFetched',

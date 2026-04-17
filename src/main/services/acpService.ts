@@ -20,6 +20,7 @@ import {
   type JsonRpcResponse,
   type SessionKey
 } from './acpCore';
+import { runWithOsSandbox } from './osSandboxRunner';
 
 type AcpPermissionMode = 'workspace_whitelist' | 'full_access';
 const ACP_WHITELIST_ROOT = normAbs('/Users/wangxt/.config/anima');
@@ -404,34 +405,17 @@ async function handleClientToolRequest(session: AcpSession, method: string, para
     if (!isSessionPathAllowed(session, cwd)) throw new Error('Cwd outside workspace');
     await ensureApproved(session, 'terminal/run', `${cmd} ${args.join(' ')}`.trim());
     const timeoutMs = typeof params?.timeoutMs === 'number' ? params.timeoutMs : 120_000;
-
-    const child = spawn(cmd, args, { cwd, env: { ...process.env }, shell: false });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (d: string) => (stdout += d));
-    child.stderr.on('data', (d: string) => (stderr += d));
-
-    const res = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
-      const t = setTimeout(() => {
-        try {
-          child.kill('SIGTERM');
-        } catch (e) {
-          void e;
-        }
-        reject(new Error('Command timed out'));
-      }, Math.max(0, timeoutMs));
-      child.on('exit', (code, signal) => {
-        clearTimeout(t);
-        resolve({ code, signal });
-      });
-      child.on('error', (e) => {
-        clearTimeout(t);
-        reject(e);
-      });
+    const res = await runWithOsSandbox({
+      command: cmd,
+      args,
+      cwd,
+      workspaceDir,
+      permissionMode: session.permissionMode,
+      timeoutMs,
+      allowedRoots: [ACP_WHITELIST_ROOT],
+      env: process.env
     });
-    return { ok: true, code: res.code, signal: res.signal, stdout, stderr };
+    return { ok: true, code: res.code, signal: res.signal, stdout: res.stdout, stderr: res.stderr, sandbox: res.sandbox };
   }
 
   throw new Error(`Unsupported method: ${method}`);

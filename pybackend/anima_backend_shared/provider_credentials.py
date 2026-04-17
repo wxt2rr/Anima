@@ -16,6 +16,7 @@ def upsert_oauth_credential(params: Dict[str, Any]) -> None:
         "refreshToken": str(params.get("refreshToken") or ""),
         "expiresAt": int(params.get("expiresAt") or 0),
         "resourceUrl": str(params.get("resourceUrl") or "").strip() or None,
+        "email": str(params.get("email") or "").strip() or None,
     }
     if not cred["accessToken"] or not cred["refreshToken"] or cred["expiresAt"] <= 0:
         raise ValueError("invalid oauth credential payload")
@@ -112,7 +113,7 @@ def list_profiles(provider_id: str) -> List[Dict[str, Any]]:
                 "expiresAt": expires_at_int or None,
                 "updatedAt": int(r["updated_at"] or 0),
                 "state": state,
+                "email": str(data.get("email") or "").strip() or None,
             }
         )
     return out
-

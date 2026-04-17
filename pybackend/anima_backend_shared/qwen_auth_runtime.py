@@ -36,6 +36,7 @@ def resolve_qwen_access_token(provider_id: str, profile_id: str) -> str:
             "refreshToken": refreshed["refreshToken"],
             "expiresAt": refreshed["expiresAt"],
             "resourceUrl": cred.get("resourceUrl"),
+            "email": cred.get("email"),
         }
     )
     return str(refreshed["accessToken"] or "").strip()

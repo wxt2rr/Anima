@@ -1,5 +1,5 @@
 import { Fragment, useState, useRef, useEffect, useMemo, useCallback, type ReactNode, type DragEvent, type ClipboardEvent } from 'react'
-import { ArrowUp, Square, Paperclip, PanelLeftOpen, MessageSquarePlus, Wrench, Sparkles, X, ChevronDown, Mic, Folder, Brain, Shield, Check, GitBranch, Copy, Settings } from 'lucide-react'
+import { ArrowUp, Square, Paperclip, PanelLeftOpen, MessageCircle, Wrench, Sparkles, X, ChevronDown, Mic, Folder, Brain, Shield, Check, GitBranch, Copy, Settings, TerminalSquare, Globe } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -267,7 +267,13 @@ function linkifyQuotedFileNames(input: string): string {
 
 function toolTraceSignature(trace: any): string {
   const normalizeSigText = (v: unknown) => String(v || '').replace(/\s+/g, ' ').trim()
-  const name = String(trace?.name || '').trim()
+  const rawName = String(trace?.name || '')
+    .trim()
+    .replace(/^tool_start:/, '')
+    .replace(/^tool_done:/, '')
+    .replace(/^tool_end:/, '')
+    .trim()
+  const name = rawName === 'multi_tool_use.parallel' ? 'multi_tool_use_parallel' : rawName
   const argsText = String(trace?.argsPreview?.text || '').trim()
   if (name === 'bash') {
     try {
@@ -514,6 +520,13 @@ function AppLoaded(): JSX.Element {
         : { duration: 0.28, ease: [0.22, 1, 0.36, 1] as const },
     [reduceMotion]
   )
+  const chatBootTransition = useMemo(
+    () =>
+      reduceMotion
+        ? { duration: 0 }
+        : { duration: 0.2, ease: [0.22, 1, 0.36, 1] as const },
+    [reduceMotion]
+  )
   const collapseContentAnim = useMemo(
     () =>
       reduceMotion
@@ -625,6 +638,7 @@ function AppLoaded(): JSX.Element {
   const { 
     messages, 
     chats,
+    chatInitDone,
     addMessage, 
     updateMessageById,
     persistMessageById,
@@ -1976,8 +1990,8 @@ function AppLoaded(): JSX.Element {
   const activeWorkspaceDir = useMemo(() => {
     const dir = String(activeProjectDir || '').trim()
     if (dir) return dir
-    return String((settings as any)?.workspaceDir || '').trim()
-  }, [activeProjectDir, settings.workspaceDir])
+    return ''
+  }, [activeProjectDir])
 
   const resolveWorkspaceDir = () => activeWorkspaceDir
 
@@ -3153,6 +3167,22 @@ function AppLoaded(): JSX.Element {
     [buildComposerPayload, effectiveProvider, providers]
   )
 
+  const ensureActiveChatForCurrentContext = useCallback(async (): Promise<string> => {
+    const stateNow = useStore.getState()
+    const projectsNow = Array.isArray((stateNow.settings as any)?.projects) ? ((stateNow.settings as any).projects as any[]) : []
+    const activeProjectId = String(stateNow.ui.activeProjectId || '').trim()
+    const hasActiveProject = Boolean(activeProjectId) && projectsNow.some((p: any) => String(p?.id || '').trim() === activeProjectId)
+    if (hasActiveProject) {
+      return String(await ensureActiveChatInProject(activeProjectId)).trim()
+    }
+    const existingChatId = String(stateNow.activeChatId || '').trim()
+    if (existingChatId && stateNow.chats.some((c: any) => String(c?.id || '').trim() === existingChatId)) {
+      return existingChatId
+    }
+    await createChat({ expandSidebar: false })
+    return String(useStore.getState().activeChatId || '').trim()
+  }, [createChat, ensureActiveChatInProject])
+
   const handleSend = async (
     rawText: string,
     opts?: {
@@ -3178,27 +3208,7 @@ function AppLoaded(): JSX.Element {
       return false
     }
 
-    const lang = String(settings?.language || 'en').trim()
-    const noProjectMsg =
-      lang === 'zh'
-        ? '请先添加项目'
-        : lang === 'ja'
-          ? '先にプロジェクトを追加してください'
-          : 'Please add a project first'
-    const stateNow = useStore.getState()
-    const projectsNow = Array.isArray((stateNow.settings as any)?.projects) ? ((stateNow.settings as any).projects as any[]) : []
-    let ensuredProjectId = String(stateNow.ui.activeProjectId || '').trim()
-    const hasActiveProject =
-      Boolean(ensuredProjectId) && projectsNow.some((p: any) => String(p?.id || '').trim() === ensuredProjectId)
-    if (!hasActiveProject) {
-      ensuredProjectId = ''
-    }
-    if (!ensuredProjectId) {
-      alert(noProjectMsg)
-      return false
-    }
-
-    const ensuredChatId = String(await ensureActiveChatInProject(ensuredProjectId)).trim()
+    const ensuredChatId = String(await ensureActiveChatForCurrentContext()).trim()
     if (!ensuredChatId) return false
 
     const userMessage = trimmed
@@ -4112,23 +4122,15 @@ function AppLoaded(): JSX.Element {
   }, [effectiveEnabledSkillIds, skillsCache])
 
   const appendSlashAssistantMessage = useCallback(async (content: string) => {
-    const pid = String(useStore.getState().ui.activeProjectId || '').trim()
-    if (!pid) {
-      alert(t.noProject)
-      return false
-    }
-    const chatId = String(await ensureActiveChatInProject(pid)).trim()
-    if (!chatId) {
-      alert(t.noProject)
-      return false
-    }
+    const chatId = String(await ensureActiveChatForCurrentContext()).trim()
+    if (!chatId) return false
     addMessage({
       role: 'assistant',
       content,
       meta: { slashCommand: true }
     } as any)
     return true
-  }, [addMessage, ensureActiveChatInProject, t.noProject])
+  }, [addMessage, ensureActiveChatForCurrentContext])
 
   const handleExecuteSlashCommand = useCallback(async (rawInput: string) => {
     const parsed = parseSlashInput(rawInput)
@@ -4252,7 +4254,6 @@ function AppLoaded(): JSX.Element {
     createChat,
     effectiveModel,
     effectiveProviderId,
-    ensureActiveChatInProject,
     handleSend,
     permissionMode,
     settings.defaultSkillMode,
@@ -4260,8 +4261,7 @@ function AppLoaded(): JSX.Element {
     settings.mcpEnabledServerIds,
     settings.mcpServers,
     slashCommands,
-    slashText,
-    t.noProject
+    slashText
   ])
 
   return (
@@ -4498,7 +4498,12 @@ function AppLoaded(): JSX.Element {
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={toggleSidebarCollapsed}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground/55 hover:text-muted-foreground hover:bg-black/5"
+                            onClick={toggleSidebarCollapsed}
+                          >
                             <PanelLeftOpen className="w-4 h-4" />
                           </Button>
                         </TooltipTrigger>
@@ -4509,19 +4514,24 @@ function AppLoaded(): JSX.Element {
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-7 w-7"
+                            className="h-7 w-7 text-muted-foreground/55 hover:text-muted-foreground hover:bg-black/5"
                             onClick={() => {
                               void createChat({ expandSidebar: false })
                             }}
                           >
-                            <MessageSquarePlus className="w-4 h-4" />
+                            <MessageCircle className="w-4 h-4" />
                           </Button>
                         </TooltipTrigger>
                         <TooltipContent>New Chat</TooltipContent>
                       </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={openSettings}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground/55 hover:text-muted-foreground hover:bg-black/5"
+                            onClick={openSettings}
+                          >
                             <Settings className="w-4 h-4" />
                           </Button>
                         </TooltipTrigger>
@@ -4529,6 +4539,64 @@ function AppLoaded(): JSX.Element {
                       </Tooltip>
                     </TooltipProvider>
                   </div>
+                )}
+              </div>
+              <div className="absolute right-4 top-[4px] flex items-center gap-1 no-drag">
+                {!ui.rightSidebarOpen && (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground/55 hover:text-muted-foreground hover:bg-black/5"
+                          onClick={() => setActiveRightPanel('files')}
+                        >
+                          <Folder className="w-4 h-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Files</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground/55 hover:text-muted-foreground hover:bg-black/5"
+                          onClick={() => setActiveRightPanel('git')}
+                        >
+                          <GitBranch className="w-4 h-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Commit</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground/55 hover:text-muted-foreground hover:bg-black/5"
+                          onClick={() => setActiveRightPanel('terminal')}
+                        >
+                          <TerminalSquare className="w-4 h-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Terminal</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground/55 hover:text-muted-foreground hover:bg-black/5"
+                          onClick={() => setActiveRightPanel('preview')}
+                        >
+                          <Globe className="w-4 h-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Preview</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 )}
               </div>
 
@@ -4560,25 +4628,58 @@ function AppLoaded(): JSX.Element {
                 chatScrollbarVisible ? 'chat-scrollbar-visible' : ''
               }`}
             >
-              {displayMessages.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-3">
-                  <img
-                    src={animaLogo}
-                    alt="Anima logo"
-                    className="h-24 w-24 object-contain select-none pointer-events-none"
-                  />
-                  <p className="font-semibold text-[22px] tracking-tight text-foreground">{t.helloTitle}</p>
-                  <p className="text-sm text-muted-foreground text-center max-w-[520px] leading-6">
-                    {activeProvider ? t.helloSubtitleConnected(activeProvider.name) : t.helloSubtitleDisconnected}
-                  </p>
-                  {!activeProvider && (
-                    <Button onClick={openSettings} className="mt-6 rounded-full">
-                      {t.configureProvider}
-                    </Button>
-                  )}
-                </div>
-              ) : (
-                <div className="flex flex-col gap-1.5 pb-2 max-w-3xl mx-auto w-full">
+              <AnimatePresence initial={false} mode="wait">
+                {!chatInitDone ? (
+                  <motion.div
+                    key="chat-init-skeleton"
+                    initial={reduceMotion ? false : { opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={reduceMotion ? { opacity: 1 } : { opacity: 0 }}
+                    transition={chatBootTransition}
+                    className="h-full"
+                  >
+                    <div className="max-w-3xl mx-auto w-full py-2 space-y-4">
+                      {[68, 52, 62, 46].map((w, idx) => (
+                        <div key={`chat-init-skeleton-${idx}`} className={`flex ${idx % 2 === 0 ? 'justify-start' : 'justify-end'}`}>
+                          <div className="max-w-[78%] min-w-[220px] rounded-2xl border border-black/5 bg-muted/40 px-4 py-3">
+                            <div className="space-y-2">
+                              <div className="h-2.5 rounded bg-foreground/10 animate-pulse" style={{ width: `${w}%`, animationDelay: `${idx * 120}ms` }} />
+                              <div className="h-2.5 rounded bg-foreground/10 animate-pulse w-[76%]" style={{ animationDelay: `${idx * 120 + 60}ms` }} />
+                              <div className="h-2.5 rounded bg-foreground/10 animate-pulse w-[44%]" style={{ animationDelay: `${idx * 120 + 120}ms` }} />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="chat-ready-content"
+                    initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={reduceMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: -4 }}
+                    transition={chatBootTransition}
+                    className="h-full"
+                  >
+                    {displayMessages.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-3">
+                        <img
+                          src={animaLogo}
+                          alt="Anima logo"
+                          className="h-24 w-24 object-contain select-none pointer-events-none"
+                        />
+                        <p className="font-semibold text-[22px] tracking-tight text-foreground">{t.helloTitle}</p>
+                        <p className="text-sm text-muted-foreground text-center max-w-[520px] leading-6">
+                          {activeProvider ? t.helloSubtitleConnected(activeProvider.name) : t.helloSubtitleDisconnected}
+                        </p>
+                        {!activeProvider && (
+                          <Button onClick={openSettings} className="mt-6 rounded-full">
+                            {t.configureProvider}
+                          </Button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-1.5 pb-2 max-w-3xl mx-auto w-full">
                   {displayMessages.map((msg: any, index) => {
                     const ctx = { index, active: true }
                     return (
@@ -5010,14 +5111,9 @@ function AppLoaded(): JSX.Element {
                                     const isRunning = tr.status === 'running'
                                     const isFailed = tr.status === 'failed'
 
-                                    let entity = tr.name
-                                    const displayTraceName = (() => {
-                                      const raw = String(tr.name || '').trim()
-                                      const n = raw.replace(/^tool_start:/, '').replace(/^tool_done:/, '').replace(/^tool_end:/, '').trim()
-                                      if (!n) return ''
-                                      if (n === 'model_call' || n === 'tool_call') return ''
-                                      return n
-                                    })()
+                                    const traceName = normalizeToolTraceName(tr.name)
+                                    const isParallelTrace = traceName === 'multi_tool_use_parallel' || traceName === 'multi_tool_use.parallel'
+                                    let entity = traceName
                                     const normalizeValue = (val: any) => String(val ?? '').replace(/\\`/g, '`').replace(/`/g, '').trim()
                                     const stripCodeFences = (raw: string) => {
                                       const trimmed = String(raw || '').trim()
@@ -5148,14 +5244,30 @@ function AppLoaded(): JSX.Element {
                                     }
                                     let resultSummary = ''
                                     let detailMarkdown = ''
+                                    const parallelChildLabels = (() => {
+                                      if (!isParallelTrace) return [] as string[]
+                                      const rawUses = Array.isArray((argsObj as any)?.tool_uses) ? (argsObj as any).tool_uses : []
+                                      return rawUses
+                                        .map((item: any) => {
+                                          if (!item || typeof item !== 'object') return ''
+                                          const recipient = normalizeValue(item?.recipient_name || item?.name)
+                                          const params = item?.parameters && typeof item.parameters === 'object' ? item.parameters : {}
+                                          if (recipient === 'functions.exec_command') {
+                                            return normalizeValue((params as any)?.cmd || (params as any)?.command)
+                                          }
+                                          if (recipient.startsWith('functions.')) return recipient.slice('functions.'.length)
+                                          return recipient
+                                        })
+                                        .filter(Boolean)
+                                    })()
                                     const traceKind: 'execute' | 'search' | 'browse' | 'read' | 'edit' =
-                                      tr.name === 'rg_search' || tr.name === 'glob_files' || tr.name === 'WebSearch'
+                                      traceName === 'rg_search' || traceName === 'glob_files' || traceName === 'WebSearch'
                                         ? 'search'
-                                        : tr.name === 'read_file'
+                                        : traceName === 'read_file'
                                           ? 'read'
-                                          : tr.name === 'apply_patch'
+                                          : traceName === 'apply_patch'
                                             ? 'edit'
-                                            : tr.name === 'WebFetch'
+                                            : traceName === 'WebFetch'
                                               ? 'browse'
                                               : 'execute'
                                     const traceStatusText = (() => {
@@ -5187,34 +5299,44 @@ function AppLoaded(): JSX.Element {
                                       return textMap[lang][traceKind][key]
                                     })()
 
-                                    if (tr.name === 'bash') {
+                                    if (traceName === 'bash') {
                                       entity = normalizeValue(argsObj.command)
-                                    } else if (tr.name === 'rg_search' || tr.name === 'glob_files') {
+                                    } else if (traceName === 'rg_search' || traceName === 'glob_files') {
                                       entity = normalizeValue(argsObj.pattern)
                                       if (argsObj.path) entity += ` in ${normalizeValue(argsObj.path)}`
-                                    } else if (tr.name === 'read_file') {
+                                    } else if (traceName === 'read_file') {
                                       entity = normalizeValue(argsObj.path)
-                                    } else if (tr.name === 'apply_patch') {
+                                    } else if (traceName === 'apply_patch') {
                                       entity = normalizeValue(argsObj.path)
-                                    } else if (tr.name === 'WebSearch') {
+                                    } else if (traceName === 'WebSearch') {
                                       entity = normalizeValue(argsObj.query)
                                       const count = Array.isArray(resultItems) ? resultItems.length : undefined
                                       resultSummary = typeof count === 'number' ? traceI18n.searchResultSummary(count) : ''
-                                    } else if (tr.name === 'WebFetch') {
+                                    } else if (traceName === 'WebFetch') {
                                       entity = normalizeValue(argsObj.url)
-                                    } else if (tr.name === 'load_skill') {
+                                    } else if (traceName === 'load_skill') {
                                       entity = normalizeValue(argsObj.id) || 'load_skill'
+                                    } else if (isParallelTrace) {
+                                      if (parallelChildLabels.length > 0) {
+                                        const showCount = 3
+                                        const shown = parallelChildLabels.slice(0, showCount)
+                                        const extra = parallelChildLabels.length - shown.length
+                                        entity = shown.join(' · ')
+                                        if (extra > 0) entity = `${entity} +${extra}`
+                                      } else {
+                                        entity = ''
+                                      }
                                     } else {
                                       entity = normalizeValue(entity)
                                     }
 
                                     const canOpenEntityInFiles =
-                                      (tr.name === 'read_file' || tr.name === 'apply_patch') &&
+                                      (traceName === 'read_file' || traceName === 'apply_patch') &&
                                       Boolean(entity)
                                     const normalizeCommand = (raw: unknown) => String(raw || '').replace(/\s+/g, ' ').trim()
-                                    const bashCommandNormalized = tr.name === 'bash' ? normalizeCommand(argsObj.command) : ''
+                                    const bashCommandNormalized = traceName === 'bash' ? normalizeCommand(argsObj.command) : ''
                                     const matchedApproval =
-                                      tr.name === 'bash'
+                                      traceName === 'bash'
                                         ? turnDangerousApprovals.find((a) => normalizeCommand(a.command) === bashCommandNormalized)
                                         : undefined
                                     const toolApprovalText =
@@ -5228,19 +5350,25 @@ function AppLoaded(): JSX.Element {
                                     const rejectedByUserHint =
                                       String((tr as any)?.resultPreview?.text || '').toLowerCase().includes('user rejected dangerous command approval') ||
                                       String((tr as any)?.error?.message || '').toLowerCase().includes('user rejected dangerous command approval')
-                                    const isRejectedByUser = tr.name === 'bash' && (matchedApproval?.status === 'rejected' || rejectedByUserHint)
+                                    const isRejectedByUser = traceName === 'bash' && (matchedApproval?.status === 'rejected' || rejectedByUserHint)
                                     const notExecutedText =
                                       traceLang === 'zh' ? '未执行' : traceLang === 'ja' ? '未実行' : 'Not executed'
-                                    const isEditTrace = tr.name === 'apply_patch'
+                                    const isEditTrace = traceName === 'apply_patch'
                                     const runningStatusText =
                                       isRejectedByUser
                                         ? notExecutedText
-                                        : tr.name === 'load_skill' && !isRunning && !isFailed
+                                        : traceName === 'load_skill' && !isRunning && !isFailed
                                         ? traceLang === 'zh'
                                           ? '已加载技能'
                                           : traceLang === 'ja'
                                             ? 'スキル読み込み完了'
                                             : 'Loaded skill'
+                                        : isParallelTrace && isRunning
+                                          ? traceLang === 'zh'
+                                            ? '并行执行中'
+                                            : traceLang === 'ja'
+                                              ? '並列実行中'
+                                              : 'Parallel running'
                                         : isEditTrace && !isRunning && !isFailed
                                           ? traceLang === 'zh'
                                             ? '已编辑的文件'
@@ -5250,7 +5378,7 @@ function AppLoaded(): JSX.Element {
                                           : traceStatusText
                                     const displayEntity = (() => {
                                       const text = String(entity || '').trim()
-                                      if (tr.name !== 'bash') return text
+                                      if (traceName !== 'bash') return text
                                       const max = 80
                                       if (text.length <= max) return text
                                       return `${text.slice(0, max - 3)}...`
@@ -5296,7 +5424,20 @@ function AppLoaded(): JSX.Element {
                                         ? 'border-red-200 bg-red-50 text-red-700'
                                         : 'border-emerald-200 bg-emerald-50 text-emerald-700'
 
-                                    if (tr.name === 'WebSearch' && Array.isArray(resultItems)) {
+                                    if (isParallelTrace && Array.isArray(resultObj?.results)) {
+                                      const lines = (resultObj.results as any[])
+                                        .map((r: any, idx: number) => {
+                                          const ok = Boolean(r?.ok)
+                                          const icon = ok ? '✅' : '❌'
+                                          const label = normalizeValue(parallelChildLabels[idx] || r?.recipientName || r?.toolName || `#${idx + 1}`)
+                                          const duration = Number(r?.durationMs)
+                                          const durationText = Number.isFinite(duration) && duration >= 0 ? ` (${Math.floor(duration)}ms)` : ''
+                                          const err = !ok ? normalizeValue(r?.error || r?.result?.error || '') : ''
+                                          return `- ${idx + 1}. ${icon} ${label}${durationText}${err ? ` — ${err}` : ''}`
+                                        })
+                                        .filter(Boolean)
+                                      detailMarkdown = lines.join('\n')
+                                    } else if (traceName === 'WebSearch' && Array.isArray(resultItems)) {
                                       const circled = [
                                         '',
                                         '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩',
@@ -5317,7 +5458,7 @@ function AppLoaded(): JSX.Element {
                                         })
                                         .filter(Boolean)
                                       detailMarkdown = lines.join('  \n')
-                                    } else if (tr.name === 'WebFetch' && resultObj) {
+                                    } else if (traceName === 'WebFetch' && resultObj) {
                                       const lines: string[] = []
                                       const url = String(resultObj.finalUrl || resultObj.url || '').trim()
                                       if (url) lines.push(`- [${traceI18n.webpageLink}](${url})`)
@@ -5351,7 +5492,7 @@ function AppLoaded(): JSX.Element {
                                         })
                                         .filter(Boolean)
                                         .join('\n')
-                                    } else if (Array.isArray(resultObj?.diffs) && tr.name !== 'apply_patch') {
+                                    } else if (Array.isArray(resultObj?.diffs) && traceName !== 'apply_patch') {
                                       detailMarkdown = resultObj.diffs
                                         .map((d: any) => String(d?.path || ''))
                                         .filter(Boolean)
@@ -5389,7 +5530,7 @@ function AppLoaded(): JSX.Element {
                                           </span>
                                           
                                           <div className="min-w-0 flex-1 flex items-center gap-2">
-                                            {tr.name === 'bash' && toolApprovalText ? (
+                                            {traceName === 'bash' && toolApprovalText ? (
                                               <span className={`shrink-0 inline-flex items-center whitespace-nowrap rounded-md border px-2 py-0.5 text-[11px] leading-none font-medium ${approvalBadgeClass}`}>
                                                 {toolApprovalText}
                                               </span>
@@ -5978,9 +6119,12 @@ function AppLoaded(): JSX.Element {
                     </Fragment>
                     )
                   })}
-                  <div ref={chatBottomSentinelRef} aria-hidden="true" className="h-px w-full" />
-                </div>
-              )}
+                        <div ref={chatBottomSentinelRef} aria-hidden="true" className="h-px w-full" />
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </main>
             {userNavItems.length > 0 && (
               <div className="absolute right-2 top-1/2 -translate-y-1/2 h-[260px] w-6 z-20 no-drag group pointer-events-auto">

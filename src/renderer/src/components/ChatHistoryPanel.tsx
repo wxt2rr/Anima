@@ -1,4 +1,4 @@
-import { Search, Trash2, MessageSquarePlus, PanelLeftClose, MoreHorizontal, Settings, Folder, FolderOpen, FolderPlus, ChevronDown, ChevronRight, Star, Pencil, Clock3, Sparkles } from 'lucide-react'
+import { Search, Trash2, MessageCircle, PanelLeftClose, MoreHorizontal, Settings, Folder, FolderOpen, FolderPlus, ChevronDown, ChevronRight, Star, Pencil, Clock3, Sparkles } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, memo, type MouseEvent } from 'react'
 import { useStore } from '../store/useStore'
 import { useUpdateStore } from '../store/useUpdateStore'
@@ -66,6 +66,9 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
         addProject: 'Add project',
         emptyProjects: 'No projects',
         emptyProjectsHint: 'Add a project by selecting a folder.',
+        emptyChats: '[空]',
+        projectSection: 'Project',
+        chatSection: 'Chat',
         untitled: 'New Chat', 
         search: 'Search',
         collapseSidebar: 'Collapse sidebar',
@@ -95,6 +98,9 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
         addProject: '添加项目',
         emptyProjects: '暂无项目',
         emptyProjectsHint: '通过选择文件夹来添加一个项目。',
+        emptyChats: '[空]',
+        projectSection: '项目',
+        chatSection: '聊天',
         untitled: '新对话', 
         search: '搜索',
         collapseSidebar: '收起侧边栏',
@@ -124,6 +130,9 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
         addProject: 'プロジェクト追加',
         emptyProjects: 'プロジェクト未作成',
         emptyProjectsHint: 'フォルダーを選択してプロジェクトを追加します。',
+        emptyChats: '[空]',
+        projectSection: 'プロジェクト',
+        chatSection: 'チャット',
         untitled: '新規チャット', 
         search: '検索',
         collapseSidebar: 'サイドバーを閉じる',
@@ -197,6 +206,63 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
     }
     return by
   }, [visibleChats])
+  const unassignedChats = chatsByProjectId['__unassigned__'] || []
+
+  const renderChatRows = (list: typeof visibleChats) => (
+    <div className="mt-1 space-y-0.5">
+      <AnimatePresence initial={false}>
+        {list.map((chat) => {
+          const active = chat.id === activeChatId
+          const title = (chat.title || '').trim() || t.untitled
+          const isPendingDelete = pendingDeleteChatId === chat.id
+          return (
+            <motion.div
+              key={chat.id}
+              layout
+              initial={false}
+              animate={reduceMotion ? { opacity: 1 } : isPendingDelete ? { opacity: 0.7, x: 8, scale: 0.98 } : { opacity: 1, x: 0, scale: 1 }}
+              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 90, y: -14, rotate: 6, scale: 0.72, filter: 'blur(6px)' }}
+              transition={
+                reduceMotion
+                  ? { duration: 0 }
+                  : {
+                      duration: 0.52,
+                      ease: [0.22, 1, 0.36, 1],
+                      layout: { duration: 0.38, ease: [0.22, 1, 0.36, 1] }
+                    }
+              }
+            >
+              <div
+                onClick={() => void setActiveChat(chat.id)}
+                className={`group relative flex items-center gap-2 pl-2.5 pr-0 py-1 cursor-pointer transition-all duration-200 ${
+                  active ? 'rounded-xl bg-black/5 text-foreground' : 'rounded-md text-muted-foreground hover:bg-black/5 hover:text-foreground'
+                }`}
+              >
+                <span className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span className="truncate text-[13px] flex-1 min-w-0 leading-5 text-foreground">{title}</span>
+                <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center justify-end">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setDeleteId(chat.id)
+                        }}
+                        className="h-6 w-6 rounded-lg transition-all text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>{t.deleteChatTip}</TooltipContent>
+                  </Tooltip>
+                </div>
+              </div>
+            </motion.div>
+          )
+        })}
+      </AnimatePresence>
+    </div>
+  )
 
   const pickAndAddProject = async () => {
     const res = await window.anima?.window?.pickDirectory?.()
@@ -273,7 +339,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
           className="w-full h-8 px-2.5 rounded-md flex items-center gap-2 text-[13px] text-foreground/85 hover:bg-black/5 transition-colors text-left"
           onClick={() => void createChat()}
         >
-          <MessageSquarePlus className="w-3.5 h-3.5 text-foreground/65" />
+          <MessageCircle className="w-3.5 h-3.5 text-foreground/65" />
           <span>{t.newChat}</span>
         </button>
         <button
@@ -312,123 +378,127 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
         </div>
       )}
 
-      {/* Chat List */}
-      <div className="pl-[calc(var(--app-left-pane-pad-x)-6px)] pr-[var(--app-left-pane-pad-x)] pb-1 pt-1 flex items-center justify-between text-[12px] text-muted-foreground/90">
-        <span className="tracking-wide ml-2.5">线程</span>
-        <div className="w-[76px] flex items-center justify-end gap-1">
-          <button
-            type="button"
-            className="h-6 w-6 rounded-md hover:bg-black/5 flex items-center justify-center"
-            onClick={() => void pickAndAddProject()}
-            title={t.addProjectTip}
-          >
-            <FolderPlus className="w-3.5 h-3.5 text-foreground/65" />
-          </button>
-          <button
-            type="button"
-            className={`h-6 w-6 rounded-md hover:bg-black/5 flex items-center justify-center ${ui.sidebarSearchOpen ? 'bg-black/5' : ''}`}
-            onClick={toggleSidebarSearch}
-            title={t.searchChats}
-          >
-            <Search className="w-3.5 h-3.5 text-foreground/65" />
-          </button>
-        </div>
-      </div>
-
       <div className="flex-1 overflow-y-auto pl-[calc(var(--app-left-pane-pad-x)-6px)] pr-[var(--app-left-pane-pad-x)] pb-12 space-y-1 scrollbar-none">
-        {projects.length === 0 ? (
-          <div className="px-2 py-10 text-center space-y-3">
-            <div className="text-sm font-medium text-foreground">{t.emptyProjects}</div>
-            <div className="text-xs text-muted-foreground">{t.emptyProjectsHint}</div>
-            <Button variant="outline" size="sm" onClick={() => void pickAndAddProject()} className="gap-2">
-              <FolderPlus className="w-3.5 h-3.5" />
-              {t.addProject}
-            </Button>
+        <div className="space-y-3">
+          <div className="pt-1">
+            <div className="flex items-center justify-between text-[12px] text-muted-foreground/90">
+              <span className="tracking-wide ml-2.5">{t.chatSection}</span>
+              <div className="w-[76px] flex items-center justify-end gap-1">
+                <button
+                  type="button"
+                  className="h-6 w-6 rounded-md hover:bg-black/5 flex items-center justify-center"
+                  onClick={() => {
+                    setActiveProject('')
+                    void createChat()
+                  }}
+                  title={t.createChatTip}
+                >
+                  <MessageCircle className="w-3.5 h-3.5 text-foreground/65" />
+                </button>
+              </div>
+            </div>
+            {unassignedChats.length > 0 ? renderChatRows(unassignedChats) : null}
+            {chats.length === 0 ? <div className="mt-1 px-2.5 text-xs text-muted-foreground">{t.emptyChats}</div> : null}
           </div>
-        ) : (
-          <div className="space-y-2">
-            {projects.map((p) => {
-              const pid = p.id
-              const collapsed = (ui.collapsedProjectIds || []).includes(pid)
-              const activeProject = ui.activeProjectId === pid
-              const list = chatsByProjectId[pid] || []
-              const hasChats = list.length > 0
 
-              return (
-                <div key={pid}>
-                  <div
-                    className={`group flex items-center gap-2 pl-2.5 pr-0 py-1.5 rounded-md transition-all ${
-                      activeProject ? 'text-foreground' : 'text-muted-foreground hover:bg-black/5 hover:text-foreground'
-                    }`}
+          <div>
+            <div className="flex items-center justify-between text-[12px] text-muted-foreground/90">
+              <span className="tracking-wide ml-2.5">{t.projectSection}</span>
+              <div className="w-[76px] flex items-center justify-end gap-1">
+                <button
+                  type="button"
+                  className="h-6 w-6 rounded-md hover:bg-black/5 flex items-center justify-center"
+                  onClick={() => void pickAndAddProject()}
+                  title={t.addProjectTip}
+                >
+                  <FolderPlus className="w-3.5 h-3.5 text-foreground/65" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {projects.map((p) => {
+            const pid = p.id
+            const collapsed = (ui.collapsedProjectIds || []).includes(pid)
+            const activeProject = ui.activeProjectId === pid
+            const list = chatsByProjectId[pid] || []
+            const hasChats = list.length > 0
+
+            return (
+              <div key={pid}>
+                <div
+                  className={`group flex items-center gap-2 pl-2.5 pr-0 py-1.5 rounded-md transition-all ${
+                    activeProject ? 'text-foreground' : 'text-muted-foreground hover:bg-black/5 hover:text-foreground'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    className="flex items-center justify-start gap-2 flex-1 min-w-0 cursor-pointer text-left"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setActiveProject(pid)
+                      toggleProjectCollapsed(pid)
+                    }}
                   >
-                    <button
-                      type="button"
-                      className="flex items-center justify-start gap-2 flex-1 min-w-0 cursor-pointer text-left"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setActiveProject(pid)
-                        toggleProjectCollapsed(pid)
-                      }}
-                    >
-                      <span className="relative w-3.5 h-3.5 shrink-0">
-                        {collapsed ? (
-                          <Folder className="w-3.5 h-3.5 text-foreground/70 transition-opacity group-hover:opacity-0" />
-                        ) : (
-                          <FolderOpen className="w-3.5 h-3.5 text-foreground/70 transition-opacity group-hover:opacity-0" />
-                        )}
-                        <span className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
-                          {collapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                        </span>
+                    <span className="relative w-3.5 h-3.5 shrink-0">
+                      {collapsed ? (
+                        <Folder className="w-3.5 h-3.5 text-foreground/70 transition-opacity group-hover:opacity-0" />
+                      ) : (
+                        <FolderOpen className="w-3.5 h-3.5 text-foreground/70 transition-opacity group-hover:opacity-0" />
+                      )}
+                      <span className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
+                        {collapsed ? <FolderOpen className="w-3.5 h-3.5 text-foreground/70" /> : <ChevronDown className="w-3.5 h-3.5" />}
                       </span>
-                      <span className="truncate text-[13px] flex-1 leading-5 font-medium text-left">{p.name}</span>
-                    </button>
+                    </span>
+                    <span className="truncate text-[13px] flex-1 leading-5 font-medium text-left">{p.name}</span>
+                  </button>
 
-                    <div className="w-[76px] flex items-center justify-end gap-1">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            className={`h-6 w-6 rounded-lg transition-all hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center ${
-                              p.pinned ? 'text-primary' : 'text-muted-foreground'
-                            } ${projectMenuOpenId === pid ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              togglePinProject(pid)
-                            }}
-                          >
-                            <Star className={`w-3.5 h-3.5 ${p.pinned ? 'fill-current' : ''}`} />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>{p.pinned ? t.unpin : t.pin}</TooltipContent>
-                      </Tooltip>
+                  <div className="w-[76px] flex items-center justify-end gap-1">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className={`h-6 w-6 rounded-lg transition-all hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center ${
+                            p.pinned ? 'text-primary' : 'text-muted-foreground'
+                          } ${projectMenuOpenId === pid ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            togglePinProject(pid)
+                          }}
+                        >
+                          <Star className={`w-3.5 h-3.5 ${p.pinned ? 'fill-current' : ''}`} />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>{p.pinned ? t.unpin : t.pin}</TooltipContent>
+                    </Tooltip>
 
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            className={`h-6 w-6 rounded-lg transition-all text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10 hover:text-foreground flex items-center justify-center ${
-                              projectMenuOpenId === pid ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                            }`}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              void createChatInProject(pid)
-                            }}
-                          >
-                            <MessageSquarePlus className="w-3.5 h-3.5" />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>{t.createChatTip}</TooltipContent>
-                      </Tooltip>
-
-                      <Popover open={projectMenuOpenId === pid} onOpenChange={(open) => setProjectMenuOpenId(open ? pid : null)}>
-                        <PopoverTrigger
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
                           className={`h-6 w-6 rounded-lg transition-all text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10 hover:text-foreground flex items-center justify-center ${
                             projectMenuOpenId === pid ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                           }`}
-                          onClick={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void createChatInProject(pid)
+                          }}
                         >
-                          <MoreHorizontal className="w-3.5 h-3.5" />
-                        </PopoverTrigger>
+                          <MessageCircle className="w-3.5 h-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>{t.createChatTip}</TooltipContent>
+                    </Tooltip>
+
+                    <Popover open={projectMenuOpenId === pid} onOpenChange={(open) => setProjectMenuOpenId(open ? pid : null)}>
+                      <PopoverTrigger
+                        className={`h-6 w-6 rounded-lg transition-all text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10 hover:text-foreground flex items-center justify-center ${
+                          projectMenuOpenId === pid ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                        }`}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <MoreHorizontal className="w-3.5 h-3.5" />
+                      </PopoverTrigger>
                       <PopoverContent className="w-44 p-1" align="end">
                         <button
                           className="w-full flex items-center gap-2 px-2 py-1.5 rounded-sm text-sm hover:bg-accent hover:text-accent-foreground transition-colors text-left"
@@ -457,7 +527,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
                             void createChatInProject(pid)
                           }}
                         >
-                          <MessageSquarePlus className="w-3.5 h-3.5" />
+                          <MessageCircle className="w-3.5 h-3.5" />
                           <span>{t.createChat}</span>
                         </button>
                         <button
@@ -473,84 +543,26 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
                       </PopoverContent>
                     </Popover>
                   </div>
-                  </div>
-
-                  <AnimatePresence initial={false}>
-                    {!collapsed ? (
-                      <motion.div
-                        key={`${pid}-body`}
-                        initial={reduceMotion ? false : { opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        exit={{ opacity: 0, height: 0 }}
-                        transition={reduceMotion ? { duration: 0 } : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                        style={{ overflow: 'hidden' }}
-                      >
-                        {hasChats ? (
-                          <div className="mt-1 space-y-0.5">
-                            <AnimatePresence initial={false}>
-                              {list.map((chat) => {
-                                const active = chat.id === activeChatId
-                                const title = (chat.title || '').trim() || t.untitled
-                                const isPendingDelete = pendingDeleteChatId === chat.id
-                                return (
-                                  <motion.div
-                                    key={chat.id}
-                                    layout
-                                    initial={false}
-                                    animate={reduceMotion ? { opacity: 1 } : isPendingDelete ? { opacity: 0.7, x: 8, scale: 0.98 } : { opacity: 1, x: 0, scale: 1 }}
-                                    exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 90, y: -14, rotate: 6, scale: 0.72, filter: 'blur(6px)' }}
-                                    transition={
-                                      reduceMotion
-                                        ? { duration: 0 }
-                                        : {
-                                            duration: 0.52,
-                                            ease: [0.22, 1, 0.36, 1],
-                                            layout: { duration: 0.38, ease: [0.22, 1, 0.36, 1] }
-                                          }
-                                    }
-                                  >
-                                    <div
-                                      onClick={() => void setActiveChat(chat.id)}
-                                      className={`group relative flex items-center gap-2 pl-2.5 pr-0 py-1 cursor-pointer transition-all duration-200 ${
-                                        active
-                                          ? 'rounded-xl bg-black/5 text-foreground'
-                                          : 'rounded-md text-muted-foreground hover:bg-black/5 hover:text-foreground'
-                                      }`}
-                                    >
-                                      {/* 占位与项目图标同宽，保证对话标题与项目标题左对齐 */}
-                                      <span className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                                      <span className="truncate text-[13px] flex-1 min-w-0 leading-5 text-foreground">{title}</span>
-                                      <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center justify-end">
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <button
-                                              onClick={(e) => {
-                                                e.stopPropagation()
-                                                setDeleteId(chat.id)
-                                              }}
-                                              className="h-6 w-6 rounded-lg transition-all text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center"
-                                            >
-                                              <Trash2 className="w-3.5 h-3.5" />
-                                            </button>
-                                          </TooltipTrigger>
-                                          <TooltipContent>{t.deleteChatTip}</TooltipContent>
-                                        </Tooltip>
-                                      </div>
-                                    </div>
-                                  </motion.div>
-                                )
-                              })}
-                            </AnimatePresence>
-                          </div>
-                        ) : null}
-                      </motion.div>
-                    ) : null}
-                  </AnimatePresence>
                 </div>
-              )
-            })}
-          </div>
-        )}
+
+                <AnimatePresence initial={false}>
+                  {!collapsed ? (
+                    <motion.div
+                      key={`${pid}-body`}
+                      initial={reduceMotion ? false : { opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={reduceMotion ? { duration: 0 } : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                      style={{ overflow: 'hidden' }}
+                    >
+                      {hasChats ? renderChatRows(list) : null}
+                    </motion.div>
+                  ) : null}
+                </AnimatePresence>
+              </div>
+            )
+          })}
+        </div>
       </div>
 
       <Dialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>

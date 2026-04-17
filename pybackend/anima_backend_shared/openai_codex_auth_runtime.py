@@ -80,6 +80,7 @@ def resolve_openai_codex_access_token(provider_id: str, profile_id: str) -> Tupl
                 "refreshToken": refreshed["refreshToken"],
                 "expiresAt": refreshed["expiresAt"],
                 "resourceUrl": refreshed_account_id or None,
+                "email": latest.get("email") or cred.get("email"),
             }
         )
         if not refreshed_account_id:

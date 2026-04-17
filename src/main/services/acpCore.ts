@@ -1,3 +1,4 @@
+import fs from 'fs'
 import path from 'path'
 
 export type AcpAgentKind = 'mock' | 'native_acp' | 'adapter' | 'acpx_bridge'
@@ -47,9 +48,37 @@ export function normAbs(p: string): string {
   return path.resolve(String(p || '').trim())
 }
 
+function tryRealpath(p: string): string | null {
+  try {
+    return normAbs(fs.realpathSync(p))
+  } catch {
+    return null
+  }
+}
+
+function findExistingAncestor(p: string): string {
+  let cur = normAbs(p)
+  while (true) {
+    if (fs.existsSync(cur)) return cur
+    const parent = path.dirname(cur)
+    if (parent === cur) return cur
+    cur = parent
+  }
+}
+
+function canonicalizePathForCheck(p: string): string {
+  const abs = normAbs(p)
+  const real = tryRealpath(abs)
+  if (real) return real
+  const ancestor = findExistingAncestor(abs)
+  const ancestorReal = tryRealpath(ancestor) || normAbs(ancestor)
+  const rel = path.relative(ancestor, abs)
+  return normAbs(path.join(ancestorReal, rel))
+}
+
 export function isWithin(parentDir: string, childPath: string): boolean {
-  const parent = normAbs(parentDir)
-  const child = normAbs(childPath)
+  const parent = canonicalizePathForCheck(parentDir)
+  const child = canonicalizePathForCheck(childPath)
   if (parent === child) return true
   const rel = path.relative(parent, child)
   return Boolean(rel && !rel.startsWith('..') && !path.isAbsolute(rel))

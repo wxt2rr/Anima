@@ -13,6 +13,7 @@ from anima_backend_shared.util import now_ms, preview_json
 
 from ..llm.adapter import create_provider
 from ..runtime.graph import inject_system_message
+from ..runtime.sandbox_policy import normalize_composer_sandbox_fields, resolve_workspace_dir
 from ..tools.executor import execute_tool, make_tool_message, select_tools
 from .runs_compression import apply_persistent_compression, apply_thinking_level, build_usage_state, normalize_or_estimate_usage
 from .runs_request import resolve_runtime_options
@@ -137,6 +138,7 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
                 composer["dangerousCommandApprovals"] = approvals
 
             settings_obj = load_settings()
+            composer = normalize_composer_sandbox_fields(composer=composer, settings_obj=settings_obj)
             provider = create_provider(settings_obj, composer)
             temperature, max_tokens, extra_body = resolve_runtime_options(
                 body=body,
@@ -148,16 +150,7 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
             extra_body, max_tokens = _apply_thinking_level(provider, composer, extra_body, max_tokens)
 
             thread_id = run.get("threadId") or run_id
-            workspace_dir = str(composer.get("workspaceDir") or "").strip()
-            if not workspace_dir:
-                workspace_dir = str(((settings_obj.get("settings") or {}) if isinstance(settings_obj, dict) else {}).get("workspaceDir") or "").strip()
-            try:
-                if workspace_dir:
-                    from anima_backend_shared.util import norm_abs
-
-                    workspace_dir = norm_abs(workspace_dir)
-            except Exception:
-                workspace_dir = ""
+            workspace_dir = resolve_workspace_dir(composer=composer, settings_obj=settings_obj)
 
             if stream:
                 handler.send_response(HTTPStatus.OK)

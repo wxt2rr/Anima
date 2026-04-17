@@ -26,6 +26,7 @@ from .qwen_auth import (
     handle_get_provider_auth_status,
     handle_post_provider_auth_logout,
     handle_post_provider_auth_start,
+    handle_post_provider_auth_sync,
 )
 from .qwen_tts import (
     handle_get_tts_qwen_local_catalog,
@@ -195,6 +196,7 @@ EXACT_ROUTES: Dict[Tuple[str, str], ExactHandler] = {
     ("POST", "/api/providers/auth/start"): handle_post_provider_auth_start,
     ("GET", "/api/providers/auth/status"): handle_get_provider_auth_status,
     ("POST", "/api/providers/auth/logout"): handle_post_provider_auth_logout,
+    ("POST", "/api/providers/auth/sync"): handle_post_provider_auth_sync,
     ("GET", "/api/providers/auth/profiles"): handle_get_provider_auth_profiles,
     ("GET", "/voice/models/base_dir"): handle_get_voice_models_base_dir,
     ("GET", "/voice/models/catalog"): handle_get_voice_models_catalog,

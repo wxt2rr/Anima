@@ -316,6 +316,7 @@ DEFAULT_PROVIDERS: List[Dict[str, Any]] = [
             "modelsFetched": True,
             "models": build_openai_codex_models(),
             "selectedModel": DEFAULT_CODEX_SELECTED_MODEL,
+            "authRootDir": "~/.codex",
             "apiKey": "",
         },
     },

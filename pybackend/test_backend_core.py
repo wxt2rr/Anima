@@ -443,6 +443,61 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                 self.assertTrue(isinstance(arts, list) and len(arts) == 1)
                 self.assertEqual(os.path.realpath(arts[0].get("path") or ""), os.path.realpath(img))
                 self.assertEqual(str(arts[0].get("kind") or ""), "image")
+                sandbox = trace.get("sandbox") if isinstance(trace.get("sandbox"), dict) else {}
+                self.assertEqual(str(sandbox.get("permissionMode") or ""), "workspace_whitelist")
+                self.assertEqual(os.path.realpath(str(sandbox.get("workspaceDir") or "")), os.path.realpath(td))
+                self.assertEqual(int(sandbox.get("dangerousCommandApprovalsCount") or 0), 0)
+                self.assertEqual(bool(sandbox.get("dangerousCommandAllowForThread")), False)
+
+    def test_executor_trace_sandbox_normalizes_composer_fields(self) -> None:
+        from anima_backend_core.tools import executor
+
+        with tempfile.TemporaryDirectory() as td:
+            def _mock_exec(_name: str, _args: dict, *, workspace_dir: str):
+                self.assertEqual(os.path.realpath(workspace_dir), os.path.realpath(td))
+                self.assertEqual(str(_args.get("_animaPermissionMode") or ""), "workspace_whitelist")
+                self.assertEqual(_args.get("_animaDangerousCommandApprovals"), ["rm -rf ./tmp"])
+                self.assertEqual(bool(_args.get("_animaDangerousCommandAllowForThread")), True)
+                return json.dumps({"ok": True}, ensure_ascii=False)
+
+            with patch.object(executor, "execute_builtin_tool", side_effect=_mock_exec):
+                _content, trace = executor.execute_tool(
+                    "bash",
+                    {"command": "echo ok"},
+                    tool_call_id="tc1",
+                    workspace_dir=td,
+                    composer={
+                        "permissionMode": "invalid_mode",
+                        "workspaceDir": td,
+                        "dangerousCommandApprovals": ["rm -rf ./tmp", "RM -RF ./TMP", ""],
+                        "dangerousCommandAllowForThread": 1,
+                    },
+                    mcp_index={},
+                    trace_id="tr1",
+                )
+                sandbox = trace.get("sandbox") if isinstance(trace.get("sandbox"), dict) else {}
+                self.assertEqual(str(sandbox.get("permissionMode") or ""), "workspace_whitelist")
+                self.assertEqual(os.path.realpath(str(sandbox.get("workspaceDir") or "")), os.path.realpath(td))
+                self.assertEqual(int(sandbox.get("dangerousCommandApprovalsCount") or 0), 1)
+                self.assertEqual(bool(sandbox.get("dangerousCommandAllowForThread")), True)
+
+    def test_sandbox_policy_normalizes_permission_mode_and_workspace(self) -> None:
+        from anima_backend_core.runtime.sandbox_policy import normalize_composer_sandbox_fields
+
+        with tempfile.TemporaryDirectory() as td:
+            settings_obj = {"settings": {"workspaceDir": td}}
+            composer = normalize_composer_sandbox_fields(
+                composer={
+                    "permissionMode": "unexpected",
+                    "dangerousCommandApprovals": ["  rm  ", "RM", " "],
+                    "dangerousCommandAllowForThread": "1",
+                },
+                settings_obj=settings_obj,
+            )
+            self.assertEqual(str(composer.get("permissionMode") or ""), "workspace_whitelist")
+            self.assertEqual(os.path.realpath(str(composer.get("workspaceDir") or "")), os.path.realpath(td))
+            self.assertEqual(composer.get("dangerousCommandApprovals"), ["rm"])
+            self.assertEqual(bool(composer.get("dangerousCommandAllowForThread")), True)
 
     def test_telegram_extract_image_from_traces(self) -> None:
         from anima_backend_core import telegram_integration as tg
@@ -1787,6 +1842,197 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         out = self._json_out(h)
         self.assertFalse(bool(out.get("ok")))
         self.assertEqual(str(out.get("code") or ""), "provider_not_configured")
+
+    def test_runs_non_stream_normalizes_sandbox_fields_before_create_run(self) -> None:
+        from anima_backend_core.api.runs_stream import handle_post_runs_non_stream_via_stream_executor
+
+        class _FakeProvider:
+            def chat_completion(self, _messages, **_kwargs):
+                return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+        body = {
+            "runId": "r_norm_1",
+            "threadId": "t_norm_1",
+            "messages": [{"role": "user", "content": "hi"}],
+            "composer": {
+                "permissionMode": "invalid_mode",
+                "dangerousCommandApprovals": [" rm ", "RM", ""],
+                "dangerousCommandAllowForThread": 1,
+            },
+        }
+        settings_obj = {"settings": {"workspaceDir": "/tmp/anima-workspace"}}
+
+        with patch("anima_backend_core.api.runs_stream.load_settings", return_value=settings_obj):
+            with patch("anima_backend_core.api.runs_stream.create_provider", return_value=_FakeProvider()):
+                with patch("anima_backend_core.api.runs_stream.create_run", return_value=None) as p_create_run:
+                    with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
+                        with patch(
+                            "anima_backend_core.api.runs_stream._run_coordinator_workers",
+                            return_value={
+                                "reportsText": "",
+                                "traces": [],
+                                "artifacts": [],
+                                "verification": {"status": "passed", "evidence": []},
+                                "orchestration": {"workers": 0, "failedWorkers": 0, "totalRetries": 0, "failureReasons": {}},
+                            },
+                        ):
+                            with patch(
+                                "anima_backend_core.api.runs_stream._run_tool_loop",
+                                return_value={
+                                    "paused": False,
+                                    "final_content": "ok",
+                                    "usage": None,
+                                    "traces": [],
+                                    "artifacts": [],
+                                    "reasoning": "",
+                                    "messages": [{"role": "assistant", "content": "ok"}],
+                                    "rate_limit": None,
+                                    "stop_reason": "completed",
+                                    "verification": {"status": "passed", "evidence": []},
+                                },
+                            ):
+                                status, out = handle_post_runs_non_stream_via_stream_executor(body)
+
+        self.assertEqual(int(status), 200)
+        self.assertTrue(bool(out.get("ok")))
+        self.assertTrue(p_create_run.called)
+        payload = p_create_run.call_args[0][2] if p_create_run.call_args and len(p_create_run.call_args[0]) >= 3 else {}
+        composer = payload.get("composer") if isinstance(payload, dict) else {}
+        self.assertEqual(str(composer.get("permissionMode") or ""), "workspace_whitelist")
+        self.assertEqual(os.path.realpath(str(composer.get("workspaceDir") or "")), os.path.realpath("/tmp/anima-workspace"))
+        self.assertEqual(composer.get("dangerousCommandApprovals"), ["rm"])
+        self.assertEqual(bool(composer.get("dangerousCommandAllowForThread")), True)
+
+    def test_runs_stream_normalizes_sandbox_fields_before_create_run(self) -> None:
+        from anima_backend_core.api.runs_stream import handle_post_runs_stream
+
+        class _FakeProvider:
+            def chat_completion(self, _messages, **_kwargs):
+                return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+        body = {
+            "runId": "r_norm_stream_1",
+            "threadId": "t_norm_stream_1",
+            "messages": [{"role": "user", "content": "hi"}],
+            "composer": {
+                "permissionMode": "invalid_mode",
+                "dangerousCommandApprovals": [" rm ", "RM", ""],
+                "dangerousCommandAllowForThread": 1,
+            },
+        }
+        settings_obj = {"settings": {"workspaceDir": "/tmp/anima-workspace-stream"}}
+        h = self._make_handler(body)
+
+        with patch("anima_backend_core.api.runs_stream.load_settings", return_value=settings_obj):
+            with patch("anima_backend_core.api.runs_stream.create_provider", return_value=_FakeProvider()):
+                with patch("anima_backend_core.api.runs_stream.create_run", return_value=None) as p_create_run:
+                    with patch("anima_backend_core.api.runs_stream.update_run", return_value=None):
+                        with patch(
+                            "anima_backend_core.api.runs_stream._run_coordinator_workers",
+                            return_value={
+                                "reportsText": "",
+                                "traces": [],
+                                "artifacts": [],
+                                "verification": {"status": "passed", "evidence": []},
+                                "orchestration": {"workers": 0, "failedWorkers": 0, "totalRetries": 0, "failureReasons": {}},
+                            },
+                        ):
+                            with patch(
+                                "anima_backend_core.api.runs_stream._run_tool_loop",
+                                return_value={
+                                    "paused": False,
+                                    "final_content": "ok",
+                                    "usage": None,
+                                    "traces": [],
+                                    "artifacts": [],
+                                    "reasoning": "",
+                                    "messages": [{"role": "assistant", "content": "ok"}],
+                                    "rate_limit": None,
+                                    "stop_reason": "completed",
+                                    "verification": {"status": "passed", "evidence": []},
+                                },
+                            ):
+                                handle_post_runs_stream(h, body)
+
+        self.assertEqual(getattr(h, "_code", 0), 200)
+        self.assertTrue(p_create_run.called)
+        payload = p_create_run.call_args[0][2] if p_create_run.call_args and len(p_create_run.call_args[0]) >= 3 else {}
+        composer = payload.get("composer") if isinstance(payload, dict) else {}
+        self.assertEqual(str(composer.get("permissionMode") or ""), "workspace_whitelist")
+        self.assertEqual(os.path.realpath(str(composer.get("workspaceDir") or "")), os.path.realpath("/tmp/anima-workspace-stream"))
+        self.assertEqual(composer.get("dangerousCommandApprovals"), ["rm"])
+        self.assertEqual(bool(composer.get("dangerousCommandAllowForThread")), True)
+
+    def test_run_resume_normalizes_sandbox_fields_before_tool_execution(self) -> None:
+        from anima_backend_core.api.runs import handle_post_run_resume
+
+        run_id = "resume_norm_run_1"
+        body = {"approvalId": "ap1", "decision": "approve_once", "composer": {"dangerousCommandAllowForThread": 1}}
+        h = self._make_handler(body)
+
+        paused_run = {
+            "id": run_id,
+            "threadId": "t_norm_resume_1",
+            "status": "paused",
+            "input": {"temperature": 0.7, "maxTokens": 128},
+            "output": {
+                "pauseContext": {
+                    "approvalId": "ap1",
+                    "approval": {"code": "dangerous_command_requires_approval", "command": "echo ok", "matchedPattern": "rm"},
+                    "pendingToolCall": {"id": "tc1", "name": "bash", "args": {"command": "echo ok"}},
+                    "messages": [
+                        {"role": "user", "content": "hi"},
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "bash", "arguments": '{"command":"echo ok"}'}}],
+                        },
+                    ],
+                    "traces": [],
+                    "artifacts": [],
+                    "composer": {
+                        "permissionMode": "invalid_mode",
+                        "dangerousCommandApprovals": [" rm ", "RM", ""],
+                    },
+                    "temperature": 0.7,
+                    "maxTokens": 128,
+                }
+            },
+        }
+
+        captured: Dict[str, Any] = {}
+
+        def _fake_execute_tool_with_edit_guard(**kwargs):
+            captured["composer"] = kwargs.get("composer")
+            trace = {
+                "id": "tr_resume_norm",
+                "toolCallId": "tc1",
+                "name": "bash",
+                "status": "succeeded",
+                "startedAt": 0,
+                "endedAt": 1,
+                "durationMs": 1,
+            }
+            return json.dumps({"ok": True}, ensure_ascii=False), trace
+
+        with patch("anima_backend_core.api.runs.get_run", return_value=paused_run):
+            with patch("anima_backend_core.api.runs.load_settings", return_value={"settings": {"workspaceDir": "/tmp/anima-resume-ws"}}):
+                with patch("anima_backend_core.api.runs.create_provider", return_value=MockProvider()):
+                    with patch("anima_backend_core.api.runs.resolve_runtime_options", return_value=(0.7, 128, None)):
+                        with patch("anima_backend_core.api.runs.select_tools", return_value=([], {}, None)):
+                            with patch("anima_backend_core.api.runs._run_coordinator_workers", return_value={"reportsText": "", "traces": [], "artifacts": [], "verification": {"status": "passed", "evidence": []}, "orchestration": {"workers": 0, "failedWorkers": 0, "totalRetries": 0, "failureReasons": {}}}):
+                                with patch("anima_backend_core.api.runs._build_edit_guard_state", return_value={"blockedFiles": {}}):
+                                    with patch("anima_backend_core.api.runs._execute_tool_with_edit_guard", side_effect=_fake_execute_tool_with_edit_guard):
+                                        with patch("anima_backend_core.api.runs._run_tool_loop", return_value={"paused": False, "final_content": "ok", "usage": None, "traces": [], "artifacts": [], "reasoning": "", "messages": [{"role": "assistant", "content": "ok"}], "rate_limit": None, "stop_reason": "completed", "verification": {"status": "passed", "evidence": []}}):
+                                            with patch("anima_backend_core.api.runs.update_run", return_value=None):
+                                                with patch("anima_backend_core.api.runs.merge_chat_meta", return_value=None):
+                                                    handle_post_run_resume(h, run_id)
+
+        composer = captured.get("composer") if isinstance(captured.get("composer"), dict) else {}
+        self.assertEqual(str(composer.get("permissionMode") or ""), "workspace_whitelist")
+        self.assertEqual(os.path.realpath(str(composer.get("workspaceDir") or "")), os.path.realpath("/tmp/anima-resume-ws"))
+        self.assertEqual(composer.get("dangerousCommandApprovals"), ["rm", "echo ok"])
+        self.assertEqual(bool(composer.get("dangerousCommandAllowForThread")), True)
 
     def test_runs_stream_emits_compression_delta_and_end(self) -> None:
         from anima_backend_core.api.runs_stream import handle_post_runs_stream
@@ -3413,6 +3659,110 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                         self.assertEqual(str(spec.api_key), "tok.part.sig")
                         self.assertEqual(str((spec.extra_headers or {}).get("chatgpt-account-id") or ""), "acct_123")
 
+    def test_openai_codex_sync_from_auth_json_stores_credentials(self) -> None:
+        from anima_backend_shared import database as db
+        from anima_backend_shared import provider_credentials as cred_store
+
+        td, env, db_mod, _settings = self._with_temp_config_root()
+        with td:
+            with patch.dict(os.environ, env):
+                with patch.object(db_mod, "_CONFIG_ROOT", None):
+                    with patch.object(db_mod, "_DB_INITIALIZED", False):
+                        db.init_db()
+                        db.set_app_settings(
+                            {
+                                "settings": {"defaultToolMode": "all"},
+                                "providers": [
+                                    {
+                                        "id": "codex1",
+                                        "name": "Codex Auth",
+                                        "type": "openai_codex",
+                                        "isEnabled": True,
+                                        "auth": {"mode": "oauth_openai_codex", "profileId": "default"},
+                                        "config": {"baseUrl": "https://chatgpt.com/backend-api", "models": [], "selectedModel": "gpt-5.4"},
+                                    }
+                                ],
+                            }
+                        )
+
+                        auth_root = os.path.join(td.name, "codex-home")
+                        os.makedirs(auth_root, exist_ok=True)
+                        expires_at = int(time.time() * 1000) + 3600 * 1000
+                        with open(os.path.join(auth_root, "auth.json"), "w", encoding="utf-8") as f:
+                            json.dump(
+                                {
+                                    "tokens": {
+                                        "access_token": "tok.part.sig",
+                                        "refresh_token": "REFRESH",
+                                        "expires_at": expires_at,
+                                    },
+                                    "chatgpt_account_id": "acct_sync",
+                                    "email": "sync-user@example.com",
+                                },
+                                f,
+                                ensure_ascii=False,
+                            )
+
+                        from anima_backend_core.api import qwen_auth as api_qwen_auth
+
+                        h = self._make_handler({"providerId": "codex1", "profileId": "default", "authRootDir": auth_root})
+                        api_qwen_auth.handle_post_provider_auth_sync(h)
+                        out = self._json_out(h)
+                        self.assertEqual(int(getattr(h, "_code", 0)), 200)
+                        self.assertTrue(bool(out.get("ok")))
+                        self.assertEqual(str(out.get("state") or ""), "success")
+                        self.assertEqual(os.path.realpath(str(((out.get("source") or {}).get("authRootDir") or "")),), os.path.realpath(auth_root))
+
+                        cred = cred_store.get_oauth_credential("openai_codex", "default")
+                        self.assertTrue(isinstance(cred, dict))
+                        self.assertEqual(str(cred.get("accessToken") or ""), "tok.part.sig")
+                        self.assertEqual(str(cred.get("refreshToken") or ""), "REFRESH")
+                        self.assertEqual(str(cred.get("resourceUrl") or ""), "acct_sync")
+                        self.assertEqual(str(cred.get("email") or ""), "sync-user@example.com")
+                        self.assertEqual(int(cred.get("expiresAt") or 0), expires_at)
+
+                        h_profiles = self._make_handler(query={"providerId": "codex1"})
+                        api_qwen_auth.handle_get_provider_auth_profiles(h_profiles)
+                        out_profiles = self._json_out(h_profiles)
+                        self.assertEqual(int(getattr(h_profiles, "_code", 0)), 200)
+                        self.assertTrue(bool(out_profiles.get("ok")))
+                        profiles = out_profiles.get("profiles")
+                        self.assertTrue(isinstance(profiles, list))
+                        self.assertEqual(str((profiles[0] or {}).get("email") or ""), "sync-user@example.com")
+
+    def test_openai_codex_sync_rejects_non_codex_provider(self) -> None:
+        from anima_backend_shared import database as db
+
+        td, env, db_mod, _settings = self._with_temp_config_root()
+        with td:
+            with patch.dict(os.environ, env):
+                with patch.object(db_mod, "_CONFIG_ROOT", None):
+                    with patch.object(db_mod, "_DB_INITIALIZED", False):
+                        db.init_db()
+                        db.set_app_settings(
+                            {
+                                "settings": {"defaultToolMode": "all"},
+                                "providers": [
+                                    {
+                                        "id": "qwen1",
+                                        "name": "Qwen",
+                                        "type": "openai_compatible",
+                                        "isEnabled": True,
+                                        "config": {"baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1", "models": [], "selectedModel": "coder-model"},
+                                    }
+                                ],
+                            }
+                        )
+
+                        from anima_backend_core.api import qwen_auth as api_qwen_auth
+
+                        h = self._make_handler({"providerId": "qwen1", "profileId": "default"})
+                        api_qwen_auth.handle_post_provider_auth_sync(h)
+                        out = self._json_out(h)
+                        self.assertEqual(int(getattr(h, "_code", 0)), 400)
+                        self.assertFalse(bool(out.get("ok")))
+                        self.assertIn("Codex", str(out.get("error") or ""))
+
     def test_provider_base_url_strips_wrapping_backticks(self) -> None:
         from anima_backend_shared import database as db
         from anima_backend_shared import providers as shared_providers
@@ -4222,13 +4572,20 @@ class BackendCoreIntegrationTests(unittest.TestCase):
     def test_bash_full_access_allows_blocked_patterns(self) -> None:
         import anima_backend_shared.tools as shared_tools
 
-        class _Proc:
-            returncode = 0
-            stdout = "ok\n"
-            stderr = ""
-
         with tempfile.TemporaryDirectory() as td:
-            with patch.object(shared_tools.subprocess, "run", return_value=_Proc()) as p_run:
+            with patch.object(
+                shared_tools,
+                "run_bash_with_os_sandbox",
+                return_value={
+                    "ok": True,
+                    "exitCode": 0,
+                    "stdout": "ok\n",
+                    "stderr": "",
+                    "truncated": {"stdout": False, "stderr": False},
+                    "cwd": td,
+                    "sandbox": {"enabled": False, "kind": "none", "reason": "permission_mode_full_access"},
+                },
+            ) as p_run:
                 out = json.loads(
                     shared_tools.execute_builtin_tool(
                         "bash",
@@ -4242,6 +4599,77 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                 self.assertTrue(bool(out.get("ok")))
                 self.assertEqual(int(out.get("exitCode")) if out.get("exitCode") is not None else -1, 0)
                 self.assertTrue(p_run.called)
+
+    def test_os_sandbox_runner_wraps_command_with_sandbox_exec_on_darwin(self) -> None:
+        import anima_backend_shared.os_sandbox_runner as runner
+
+        with tempfile.TemporaryDirectory() as td:
+            captured: Dict[str, Any] = {}
+
+            class _Proc:
+                returncode = 0
+                stdout = "ok\n"
+                stderr = ""
+
+            def _fake_run(cmd, **kwargs):
+                captured["cmd"] = cmd
+                captured["kwargs"] = kwargs
+                return _Proc()
+
+            with patch.object(runner.sys, "platform", "darwin"):
+                with patch.object(runner.subprocess, "run", side_effect=_fake_run):
+                    out = runner.run_bash_with_os_sandbox(
+                        command="echo ok",
+                        cwd=td,
+                        timeout_ms=3000,
+                        permission_mode="workspace_whitelist",
+                        workspace_dir=td,
+                        allowed_roots=[],
+                        env={"PATH": "/usr/bin", "HOME": td},
+                    )
+
+            cmd = captured.get("cmd") if isinstance(captured.get("cmd"), list) else []
+            self.assertTrue(len(cmd) >= 6)
+            self.assertEqual(str(cmd[0]), "sandbox-exec")
+            self.assertEqual(str(cmd[1]), "-p")
+            self.assertEqual(str(cmd[3]), "/bin/bash")
+            self.assertEqual(str(cmd[4]), "-c")
+            self.assertEqual(str(cmd[5]), "echo ok")
+            self.assertTrue(bool((out.get("sandbox") or {}).get("enabled")))
+            self.assertEqual(str((out.get("sandbox") or {}).get("kind") or ""), "macos_sandbox_exec")
+
+    def test_os_sandbox_runner_skips_sandbox_in_full_access(self) -> None:
+        import anima_backend_shared.os_sandbox_runner as runner
+
+        with tempfile.TemporaryDirectory() as td:
+            captured: Dict[str, Any] = {}
+
+            class _Proc:
+                returncode = 0
+                stdout = "ok\n"
+                stderr = ""
+
+            def _fake_run(cmd, **kwargs):
+                captured["cmd"] = cmd
+                captured["kwargs"] = kwargs
+                return _Proc()
+
+            with patch.object(runner.sys, "platform", "darwin"):
+                with patch.object(runner.subprocess, "run", side_effect=_fake_run):
+                    out = runner.run_bash_with_os_sandbox(
+                        command="echo ok",
+                        cwd=td,
+                        timeout_ms=3000,
+                        permission_mode="full_access",
+                        workspace_dir=td,
+                        allowed_roots=[],
+                        env={"PATH": "/usr/bin", "HOME": td},
+                    )
+
+            cmd = captured.get("cmd") if isinstance(captured.get("cmd"), list) else []
+            self.assertEqual(cmd, ["/bin/bash", "-c", "echo ok"])
+            self.assertFalse(bool((out.get("sandbox") or {}).get("enabled")))
+            self.assertEqual(str((out.get("sandbox") or {}).get("kind") or ""), "none")
 
     def test_builtin_tools_replace_write_edit_with_apply_patch(self) -> None:
         import anima_backend_shared.tools as shared_tools
@@ -4837,12 +5265,19 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                 payload = json.loads(msg.split(":", 1)[1])
                 self.assertEqual(str(payload.get("command") or ""), cmd)
 
-                class _Proc:
-                    returncode = 0
-                    stdout = "ok\n"
-                    stderr = ""
-
-                with patch.object(shared_tools.subprocess, "run", return_value=_Proc()) as p_run:
+                with patch.object(
+                    shared_tools,
+                    "run_bash_with_os_sandbox",
+                    return_value={
+                        "ok": True,
+                        "exitCode": 0,
+                        "stdout": "ok\n",
+                        "stderr": "",
+                        "truncated": {"stdout": False, "stderr": False},
+                        "cwd": td,
+                        "sandbox": {"enabled": True, "kind": "macos_sandbox_exec", "reason": "permission_mode_workspace_whitelist"},
+                    },
+                ) as p_run:
                     out = json.loads(
                         shared_tools.execute_builtin_tool(
                             "bash",
@@ -4872,12 +5307,19 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                     }
                 },
             ):
-                class _Proc:
-                    returncode = 0
-                    stdout = "ok\n"
-                    stderr = ""
-
-                with patch.object(shared_tools.subprocess, "run", return_value=_Proc()) as p_run:
+                with patch.object(
+                    shared_tools,
+                    "run_bash_with_os_sandbox",
+                    return_value={
+                        "ok": True,
+                        "exitCode": 0,
+                        "stdout": "ok\n",
+                        "stderr": "",
+                        "truncated": {"stdout": False, "stderr": False},
+                        "cwd": td,
+                        "sandbox": {"enabled": True, "kind": "macos_sandbox_exec", "reason": "permission_mode_workspace_whitelist"},
+                    },
+                ) as p_run:
                     out = json.loads(
                         shared_tools.execute_builtin_tool(
                             "bash",
@@ -4921,6 +5363,75 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                 payload = json.loads(msg.split(":", 1)[1])
                 self.assertEqual(str(payload.get("command") or ""), cmd)
                 self.assertEqual(str(payload.get("matchedPattern") or ""), "rm")
+
+    def test_read_file_workspace_whitelist_blocks_symlink_escape(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        if not hasattr(os, "symlink"):
+            self.skipTest("os.symlink is not supported")
+
+        with tempfile.TemporaryDirectory() as td:
+            workspace = os.path.join(td, "workspace")
+            outside = os.path.join(td, "outside")
+            os.makedirs(workspace, exist_ok=True)
+            os.makedirs(outside, exist_ok=True)
+            with open(os.path.join(outside, "secret.txt"), "w", encoding="utf-8") as f:
+                f.write("secret")
+            os.symlink(outside, os.path.join(workspace, "link-out"))
+
+            with self.assertRaises(RuntimeError) as ex:
+                shared_tools.execute_builtin_tool(
+                    "read_file",
+                    {"path": "link-out/secret.txt", "_animaPermissionMode": "workspace_whitelist"},
+                    workspace_dir=workspace,
+                )
+            self.assertEqual(str(ex.exception), "Path outside workspace")
+
+    def test_list_dir_workspace_whitelist_blocks_symlink_escape(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        if not hasattr(os, "symlink"):
+            self.skipTest("os.symlink is not supported")
+
+        with tempfile.TemporaryDirectory() as td:
+            workspace = os.path.join(td, "workspace")
+            outside = os.path.join(td, "outside")
+            os.makedirs(workspace, exist_ok=True)
+            os.makedirs(outside, exist_ok=True)
+            os.symlink(outside, os.path.join(workspace, "link-out"))
+
+            with self.assertRaises(RuntimeError) as ex:
+                shared_tools.execute_builtin_tool(
+                    "list_dir",
+                    {"path": "link-out", "_animaPermissionMode": "workspace_whitelist"},
+                    workspace_dir=workspace,
+                )
+            self.assertEqual(str(ex.exception), "Path outside workspace")
+
+    def test_bash_workspace_whitelist_blocks_symlink_escape_cwd(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        if not hasattr(os, "symlink"):
+            self.skipTest("os.symlink is not supported")
+
+        with tempfile.TemporaryDirectory() as td:
+            workspace = os.path.join(td, "workspace")
+            outside = os.path.join(td, "outside")
+            os.makedirs(workspace, exist_ok=True)
+            os.makedirs(outside, exist_ok=True)
+            os.symlink(outside, os.path.join(workspace, "link-out"))
+
+            with self.assertRaises(RuntimeError) as ex:
+                shared_tools.execute_builtin_tool(
+                    "bash",
+                    {
+                        "command": "pwd",
+                        "cwd": "link-out",
+                        "_animaPermissionMode": "workspace_whitelist",
+                    },
+                    workspace_dir=workspace,
+                )
+            self.assertEqual(str(ex.exception), "cwd outside allowed directory")
 
 if __name__ == "__main__":
     unittest.main()
