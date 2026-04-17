@@ -8,6 +8,7 @@ import { BrowserPreview } from './BrowserPreview';
 import { useStore } from '@/store/useStore';
 import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
+import { i18nText, resolveAppLang } from '@/i18n'
 
 export const RightSidebar: React.FC<{ width?: number; onResizeStart?: () => void }> = ({ width = 600, onResizeStart }) => {
   const rightSidebarOpen = useStore((s) => s.ui.rightSidebarOpen)
@@ -16,6 +17,7 @@ export const RightSidebar: React.FC<{ width?: number; onResizeStart?: () => void
   const setRightSidebarOpen = useStore((s) => s.setRightSidebarOpen)
   const setActiveRightPanel = useStore((s) => s.setActiveRightPanel)
   const setPreviewUrl = useStore((s) => s.setPreviewUrl)
+  const lang = resolveAppLang(useStore((s) => s.settings?.language))
 
   useEffect(() => {
     const previewApi = window.anima?.preview
@@ -75,10 +77,10 @@ export const RightSidebar: React.FC<{ width?: number; onResizeStart?: () => void
   }, [currentPanel, rightSidebarOpen])
 
   const tabs = [
-    { id: 'files', label: 'Files', icon: Folder },
-    { id: 'git', label: 'Commit', icon: GitBranch },
-    { id: 'terminal', label: 'Terminal', icon: TerminalSquare },
-    { id: 'preview', label: 'Preview', icon: Globe },
+    { id: 'files', label: i18nText(lang, 'rightSidebar.files'), icon: Folder },
+    { id: 'git', label: i18nText(lang, 'rightSidebar.commit'), icon: GitBranch },
+    { id: 'terminal', label: i18nText(lang, 'rightSidebar.terminal'), icon: TerminalSquare },
+    { id: 'preview', label: i18nText(lang, 'rightSidebar.preview'), icon: Globe },
   ] as const;
 
   const collapsedWidth = 0
@@ -166,7 +168,7 @@ export const RightSidebar: React.FC<{ width?: number; onResizeStart?: () => void
                 if (!shouldMount && isActive) {
                   return (
                     <div key={tab.id} className="h-full w-full flex items-center justify-center text-xs text-muted-foreground">
-                      Loading…
+                      {i18nText(lang, 'rightSidebar.loading')}
                     </div>
                   )
                 }

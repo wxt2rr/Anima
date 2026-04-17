@@ -3,6 +3,8 @@ import parse from 'html-react-parser'
 import { Maximize2, Minimize2, Code } from 'lucide-react'
 import { Button } from '../ui/button'
 import { cn } from '../../lib/utils'
+import { useStore } from '@/store/useStore'
+import { i18nText, resolveAppLang } from '@/i18n'
 
 interface ArtifactsProps {
   content: string
@@ -11,14 +13,16 @@ interface ArtifactsProps {
 }
 
 export const Artifacts: React.FC<ArtifactsProps> = ({ content, title = 'Preview', className }) => {
+  const lang = resolveAppLang(useStore((s) => s.settings?.language))
   const [isExpanded, setIsExpanded] = useState(false)
+  const resolvedTitle = title === 'Preview' ? i18nText(lang, 'artifacts.preview') : title
 
   return (
     <div className={cn("my-4 border border-border rounded-md overflow-hidden bg-background", className)}>
       <div className="flex items-center justify-between px-4 py-2 bg-muted/30 border-b border-border">
         <div className="flex items-center gap-2">
           <Code className="w-4 h-4 text-muted-foreground" />
-          <span className="text-sm font-medium">{title}</span>
+          <span className="text-sm font-medium">{resolvedTitle}</span>
         </div>
         <Button
           variant="ghost"

@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, ExternalLink, RotateCw, Bug, Play, ZoomIn, ZoomOut } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { useStore } from '@/store/useStore'
+import { i18nText, resolveAppLang } from '@/i18n'
 
 type Props = {
   initialUrl?: string
@@ -9,6 +11,7 @@ type Props = {
 }
 
 export const BrowserPreview: React.FC<Props> = ({ initialUrl, active = true }) => {
+  const lang = resolveAppLang(useStore((s) => s.settings?.language))
   const [url, setUrl] = useState('')
   const [currentSrc, setCurrentSrc] = useState('')
   const [canBack, setCanBack] = useState(false)
@@ -205,7 +208,7 @@ export const BrowserPreview: React.FC<Props> = ({ initialUrl, active = true }) =
           className="h-6 w-6"
           disabled={!String(url || '').trim()}
           onClick={handleGo}
-          title="Go"
+          title={i18nText(lang, 'browserPreview.go')}
         >
           <Play className="w-3.5 h-3.5" />
         </Button>
@@ -215,7 +218,7 @@ export const BrowserPreview: React.FC<Props> = ({ initialUrl, active = true }) =
           className="h-6 w-6"
           disabled={!canControl || !canBack}
           onClick={() => webviewRef.current?.goBack?.()}
-          title="Back"
+          title={i18nText(lang, 'browserPreview.back')}
         >
           <ArrowLeft className="w-3.5 h-3.5" />
         </Button>
@@ -225,7 +228,7 @@ export const BrowserPreview: React.FC<Props> = ({ initialUrl, active = true }) =
           className="h-6 w-6"
           disabled={!canControl || !canForward}
           onClick={() => webviewRef.current?.goForward?.()}
-          title="Forward"
+          title={i18nText(lang, 'browserPreview.forward')}
         >
           <ArrowRight className="w-3.5 h-3.5" />
         </Button>
@@ -235,7 +238,7 @@ export const BrowserPreview: React.FC<Props> = ({ initialUrl, active = true }) =
           className="h-6 w-6"
           disabled={!canControl}
           onClick={() => webviewRef.current?.reload?.()}
-          title="Refresh"
+          title={i18nText(lang, 'browserPreview.refresh')}
         >
           <RotateCw className="w-3.5 h-3.5" />
         </Button>
@@ -248,7 +251,7 @@ export const BrowserPreview: React.FC<Props> = ({ initialUrl, active = true }) =
             className="h-6 w-6"
             disabled={!canControl}
             onClick={handleZoomOut}
-            title="Zoom Out"
+            title={i18nText(lang, 'browserPreview.zoomOut')}
           >
             <ZoomOut className="w-3.5 h-3.5" />
           </Button>
@@ -268,7 +271,7 @@ export const BrowserPreview: React.FC<Props> = ({ initialUrl, active = true }) =
                 handleFitWidth()
               }
             }}
-            title={autoFit ? "Auto Fit (Click to Reset)" : "Click to Auto Fit"}
+            title={autoFit ? i18nText(lang, 'browserPreview.autoFitReset') : i18nText(lang, 'browserPreview.clickAutoFit')}
           >
             {Math.round(zoomFactor * 100)}%
           </Button>
@@ -278,7 +281,7 @@ export const BrowserPreview: React.FC<Props> = ({ initialUrl, active = true }) =
             className="h-6 w-6"
             disabled={!canControl}
             onClick={handleZoomIn}
-            title="Zoom In"
+            title={i18nText(lang, 'browserPreview.zoomIn')}
           >
             <ZoomIn className="w-3.5 h-3.5" />
           </Button>
@@ -286,7 +289,7 @@ export const BrowserPreview: React.FC<Props> = ({ initialUrl, active = true }) =
 
         <Input
           className="h-7 text-xs flex-1 ml-1"
-          placeholder="Enter URL or start a preview server..."
+          placeholder={i18nText(lang, 'browserPreview.urlPlaceholder')}
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={handleKeyDown}
@@ -301,7 +304,7 @@ export const BrowserPreview: React.FC<Props> = ({ initialUrl, active = true }) =
             if (!target) return
             await window.anima.preview.openExternal(target)
           }}
-          title="Open in Browser"
+          title={i18nText(lang, 'browserPreview.openInBrowser')}
         >
           <ExternalLink className="w-3.5 h-3.5" />
         </Button>
@@ -311,7 +314,7 @@ export const BrowserPreview: React.FC<Props> = ({ initialUrl, active = true }) =
           className="h-6 w-6"
           disabled={!canControl}
           onClick={() => webviewRef.current?.openDevTools?.()}
-          title="Open DevTools"
+          title={i18nText(lang, 'browserPreview.openDevtools')}
         >
           <Bug className="w-3.5 h-3.5" />
         </Button>
@@ -327,15 +330,15 @@ export const BrowserPreview: React.FC<Props> = ({ initialUrl, active = true }) =
             })}
             {isLoading && (
               <div className="absolute top-2 right-2 text-[10px] text-muted-foreground bg-white border border-black/10 rounded px-2 py-1">
-                Loading...
+                {i18nText(lang, 'common.loading')}
               </div>
             )}
           </>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-2">
-            <p className="text-sm">Ready to Browse</p>
+            <p className="text-sm">{i18nText(lang, 'browserPreview.ready')}</p>
             <Button size="sm" onClick={handleGo}>
-              Start Preview
+              {i18nText(lang, 'browserPreview.startPreview')}
             </Button>
           </div>
         )}

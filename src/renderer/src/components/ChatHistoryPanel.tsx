@@ -8,6 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { AppShellLeftPane } from '@/components/layout/AppShellLeftPane'
+import { i18nText, resolveAppLang } from '@/i18n'
 import {
   Dialog,
   DialogContent,
@@ -57,109 +58,45 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
   const [renameDraft, setRenameDraft] = useState('')
   const reduceMotion = useReducedMotion()
   const deleteChatTimerRef = useRef<number | null>(null)
+  const lang = resolveAppLang(settings?.language)
 
-  const t = (() => {
-    const dict = {
-      en: { 
-        newChat: 'New Chat',
-        newProject: 'New Project',
-        addProject: 'Add project',
-        emptyProjects: 'No projects',
-        emptyProjectsHint: 'Add a project by selecting a folder.',
-        emptyChats: '[空]',
-        projectSection: 'Project',
-        chatSection: 'Chat',
-        untitled: 'New Chat', 
-        search: 'Search',
-        collapseSidebar: 'Collapse sidebar',
-        searchChats: 'Search chats',
-        addProjectTip: 'Add project',
-        createChatTip: 'New chat',
-        projectMenuTip: 'More actions',
-        deleteChatTip: 'Delete chat',
-        deleteProject: 'Delete project',
-        deleteProjectTitle: 'Delete Project',
-        deleteProjectDesc: 'Delete this project and all its chats? This action cannot be undone.',
-        deleteTitle: 'Delete Chat',
-        deleteDesc: 'Are you sure you want to delete this chat? This action cannot be undone.',
-        cancel: 'Cancel',
-        ok: 'OK',
-        delete: 'Delete',
-        settings: 'Settings',
-        renameProject: 'Rename project',
-        projectName: 'Project name',
-        pin: 'Pin',
-        unpin: 'Unpin',
-        createChat: 'New chat'
-      },
-      zh: { 
-        newChat: '新对话',
-        newProject: '新建项目',
-        addProject: '添加项目',
-        emptyProjects: '暂无项目',
-        emptyProjectsHint: '通过选择文件夹来添加一个项目。',
-        emptyChats: '[空]',
-        projectSection: '项目',
-        chatSection: '聊天',
-        untitled: '新对话', 
-        search: '搜索',
-        collapseSidebar: '收起侧边栏',
-        searchChats: '搜索对话',
-        addProjectTip: '添加项目',
-        createChatTip: '新建对话',
-        projectMenuTip: '更多操作',
-        deleteChatTip: '删除对话',
-        deleteProject: '删除项目',
-        deleteProjectTitle: '删除项目',
-        deleteProjectDesc: '确定要删除该项目及其全部对话吗？此操作无法撤销。',
-        deleteTitle: '删除对话',
-        deleteDesc: '确定要删除这个对话吗？此操作无法撤销。',
-        cancel: '取消',
-        ok: '确定',
-        delete: '删除',
-        settings: '设置',
-        renameProject: '修改项目名称',
-        projectName: '项目名称',
-        pin: '置顶',
-        unpin: '取消置顶',
-        createChat: '新建对话'
-      },
-      ja: { 
-        newChat: '新規チャット',
-        newProject: '新規プロジェクト',
-        addProject: 'プロジェクト追加',
-        emptyProjects: 'プロジェクト未作成',
-        emptyProjectsHint: 'フォルダーを選択してプロジェクトを追加します。',
-        emptyChats: '[空]',
-        projectSection: 'プロジェクト',
-        chatSection: 'チャット',
-        untitled: '新規チャット', 
-        search: '検索',
-        collapseSidebar: 'サイドバーを閉じる',
-        searchChats: 'チャットを検索',
-        addProjectTip: 'プロジェクト追加',
-        createChatTip: '新規チャット',
-        projectMenuTip: 'その他',
-        deleteChatTip: 'チャットを削除',
-        deleteProject: 'プロジェクトを削除',
-        deleteProjectTitle: 'プロジェクトを削除',
-        deleteProjectDesc: 'このプロジェクトと全てのチャットを削除しますか？この操作は取り消せません。',
-        deleteTitle: 'チャットを削除',
-        deleteDesc: 'このチャットを削除してもよろしいですか？この操作は取り消せません。',
-        cancel: 'キャンセル',
-        ok: 'OK',
-        delete: '削除',
-        settings: '設定',
-        renameProject: '名前を変更',
-        projectName: 'プロジェクト名',
-        pin: '固定',
-        unpin: '固定解除',
-        createChat: '新規チャット'
-      }
-    } as const
-    const lang = (settings?.language || 'en') as keyof typeof dict
-    return dict[lang] || dict.en
-  })()
+  const t = useMemo(
+    () => ({
+      newChat: i18nText(lang, 'chatHistory.newChat'),
+      newProject: i18nText(lang, 'chatHistory.newProject'),
+      addProject: i18nText(lang, 'chatHistory.addProject'),
+      emptyProjects: i18nText(lang, 'chatHistory.emptyProjects'),
+      emptyProjectsHint: i18nText(lang, 'chatHistory.emptyProjectsHint'),
+      emptyChats: i18nText(lang, 'chatHistory.emptyChats'),
+      projectSection: i18nText(lang, 'chatHistory.projectSection'),
+      chatSection: i18nText(lang, 'chatHistory.chatSection'),
+      untitled: i18nText(lang, 'chatHistory.untitled'),
+      search: i18nText(lang, 'chatHistory.search'),
+      collapseSidebar: i18nText(lang, 'chatHistory.collapseSidebar'),
+      searchChats: i18nText(lang, 'chatHistory.searchChats'),
+      addProjectTip: i18nText(lang, 'chatHistory.addProjectTip'),
+      createChatTip: i18nText(lang, 'chatHistory.createChatTip'),
+      projectMenuTip: i18nText(lang, 'chatHistory.projectMenuTip'),
+      deleteChatTip: i18nText(lang, 'chatHistory.deleteChatTip'),
+      deleteProject: i18nText(lang, 'chatHistory.deleteProject'),
+      deleteProjectTitle: i18nText(lang, 'chatHistory.deleteProjectTitle'),
+      deleteProjectDesc: i18nText(lang, 'chatHistory.deleteProjectDesc'),
+      deleteTitle: i18nText(lang, 'chatHistory.deleteTitle'),
+      deleteDesc: i18nText(lang, 'chatHistory.deleteDesc'),
+      cancel: i18nText(lang, 'chatHistory.cancel'),
+      ok: i18nText(lang, 'chatHistory.ok'),
+      delete: i18nText(lang, 'chatHistory.delete'),
+      settings: i18nText(lang, 'chatHistory.settings'),
+      renameProject: i18nText(lang, 'chatHistory.renameProject'),
+      projectName: i18nText(lang, 'chatHistory.projectName'),
+      pin: i18nText(lang, 'chatHistory.pin'),
+      unpin: i18nText(lang, 'chatHistory.unpin'),
+      createChat: i18nText(lang, 'chatHistory.createChat'),
+      update: i18nText(lang, 'chatHistory.update'),
+      skills: i18nText(lang, 'chatHistory.skills')
+    }),
+    [lang]
+  )
 
   useEffect(() => {
     if (ui.sidebarCollapsed) return
@@ -327,7 +264,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
               className="h-7 px-2.5 rounded-full bg-blue-500 text-white text-[11px] font-medium leading-none hover:bg-blue-600 transition-colors"
               onClick={() => setUpdateDialogOpen(true)}
             >
-              更新
+              {t.update}
             </button>
           ) : null}
         </div>
@@ -359,7 +296,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
           }}
         >
           <Sparkles className="w-3.5 h-3.5 text-foreground/65" />
-          <span>技能</span>
+          <span>{t.skills}</span>
         </button>
       </div>
       {/* Search Bar */}

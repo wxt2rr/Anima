@@ -21,6 +21,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { UpdateDialog } from './UpdateDialog'
 import { useUpdateStore } from '../store/useUpdateStore'
 import { AppShellLeftPane } from '@/components/layout/AppShellLeftPane'
+import { i18nText, resolveAppLang } from '@/i18n'
+import { SETTINGS_RUNTIME_STRINGS, SETTINGS_TTS_TEXT } from '@/i18n/legacyDictionaries'
+import { SETTINGS_DIALOG_DICTIONARIES } from '@/i18n/legacyDictionaries'
 
 const EMPTY_PROVIDERS: Provider[] = []
 
@@ -43,6 +46,7 @@ function ModelConfigDialog({
   onOpenChange: (open: boolean) => void,
   onSave: (updates: Partial<ProviderModel['config']>) => void 
 }) {
+  const lang = resolveAppLang(useStore((s) => s.settings?.language))
   const [contextWindow, setContextWindow] = useState(model.config.contextWindow?.toString() || '')
   const [maxOutputTokens, setMaxOutputTokens] = useState(model.config.maxOutputTokens?.toString() || '')
   const [jsonConfig, setJsonConfig] = useState(model.config.jsonConfig || '')
@@ -68,29 +72,29 @@ function ModelConfigDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle>Configure Model: {model.id}</DialogTitle>
+          <DialogTitle>{i18nText(lang, 'settings.modelConfig.title', { model: model.id })}</DialogTitle>
         </DialogHeader>
         <div className="grid gap-4 py-4">
           <div className="grid gap-2">
-            <Label>Context Window</Label>
+            <Label>{i18nText(lang, 'settings.modelConfig.contextWindow')}</Label>
             <Input 
               type="number" 
               value={contextWindow} 
               onChange={e => setContextWindow(e.target.value)} 
-              placeholder="e.g. 128000"
+              placeholder={i18nText(lang, 'settings.modelConfig.contextWindowPlaceholder')}
             />
           </div>
           <div className="grid gap-2">
-            <Label>Max Output Tokens</Label>
+            <Label>{i18nText(lang, 'settings.modelConfig.maxOutputTokens')}</Label>
             <Input 
               type="number" 
               value={maxOutputTokens} 
               onChange={e => setMaxOutputTokens(e.target.value)} 
-              placeholder="e.g. 4096"
+              placeholder={i18nText(lang, 'settings.modelConfig.maxOutputTokensPlaceholder')}
             />
           </div>
           <div className="grid gap-2">
-            <Label>Additional Config (JSON)</Label>
+            <Label>{i18nText(lang, 'settings.modelConfig.additionalConfig')}</Label>
             <Textarea 
               value={jsonConfig} 
               onChange={e => setJsonConfig(e.target.value)} 
@@ -101,7 +105,7 @@ function ModelConfigDialog({
           </div>
         </div>
         <DialogFooter>
-          <Button onClick={handleSave}>Save changes</Button>
+          <Button onClick={handleSave}>{i18nText(lang, 'settings.modelConfig.saveChanges')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -132,81 +136,33 @@ function CustomProviderDialog({
   const [acpApprovalMode, setAcpApprovalMode] = useState<'per_action' | 'per_project' | 'always'>('per_action')
   const [acpEnv, setAcpEnv] = useState('')
   const [defaultModel, setDefaultModel] = useState('')
-  const t = (() => {
-    const dict = {
-      en: {
-        title: 'Add Custom Provider',
-        providerType: 'Provider Type',
-        apiProvider: 'API Provider',
-        acpProvider: 'ACP Provider',
-        providerName: 'Provider Name',
-        providerNamePlaceholder: 'My Custom Provider',
-        baseUrl: 'Base URL',
-        apiKey: 'API Key',
-        apiFormat: 'API Format',
-        apiFormatHint: 'Choose the API endpoint format your provider uses',
-        useMaxCompletionTokens: 'Use max_completion_tokens',
-        useMaxCompletionTokensHint: 'Enable for newer OpenAI models (o1, o3, etc.) that require max_completion_tokens instead of max_tokens',
-        command: 'Command',
-        args: 'Args',
-        kind: 'Kind',
-        framing: 'Framing',
-        approvalMode: 'Approval Mode',
-        defaultModel: 'Default Model',
-        env: 'Env (KEY=VALUE)',
-        cancel: 'Cancel',
-        addProvider: 'Add Provider'
-      },
-      zh: {
-        title: '添加自定义 Provider',
-        providerType: 'Provider 类型',
-        apiProvider: 'API Provider',
-        acpProvider: 'ACP Provider',
-        providerName: 'Provider 名称',
-        providerNamePlaceholder: '我的自定义 Provider',
-        baseUrl: 'Base URL',
-        apiKey: 'API Key',
-        apiFormat: 'API 格式',
-        apiFormatHint: '选择该 Provider 使用的 API 端点格式',
-        useMaxCompletionTokens: '使用 max_completion_tokens',
-        useMaxCompletionTokensHint: '新版本 OpenAI 模型（o1、o3 等）需使用 max_completion_tokens 替代 max_tokens',
-        command: '命令',
-        args: '参数',
-        kind: '类型',
-        framing: '分帧',
-        approvalMode: '审批模式',
-        defaultModel: '默认模型',
-        env: '环境变量（KEY=VALUE）',
-        cancel: '取消',
-        addProvider: '添加 Provider'
-      },
-      ja: {
-        title: 'カスタム Provider を追加',
-        providerType: 'Provider タイプ',
-        apiProvider: 'API Provider',
-        acpProvider: 'ACP Provider',
-        providerName: 'Provider 名',
-        providerNamePlaceholder: 'カスタム Provider',
-        baseUrl: 'Base URL',
-        apiKey: 'API Key',
-        apiFormat: 'API 形式',
-        apiFormatHint: 'この Provider が使う API エンドポイント形式を選択します',
-        useMaxCompletionTokens: 'max_completion_tokens を使用',
-        useMaxCompletionTokensHint: '新しい OpenAI モデル（o1、o3 など）では max_tokens ではなく max_completion_tokens が必要です',
-        command: 'コマンド',
-        args: '引数',
-        kind: '種別',
-        framing: 'フレーミング',
-        approvalMode: '承認モード',
-        defaultModel: 'デフォルトモデル',
-        env: '環境変数（KEY=VALUE）',
-        cancel: 'キャンセル',
-        addProvider: 'Provider を追加'
-      }
-    } as const
-    const lang = (settings?.language || 'en') as keyof typeof dict
-    return dict[lang] || dict.en
-  })()
+  const lang = resolveAppLang(settings?.language)
+  const t = useMemo(
+    () => ({
+      title: i18nText(lang, 'settings.customProvider.title'),
+      providerType: i18nText(lang, 'settings.customProvider.providerType'),
+      apiProvider: i18nText(lang, 'settings.customProvider.apiProvider'),
+      acpProvider: i18nText(lang, 'settings.customProvider.acpProvider'),
+      providerName: i18nText(lang, 'settings.customProvider.providerName'),
+      providerNamePlaceholder: i18nText(lang, 'settings.customProvider.providerNamePlaceholder'),
+      baseUrl: i18nText(lang, 'settings.customProvider.baseUrl'),
+      apiKey: i18nText(lang, 'settings.customProvider.apiKey'),
+      apiFormat: i18nText(lang, 'settings.customProvider.apiFormat'),
+      apiFormatHint: i18nText(lang, 'settings.customProvider.apiFormatHint'),
+      useMaxCompletionTokens: i18nText(lang, 'settings.customProvider.useMaxCompletionTokens'),
+      useMaxCompletionTokensHint: i18nText(lang, 'settings.customProvider.useMaxCompletionTokensHint'),
+      command: i18nText(lang, 'settings.customProvider.command'),
+      args: i18nText(lang, 'settings.customProvider.args'),
+      kind: i18nText(lang, 'settings.customProvider.kind'),
+      framing: i18nText(lang, 'settings.customProvider.framing'),
+      approvalMode: i18nText(lang, 'settings.customProvider.approvalMode'),
+      defaultModel: i18nText(lang, 'settings.customProvider.defaultModel'),
+      env: i18nText(lang, 'settings.customProvider.env'),
+      cancel: i18nText(lang, 'settings.customProvider.cancel'),
+      addProvider: i18nText(lang, 'settings.customProvider.addProvider')
+    }),
+    [lang]
+  )
 
   useEffect(() => {
     if (open) {
@@ -614,6 +570,8 @@ function VoiceSettings({ t }: { t: any }) {
   }, [catalogModels])
 
   const lang = String(settings?.language || 'en')
+  const runtimeLang = resolveAppLang(lang)
+  const runtimeText = SETTINGS_RUNTIME_STRINGS[runtimeLang] || SETTINGS_RUNTIME_STRINGS.en
   const pickModelDesc = (id: string) => {
     const meta = modelMetaById[String(id || '').trim()]
     const d = meta?.desc
@@ -638,12 +596,12 @@ function VoiceSettings({ t }: { t: any }) {
     const multi = cap?.multilingual === true
     if (!multi && !opts.length) return ''
     if (lang === 'zh') {
-      const head = `语言：${multi ? '多语言' : ''}${supported ? `（${supported}）` : ''}`
-      const tail = opts.length ? `；界面可选：${opts.join('/')}` : ''
+      const head = `${runtimeText.modelLanguagesPrefix}：${multi ? runtimeText.modelLanguagesMulti : ''}${supported ? `（${supported}）` : ''}`
+      const tail = opts.length ? `；${runtimeText.modelLanguagesUiOptions}：${opts.join('/')}` : ''
       return `${head}${tail}`
     }
-    const head = `Languages: ${multi ? 'multilingual' : ''}${supported ? ` (${supported})` : ''}`
-    const tail = opts.length ? `; UI options: ${opts.join('/')}` : ''
+    const head = `${runtimeText.modelLanguagesPrefix}: ${multi ? runtimeText.modelLanguagesMulti : ''}${supported ? ` (${supported})` : ''}`
+    const tail = opts.length ? `; ${runtimeText.modelLanguagesUiOptions}: ${opts.join('/')}` : ''
     return `${head}${tail}`
   }
   const formatModelName = (id: string, fallbackName: string) => {
@@ -730,21 +688,21 @@ function VoiceSettings({ t }: { t: any }) {
              <div className="font-medium">{vt.availableModels}</div>
              <Button variant="outline" size="sm" onClick={() => void refreshVoiceModelsInstalled().catch(() => {})}>
                <RefreshCw className="w-4 h-4 mr-2" />
-               刷新
+               {runtimeText.refresh}
              </Button>
            </div>
            <p className="text-[13px] text-muted-foreground">{vt.modelDesc}</p>
            <div className="text-[13px] text-muted-foreground">
              {lang === 'zh'
-               ? '建议：一般场景选 Medium；在噪声大/口音重时选 Large；设备性能较弱选 Small/Base；仅试用选 Tiny。'
-               : 'Suggestion: Medium for most cases; Large for noisy speech; Small/Base for low-end devices; Tiny for quick trials.'}
+               ? runtimeText.modelSuggest
+               : runtimeText.modelSuggest}
            </div>
            <div className="space-y-2">
              {catalogStatus === 'loading' ? (
-               <div className="text-[13px] text-muted-foreground">加载中…</div>
+               <div className="text-[13px] text-muted-foreground">{runtimeText.loading}</div>
              ) : null}
              {catalogStatus === 'error' ? (
-               <div className="text-[13px] text-destructive">加载失败</div>
+               <div className="text-[13px] text-destructive">{runtimeText.loadFailed}</div>
              ) : null}
              {catalogModels.map((m) => {
                const isInstalled = installedIds.has(m.id)
@@ -790,7 +748,7 @@ function VoiceSettings({ t }: { t: any }) {
                             size="icon"
                             className="h-5 w-5 text-muted-foreground hover:text-foreground"
                             onClick={() => void window.anima?.shell?.openPath(modelPath)}
-                            title={`打开文件夹: ${modelPath}`}
+                            title={runtimeText.openFolder.replace('{path}', modelPath)}
                           >
                             <FolderOpen className="w-3.5 h-3.5" />
                           </Button>
@@ -799,46 +757,46 @@ function VoiceSettings({ t }: { t: any }) {
                       <div className="text-xs text-muted-foreground truncate">{m.id}</div>
                       {desc ? <div className="text-xs text-muted-foreground mt-1">{desc}</div> : null}
                       {langLine ? <div className="text-xs text-muted-foreground mt-1">{langLine}</div> : null}
-                      <div className="text-xs text-muted-foreground">大小：{formatBytes(m.sizeBytes ?? 0)}</div>
+                      <div className="text-xs text-muted-foreground">{runtimeText.size}：{formatBytes(m.sizeBytes ?? 0)}</div>
                       {(isInstalled || isDone) && modelPath ? (
                         <div className="text-xs text-muted-foreground flex items-center gap-1 min-w-0">
-                          <span className="shrink-0">位置：</span>
+                          <span className="shrink-0">{runtimeText.location}：</span>
                           <Button
                             variant="link"
                             size="sm"
                             className="h-auto p-0 text-xs font-normal truncate"
                             onClick={() => void window.anima?.shell?.openPath(modelPath)}
-                            title={`打开文件夹: ${modelPath}`}
+                            title={runtimeText.openFolder.replace('{path}', modelPath)}
                           >
                             {modelPath}
                           </Button>
                         </div>
                       ) : null}
-                      {isError ? <div className="text-xs text-destructive truncate">{dl?.error || '下载失败'}</div> : null}
+                      {isError ? <div className="text-xs text-destructive truncate">{dl?.error || runtimeText.downloadFailed}</div> : null}
                     </div>
                     <div className="shrink-0 flex items-center gap-2 pt-0.5">
                       {isInstalled ? (
                         <Badge variant="secondary" className="gap-1">
                           <CheckCircle2 className="w-3.5 h-3.5" />
-                          已安装
+                          {runtimeText.installed}
                         </Badge>
                       ) : isDone ? (
                         <Badge variant="secondary" className="gap-1">
                           <CheckCircle2 className="w-3.5 h-3.5" />
-                          已完成
+                          {runtimeText.completed}
                         </Badge>
                       ) : isCanceled ? (
                         <Badge variant="secondary" className="gap-1">
                           <XCircle className="w-3.5 h-3.5" />
-                          已取消
+                          {runtimeText.canceled}
                         </Badge>
                       ) : isDownloading ? (
                         <Button size="sm" variant="outline" onClick={() => void cancelDownload(m.id)}>
-                          取消
+                          {runtimeText.cancel}
                         </Button>
                       ) : (
                         <Button size="sm" variant="outline" onClick={() => void startDownload(m.id)}>
-                          下载
+                          {runtimeText.download}
                         </Button>
                       )}
                     </div>
@@ -855,11 +813,11 @@ function VoiceSettings({ t }: { t: any }) {
                         </div>
                         <div className="shrink-0">{totalForProgress > 0 ? `${percent.toFixed(1)}%` : ''}</div>
                       </div>
-                      {dl?.currentFile ? <div className="text-xs text-muted-foreground truncate">当前：{dl.currentFile}</div> : null}
+                      {dl?.currentFile ? <div className="text-xs text-muted-foreground truncate">{runtimeText.current}：{dl.currentFile}</div> : null}
                       {dl?.destDir ? (
-                        <div className="text-xs text-muted-foreground truncate">下载到：{dl.destDir}</div>
+                        <div className="text-xs text-muted-foreground truncate">{runtimeText.downloadTo}：{dl.destDir}</div>
                       ) : baseModelsDir ? (
-                        <div className="text-xs text-muted-foreground truncate">下载到：{baseModelsDir}</div>
+                        <div className="text-xs text-muted-foreground truncate">{runtimeText.downloadTo}：{baseModelsDir}</div>
                       ) : null}
                     </div>
                   ) : null}
@@ -873,15 +831,15 @@ function VoiceSettings({ t }: { t: any }) {
        <Card>
          <CardContent className="pt-6 space-y-4">
            <div className="flex items-center justify-between gap-2">
-             <div className="font-medium">本地模型</div>
+             <div className="font-medium">{runtimeText.localModelsTitle}</div>
              <Button variant="outline" size="sm" onClick={() => void addLocalModel()}>
                <FolderOpen className="w-4 h-4 mr-2" />
-               选择目录
+               {runtimeText.chooseFolder}
              </Button>
            </div>
            <div className="space-y-2">
              {localModels.length === 0 ? (
-               <div className="text-[13px] text-muted-foreground">未添加本地模型</div>
+               <div className="text-[13px] text-muted-foreground">{runtimeText.noLocalModels}</div>
              ) : null}
              {localModels.map((m) => (
                <div key={m.id} className="flex items-center justify-between gap-3 border rounded-md px-3 py-2">
@@ -891,7 +849,7 @@ function VoiceSettings({ t }: { t: any }) {
                  </div>
                  <div className="shrink-0 flex items-center gap-2">
                    <Button size="sm" variant="outline" onClick={() => handleUpdate({ model: m.id, enabled: true })}>
-                     选择
+                     {runtimeText.select}
                    </Button>
                    <Button size="icon" variant="ghost" onClick={() => void removeLocalModel(m.path)}>
                      <Trash2 className="w-4 h-4" />
@@ -910,6 +868,9 @@ function TtsSettings({ t }: { t: any }) {
   const settings = useStore(s => s.settings)
   const updateSettings = useStore(s => s.updateSettings)
   const [isTesting, setIsTesting] = useState(false)
+  const lang = String(settings?.language || 'en')
+  const runtimeLang = resolveAppLang(lang)
+  const runtimeText = SETTINGS_RUNTIME_STRINGS[runtimeLang] || SETTINGS_RUNTIME_STRINGS.en
   const tts = ((settings as any)?.tts || {
     enabled: false,
     provider: 'macos_say',
@@ -926,110 +887,10 @@ function TtsSettings({ t }: { t: any }) {
     pitch: 1,
     volume: 1,
     autoPlay: false,
-    testText: '你好，这是一段本地 TTS 试听文本。',
+    testText: runtimeText.defaultTestText,
     localModels: []
   }) as any
-
-  const lang = String(settings?.language || 'en')
-  const tx = {
-    en: {
-      title: 'TTS',
-      desc: 'Configure local text-to-speech provider and model.',
-      enabled: 'Enable TTS',
-      provider: 'Provider',
-      model: 'Model / Voice',
-      qwenModel: 'Qwen Model',
-      qwenLanguageType: 'Qwen Language',
-      qwenMode: 'Qwen Mode',
-      qwenModeLocal: 'Local Managed',
-      qwenModeEndpoint: 'Endpoint',
-      qwenLocalModel: 'Local Model',
-      qwenDownload: 'Download Model',
-      qwenDownloaded: 'Installed',
-      qwenDownloading: 'Downloading…',
-      qwenServiceStatus: 'Local service status',
-      qwenServiceRunning: 'Running',
-      qwenServiceStopped: 'Stopped',
-      qwenRefresh: 'Refresh',
-      endpoint: 'Endpoint',
-      apiKey: 'API Key (Optional)',
-      speed: 'Speed',
-      pitch: 'Pitch',
-      volume: 'Volume',
-      autoPlay: 'Auto play after response',
-      testText: 'Test text',
-      testPlay: 'Play Test',
-      localModels: 'Local model files',
-      addLocal: 'Add local model path',
-      remove: 'Remove',
-      hint: 'macOS `say` needs no download. Piper/Kokoro require local model files.'
-    },
-    zh: {
-      title: 'TTS',
-      desc: '配置本地文本转语音（TTS）服务商和模型。',
-      enabled: '启用 TTS',
-      provider: '服务商',
-      model: '模型 / 音色',
-      qwenModel: 'Qwen 模型',
-      qwenLanguageType: 'Qwen 语言',
-      qwenMode: 'Qwen 模式',
-      qwenModeLocal: '本地托管',
-      qwenModeEndpoint: 'Endpoint',
-      qwenLocalModel: '本地模型',
-      qwenDownload: '下载模型',
-      qwenDownloaded: '已安装',
-      qwenDownloading: '下载中…',
-      qwenServiceStatus: '本地服务状态',
-      qwenServiceRunning: '运行中',
-      qwenServiceStopped: '未运行',
-      qwenRefresh: '刷新',
-      endpoint: '服务地址',
-      apiKey: 'API Key（可选）',
-      speed: '语速',
-      pitch: '音高',
-      volume: '音量',
-      autoPlay: '回复后自动播放',
-      testText: '试听文本',
-      testPlay: '试听',
-      localModels: '本地模型文件',
-      addLocal: '添加本地模型路径',
-      remove: '删除',
-      hint: 'macOS `say` 无需下载。Piper/Kokoro 需要本地模型文件。'
-    },
-    ja: {
-      title: 'TTS',
-      desc: 'ローカル TTS のプロバイダーとモデルを設定します。',
-      enabled: 'TTS を有効化',
-      provider: 'プロバイダー',
-      model: 'モデル / 音声',
-      qwenModel: 'Qwen モデル',
-      qwenLanguageType: 'Qwen 言語',
-      qwenMode: 'Qwen モード',
-      qwenModeLocal: 'ローカル管理',
-      qwenModeEndpoint: 'Endpoint',
-      qwenLocalModel: 'ローカルモデル',
-      qwenDownload: 'モデルをダウンロード',
-      qwenDownloaded: 'インストール済み',
-      qwenDownloading: 'ダウンロード中…',
-      qwenServiceStatus: 'ローカルサービス状態',
-      qwenServiceRunning: '稼働中',
-      qwenServiceStopped: '停止中',
-      qwenRefresh: '更新',
-      endpoint: 'エンドポイント',
-      apiKey: 'API Key（任意）',
-      speed: '速度',
-      pitch: 'ピッチ',
-      volume: '音量',
-      autoPlay: '応答後に自動再生',
-      testText: 'テスト文',
-      testPlay: '試聴',
-      localModels: 'ローカルモデルファイル',
-      addLocal: 'ローカルモデルパスを追加',
-      remove: '削除',
-      hint: 'macOS `say` はダウンロード不要。Piper/Kokoro はローカルモデルが必要です。'
-    }
-  } as const
-  const tt = (tx as any)[lang] || tx.en
+  const tt = (SETTINGS_TTS_TEXT as any)[lang] || SETTINGS_TTS_TEXT.en
   const [qwenLocalCatalog, setQwenLocalCatalog] = useState<Array<{ id: string; name?: string }>>([])
   const [qwenInstalledIds, setQwenInstalledIds] = useState<string[]>([])
   const [qwenDownloadingId, setQwenDownloadingId] = useState('')
@@ -1264,11 +1125,11 @@ function TtsSettings({ t }: { t: any }) {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label>{tt.endpoint}</Label>
-                <Input value={String(tts.endpoint || '')} onChange={(e) => setTts({ endpoint: e.target.value })} placeholder="http://127.0.0.1:8000/v1/audio/speech 或 DashScope endpoint" />
+                <Input value={String(tts.endpoint || '')} onChange={(e) => setTts({ endpoint: e.target.value })} placeholder={runtimeText.endpointPlaceholderQwen} />
               </div>
               <div className="space-y-1">
                 <Label>{tt.apiKey}</Label>
-                <Input value={String(tts.apiKey || '')} onChange={(e) => setTts({ apiKey: e.target.value })} placeholder="DashScope API Key" />
+                <Input value={String(tts.apiKey || '')} onChange={(e) => setTts({ apiKey: e.target.value })} placeholder={runtimeText.qwenApiKeyPlaceholder} />
               </div>
             </div>
           ) : null}
@@ -1340,17 +1201,7 @@ function TtsSettings({ t }: { t: any }) {
           ) : null}
           <div className="text-xs text-muted-foreground">
             {provider === 'qwen_tts'
-              ? (lang === 'zh'
-                  ? (qwenMode === 'local'
-                      ? '本地托管模式会自动拉起本地服务并使用所选模型；请先下载模型后试听。'
-                      : 'Endpoint 模式支持 DashScope 或自建服务地址。')
-                  : lang === 'ja'
-                    ? (qwenMode === 'local'
-                        ? 'ローカル管理モードは選択モデルでローカルサービスを自動起動します。先にモデルをダウンロードしてください。'
-                        : 'Endpoint モードでは DashScope または自前 endpoint を利用できます。')
-                    : (qwenMode === 'local'
-                        ? 'Local managed mode auto-starts local TTS service with selected model. Download model before testing.'
-                        : 'Endpoint mode supports DashScope or your own endpoint.'))
+              ? (qwenMode === 'local' ? runtimeText.qwenLocalHint : runtimeText.qwenEndpointHint)
               : tt.hint}
           </div>
         </CardContent>
@@ -1372,56 +1223,7 @@ function ShortcutsSettings() {
   const [captureHint, setCaptureHint] = useState('')
 
   const t = useMemo(() => {
-    const dict = {
-      en: {
-        title: 'Keyboard shortcuts',
-        hint: 'Shortcuts work globally. Some may be overridden by the system.',
-        columns: { action: 'Action', keys: 'Keys' },
-        edit: 'Edit',
-        reset: 'Reset',
-        disable: 'Disable',
-        disabled: 'Disabled',
-        default: 'Default',
-        custom: 'Custom',
-        captureTitle: 'Set shortcut',
-        captureDesc: 'Press a new shortcut (must include Ctrl/⌘).',
-        conflict: (x: string) => `Conflict with: ${x}`,
-        invalid: 'Invalid shortcut.',
-        requirePrimary: 'Please include Ctrl (Windows/Linux) or ⌘ (macOS).'
-      },
-      zh: {
-        title: '快捷键',
-        hint: '快捷键为全局生效，部分组合键可能被系统占用。',
-        columns: { action: '操作', keys: '按键' },
-        edit: '更改',
-        reset: '恢复默认',
-        disable: '禁用',
-        disabled: '已禁用',
-        default: '默认',
-        custom: '自定义',
-        captureTitle: '设置快捷键',
-        captureDesc: '按下新的快捷键（必须包含 Ctrl/⌘）。',
-        conflict: (x: string) => `与「${x}」冲突`,
-        invalid: '无效快捷键。',
-        requirePrimary: '请包含 Ctrl（Windows/Linux）或 ⌘（macOS）。'
-      },
-      ja: {
-        title: 'ショートカット',
-        hint: 'ショートカットは全体で有効です。一部はOSにより上書きされる場合があります。',
-        columns: { action: '操作', keys: 'キー' },
-        edit: '変更',
-        reset: 'デフォルトに戻す',
-        disable: '無効化',
-        disabled: '無効',
-        default: 'デフォルト',
-        custom: 'カスタム',
-        captureTitle: 'ショートカット設定',
-        captureDesc: '新しいショートカットを押してください（Ctrl/⌘ 必須）。',
-        conflict: (x: string) => `競合: ${x}`,
-        invalid: '無効なショートカットです。',
-        requirePrimary: 'Ctrl（Windows/Linux）または ⌘（macOS）を含めてください。'
-      }
-    } as const
+    const dict = SETTINGS_DIALOG_DICTIONARIES[0] as any
     const key = (lang || 'en') as keyof typeof dict
     return dict[key] || dict.en
   }, [lang])
@@ -1658,335 +1460,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
   if (!settings) return null
 
   const t = (() => {
-    const dict = {
-      en: {
-        settingsTitle: 'Settings',
-        savedHint: 'All changes are saved automatically.',
-        done: 'Done',
-        tabs: {
-          general: 'General',
-          providers: 'Providers',
-          chat: 'Chat',
-          mcp: 'MCP',
-          coder: 'Coder',
-          automation: 'Automation',
-          im: 'IM',
-          memory: 'Memory',
-          knowledgeBase: 'Knowledge Base',
-          skills: 'Skills',
-          network: 'Network',
-          data: 'Data',
-          statusCenter: 'Status Center',
-          voice: 'Voice',
-          tts: 'TTS',
-          shortcuts: 'Shortcuts',
-          about: 'About'
-        },
-        voice: {
-          title: 'Voice',
-          desc: 'Enable voice typing using local Whisper models',
-          enable: 'Enable Voice Input',
-          enableHint: 'When enabled, you can use voice input in chat by clicking the microphone button.',
-          modelSettings: 'Model Settings',
-          currentModel: 'Current Model',
-          downloadHint: 'Please download at least one model to enable voice input.',
-          language: 'Recognition Language',
-          autoDetect: 'Auto Detect',
-          langHint: 'Select the language for speech recognition. Choose Auto Detect if you speak multiple languages.',
-          availableModels: 'Available Models',
-          modelDesc: 'Download Whisper models for local speech recognition. Larger models are more accurate but require more storage and processing power.'
-        },
-        providers: {
-          search: 'Search providers...',
-          addCustom: '+ Add Custom Provider',
-          active: 'Active',
-          inactive: 'Inactive',
-          disable: 'Disable Provider',
-          enable: 'Enable Provider',
-          apiKey: 'API Key',
-          baseUrl: 'Base URL',
-          defaultModel: 'Default Model',
-          enterApiKey: (name: string) => `Enter your ${name} API Key`
-        },
-        general: {
-          language: 'Language',
-          theme: 'Theme',
-          density: 'UI Density',
-          system: 'System',
-          light: 'Light',
-          dark: 'Dark',
-          comfortable: 'Comfortable',
-          compact: 'Compact'
-        },
-        network: {
-          proxyUrl: 'Proxy URL',
-          hint: 'Supports HTTP/HTTPS proxies (e.g. http://127.0.0.1:7890). Leave empty for direct.',
-          apply: 'Apply',
-          clear: 'Clear',
-          proxyApplied: 'Proxy applied.',
-          directApplied: 'Direct connection applied.',
-          applyFailed: 'Failed to apply proxy.'
-        },
-        footer: {
-          close: 'Close',
-          save: 'Save'
-        },
-        chat: {
-          systemPrompts: 'System Prompts',
-          new: 'New',
-          delete: 'Delete',
-          selectedHint: 'The selected prompt is used as the base system message.',
-          contextMessages: 'Context Messages',
-          contextHint: 'Limits how many recent messages are sent.',
-          temperature: 'Temperature',
-          temperatureHint: 'Higher values make output more random.',
-          memory: 'Memory',
-          enable: 'Enable',
-          add: 'Add',
-          memoryPlaceholder: 'Add a memory item (e.g. Preferred writing style)',
-          noMemory: 'No memory items yet.',
-          plugins: 'Plugins',
-          enabled: 'Enabled',
-          mcpServers: 'MCP Servers',
-          name: 'Name',
-          urlHint: 'URL (GET test)',
-          addServer: 'Add Server',
-          noServers: 'No MCP servers configured.',
-          test: 'Test'
-        },
-        data: {
-          export: 'Export',
-          exportHint: 'Exports settings, providers (without API keys), and chat history.',
-          exportJson: 'Export JSON',
-          import: 'Import',
-          importHint: 'Imports settings, providers, and chat history from a JSON file.',
-          importJson: 'Import JSON',
-          importOk: 'Import completed.',
-          importFailed: 'Import failed.',
-          danger: 'Danger Zone',
-          dangerHint: 'Clears chat history, memory, and deletes stored API keys.',
-          clearAll: 'Clear All Data'
-        }
-      },
-      zh: {
-        settingsTitle: '设置',
-        savedHint: '所有更改会自动保存。',
-        done: '完成',
-        tabs: {
-          general: '通用',
-          providers: '提供商',
-          chat: '聊天',
-          mcp: 'MCP',
-          coder: 'Coder',
-          automation: '自动化',
-          im: 'IM',
-          memory: '记忆',
-          knowledgeBase: '知识库',
-          skills: '技能',
-          network: '网络',
-          data: '数据',
-          statusCenter: '状态中心',
-          voice: '语音',
-          tts: 'TTS',
-          shortcuts: '快捷键',
-          about: '关于'
-        },
-        providers: {
-          search: '搜索提供商…',
-          addCustom: '+ 添加自定义提供商',
-          active: '已启用',
-          inactive: '未启用',
-          disable: '停用提供商',
-          enable: '启用提供商',
-          apiKey: 'API Key',
-          baseUrl: 'Base URL',
-          defaultModel: '默认模型',
-          enterApiKey: (name: string) => `输入 ${name} 的 API Key`
-        },
-        general: {
-          language: '语言',
-          theme: '主题',
-          density: '界面密度',
-          system: '跟随系统',
-          light: '浅色',
-          dark: '深色',
-          comfortable: '舒适',
-          compact: '紧凑'
-        },
-        network: {
-          proxyUrl: '代理地址',
-          hint: '支持 HTTP/HTTPS 代理（例如 http://127.0.0.1:7890）。留空为直连。',
-          apply: '应用',
-          clear: '清空',
-          proxyApplied: '代理已应用。',
-          directApplied: '已切换为直连。',
-          applyFailed: '应用代理失败。'
-        },
-        footer: {
-          close: '关闭',
-          save: '保存'
-        },
-        chat: {
-          systemPrompts: '系统提示词',
-          new: '新建',
-          delete: '删除',
-          selectedHint: '当前选中的提示词会作为 system message 的基础内容。',
-          contextMessages: '上下文消息数',
-          contextHint: '限制发送给模型的最近消息数量。',
-          temperature: '温度',
-          temperatureHint: '数值越大输出越随机。',
-          memory: '记忆',
-          enable: '启用',
-          add: '添加',
-          memoryPlaceholder: '添加记忆（例如：偏好写作风格）',
-          noMemory: '暂无记忆内容。',
-          plugins: '插件',
-          enabled: '启用',
-          mcpServers: 'MCP 服务器',
-          name: '名称',
-          urlHint: 'URL（GET 测试）',
-          addServer: '添加服务器',
-          noServers: '尚未配置 MCP 服务器。',
-          test: '测试'
-        },
-        data: {
-          export: '导出',
-          exportHint: '导出设置、提供商（不含 API Key）与聊天记录。',
-          exportJson: '导出 JSON',
-          import: '导入',
-          importHint: '从 JSON 导入设置、提供商与聊天记录。',
-          importJson: '导入 JSON',
-          importOk: '导入完成。',
-          importFailed: '导入失败。',
-          danger: '危险区域',
-          dangerHint: '清空聊天记录、记忆，并删除已保存的 API Key。',
-          clearAll: '清空所有数据'
-        },
-        voice: {
-          title: '语音',
-          desc: '使用本地 Whisper 模型启用语音文字输入',
-          enable: '启用语音输入',
-          enableHint: '启用后，您可以通过点击麦克风按钮在聊天中使用语音输入。',
-          modelSettings: '模型设置',
-          currentModel: '当前模型',
-          downloadHint: '请至少下载一个模型以启用语音输入。',
-          language: '识别语言',
-          autoDetect: '自动检测',
-          langHint: '选择语音识别的语言。如果您使用多种语言，请选择「自动检测」。',
-          availableModels: '可用模型',
-          modelDesc: '下载 Whisper 模型以进行本地语音识别。较大的模型更准确，但需要更多存储空间和处理能力。'
-        }
-      },
-      ja: {
-        settingsTitle: '設定',
-        savedHint: '変更は自動的に保存されます。',
-        done: '完了',
-        tabs: {
-          general: '一般',
-          providers: 'プロバイダー',
-          chat: 'チャット',
-          mcp: 'MCP',
-          coder: 'Coder',
-          automation: '自動化',
-          im: 'IM',
-          memory: 'メモリー',
-          knowledgeBase: 'ナレッジベース',
-          skills: 'スキル',
-          network: 'ネットワーク',
-          data: 'データ',
-          statusCenter: 'ステータスセンター',
-          voice: '音声',
-          tts: 'TTS',
-          shortcuts: 'ショートカット',
-          about: '情報'
-        },
-        providers: {
-          search: 'プロバイダー検索…',
-          addCustom: '+ カスタム追加',
-          active: '有効',
-          inactive: '無効',
-          disable: '無効化',
-          enable: '有効化',
-          apiKey: 'API Key',
-          baseUrl: 'Base URL',
-          defaultModel: '既定モデル',
-          enterApiKey: (name: string) => `${name} の API Key を入力`
-        },
-        general: {
-          language: '言語',
-          theme: 'テーマ',
-          density: '表示密度',
-          system: 'システム',
-          light: 'ライト',
-          dark: 'ダーク',
-          comfortable: '標準',
-          compact: 'コンパクト'
-        },
-        network: {
-          proxyUrl: 'プロキシURL',
-          hint: 'HTTP/HTTPS プロキシ対応（例: http://127.0.0.1:7890）。空欄で直結。',
-          apply: '適用',
-          clear: 'クリア',
-          proxyApplied: 'プロキシを適用しました。',
-          directApplied: '直結に切り替えました。',
-          applyFailed: 'プロキシ適用に失敗しました。'
-        },
-        footer: {
-          close: '閉じる',
-          save: '保存'
-        },
-        chat: {
-          systemPrompts: 'システムプロンプト',
-          new: '新規',
-          delete: '削除',
-          selectedHint: '選択中のプロンプトが system message のベースになります。',
-          contextMessages: 'コンテキスト件数',
-          contextHint: '送信する直近メッセージ数を制限します。',
-          temperature: 'Temperature',
-          temperatureHint: '高いほど出力がランダムになります。',
-          memory: 'メモリー',
-          enable: '有効',
-          add: '追加',
-          memoryPlaceholder: 'メモリーを追加（例: 文体の好み）',
-          noMemory: 'メモリーはまだありません。',
-          plugins: 'プラグイン',
-          enabled: '有効',
-          mcpServers: 'MCP サーバー',
-          name: '名前',
-          urlHint: 'URL（GET テスト）',
-          addServer: 'サーバー追加',
-          noServers: 'MCP サーバー未設定。',
-          test: 'テスト'
-        },
-        data: {
-          export: 'エクスポート',
-          exportHint: '設定・プロバイダー（API Key除外）・履歴を出力します。',
-          exportJson: 'JSON出力',
-          import: 'インポート',
-          importHint: 'JSON から設定・プロバイダー・履歴を読み込みます。',
-          importJson: 'JSON読込',
-          importOk: 'インポート完了。',
-          importFailed: 'インポート失敗。',
-          danger: '危険',
-          dangerHint: '履歴・メモリー・保存済み API Key を削除します。',
-          clearAll: '全データ削除'
-        },
-        voice: {
-          title: '音声',
-          desc: 'ローカルWhisperモデルを使用して音声入力を有効にします',
-          enable: '音声入力を有効にする',
-          enableHint: '有効にすると、チャットのマイクボタンをクリックして音声入力を使用できます。',
-          modelSettings: 'モデル設定',
-          currentModel: '現在のモデル',
-          downloadHint: '音声入力を有効にするには、少なくとも1つのモデルをダウンロードしてください。',
-          language: '認識言語',
-          autoDetect: '自動検出',
-          langHint: '音声認識の言語を選択します。複数の言語を話す場合は「自動検出」を選択してください。',
-          availableModels: '利用可能なモデル',
-          modelDesc: 'ローカル音声認識用のWhisperモデルをダウンロードします。大きなモデルほど正確ですが、より多くのストレージと処理能力が必要です。'
-        }
-      }
-    } as const
+    const dict = SETTINGS_DIALOG_DICTIONARIES[1] as any
     return dict[settings.language as keyof typeof dict] || dict.en
   })()
 
@@ -2106,122 +1580,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
   const settings = useStore(s => s.settings)
 
   const t = (() => {
-    const dict = {
-      en: {
-        tabs: {
-          general: 'General',
-          providers: 'Providers',
-          chat: 'Chat',
-          mcp: 'MCP',
-          coder: 'Coder',
-          automation: 'Automation',
-          im: 'IM',
-          memory: 'Memory',
-          knowledgeBase: 'Knowledge Base',
-          skills: 'Skills',
-          network: 'Network',
-          data: 'Data',
-          statusCenter: 'Status Center',
-          voice: 'Voice',
-          tts: 'TTS',
-          shortcuts: 'Shortcuts',
-          about: 'About'
-        },
-        savedHint: 'All changes are saved automatically.',
-        backToApp: 'Back',
-        footer: { close: 'Close', save: 'Save' },
-        voice: {
-          title: 'Voice',
-          desc: 'Enable voice typing using local Whisper models',
-          enable: 'Enable Voice Input',
-          enableHint: 'When enabled, you can use voice input in chat by clicking the microphone button.',
-          modelSettings: 'Model Settings',
-          currentModel: 'Current Model',
-          downloadHint: 'Please download at least one model to enable voice input.',
-          language: 'Recognition Language',
-          autoDetect: 'Auto Detect',
-          langHint: 'Select the language for speech recognition. Choose Auto Detect if you speak multiple languages.',
-          availableModels: 'Available Models',
-          modelDesc: 'Download Whisper models for local speech recognition. Larger models are more accurate but require more storage and processing power.'
-        }
-      },
-      zh: {
-        tabs: {
-          general: '通用',
-          providers: '提供商',
-          chat: '聊天',
-          mcp: 'MCP',
-          coder: 'Coder',
-          automation: '自动化',
-          im: 'IM',
-          memory: '记忆',
-          knowledgeBase: '知识库',
-          skills: '技能',
-          network: '网络',
-          data: '数据',
-          statusCenter: '状态中心',
-          voice: '语音',
-          tts: 'TTS',
-          shortcuts: '快捷键',
-          about: '关于'
-        },
-        savedHint: '所有更改会自动保存。',
-        backToApp: '返回',
-        footer: { close: '关闭', save: '保存' },
-        voice: {
-          title: '语音',
-          desc: '使用本地 Whisper 模型启用语音文字输入',
-          enable: '启用语音输入',
-          enableHint: '启用后，您可以通过点击麦克风按钮在聊天中使用语音输入。',
-          modelSettings: '模型设置',
-          currentModel: '当前模型',
-          downloadHint: '请至少下载一个模型以启用语音输入。',
-          language: '识别语言',
-          autoDetect: '自动检测',
-          langHint: '选择语音识别的语言。如果您使用多种语言，请选择「自动检测」。',
-          availableModels: '可用模型',
-          modelDesc: '下载 Whisper 模型以进行本地语音识别。较大的模型更准确，但需要更多存储空间和处理能力。'
-        }
-      },
-      ja: {
-        tabs: {
-          general: '一般',
-          providers: 'プロバイダー',
-          chat: 'チャット',
-          mcp: 'MCP',
-          coder: 'Coder',
-          automation: '自動化',
-          im: 'IM',
-          memory: 'メモリー',
-          knowledgeBase: 'ナレッジベース',
-          skills: 'スキル',
-          network: 'ネットワーク',
-          data: 'データ',
-          statusCenter: 'ステータスセンター',
-          voice: '音声',
-          tts: 'TTS',
-          shortcuts: 'ショートカット',
-          about: '情報'
-        },
-        savedHint: '変更は自動的に保存されます。',
-        backToApp: '戻る',
-        footer: { close: '閉じる', save: '保存' },
-        voice: {
-          title: '音声',
-          desc: 'ローカルWhisperモデルを使用して音声入力を有効にします',
-          enable: '音声入力を有効にする',
-          enableHint: '有効にすると、チャットのマイクボタンをクリックして音声入力を使用できます。',
-          modelSettings: 'モデル設定',
-          currentModel: '現在のモデル',
-          downloadHint: '音声入力を有効にするには、少なくとも1つのモデルをダウンロードしてください。',
-          language: '認識言語',
-          autoDetect: '自動検出',
-          langHint: '音声認識の言語を選択します。複数の言語を話す場合は「自動検出」を選択してください。',
-          availableModels: '利用可能なモデル',
-          modelDesc: 'ローカル音声認識用のWhisperモデルをダウンロードします。大きなモデルほど正確ですが、より多くのストレージと処理能力が必要です。'
-        }
-      }
-    } as const
+    const dict = SETTINGS_DIALOG_DICTIONARIES[2] as any
     const lang = (settings?.language || 'en') as keyof typeof dict
     return dict[lang] || dict.en
   })()
@@ -2401,129 +1760,7 @@ function CoderSettings() {
 
   const language = (settings?.language || 'en') as 'en' | 'zh' | 'ja'
   const t = useMemo(() => {
-    const dict = {
-      en: {
-        title: 'Coder',
-        desc: 'Configure coder endpoint and transport. After saving, Anima can delegate coding tasks to coder and verify completion.',
-        enabled: 'Enable Coder Delegation',
-        name: 'Name',
-        backend: 'Coder Backend',
-        backendCodex: 'Codex',
-        backendCursor: 'Cursor',
-        backendCustom: 'Custom',
-        backendCustomLabel: 'Custom Backend Name',
-        endpoint: 'Endpoint Type',
-        transport: 'Transport',
-        autoStart: 'Auto Start',
-        command: 'Launch Command',
-        args: 'Launch Args',
-        cwd: 'Working Directory (optional)',
-        remoteDebuggingPort: 'Remote Debugging Port',
-        refresh: 'Refresh',
-        start: 'Start',
-        stop: 'Stop',
-        running: 'Running',
-        stopped: 'Stopped',
-        debugReady: 'Debug Port Ready',
-        debugNotReady: 'Debug Port Not Ready',
-        terminal: 'Terminal',
-        desktop: 'Desktop',
-        acp: 'ACP',
-        cdpbridge: 'CDPBridge'
-        ,
-        profileList: 'Coders',
-        addProfile: 'Add Coder',
-        duplicateProfile: 'Duplicate',
-        deleteProfile: 'Delete',
-        commandTemplates: 'Command Templates',
-        cmdStatus: 'status',
-        cmdSend: 'send',
-        cmdAsk: 'ask',
-        cmdRead: 'read',
-        cmdNew: 'new',
-        cmdScreenshot: 'screenshot'
-      },
-      zh: {
-        title: 'Coder',
-        desc: '配置 coder 的端类型和通信方式。保存后，Anima 可将编码任务委托给 coder，并负责验收完成情况。',
-        enabled: '启用 Coder 委托',
-        name: '名称',
-        backend: 'Coder 底层',
-        backendCodex: 'Codex',
-        backendCursor: 'Cursor',
-        backendCustom: '自定义',
-        backendCustomLabel: '自定义底层名称',
-        endpoint: '端类型',
-        transport: '通信方式',
-        autoStart: '自动启动',
-        command: '启动命令',
-        args: '启动参数',
-        cwd: '工作目录（可选）',
-        remoteDebuggingPort: '远程调试端口',
-        refresh: '刷新状态',
-        start: '启动',
-        stop: '停止',
-        running: '运行中',
-        stopped: '未运行',
-        debugReady: '调试端口可用',
-        debugNotReady: '调试端口不可用',
-        terminal: '终端',
-        desktop: '桌面端',
-        acp: 'ACP',
-        cdpbridge: 'CDPBridge',
-        profileList: 'Coders',
-        addProfile: '新增 Coder',
-        duplicateProfile: '复制',
-        deleteProfile: '删除',
-        commandTemplates: '命令模板',
-        cmdStatus: 'status',
-        cmdSend: 'send',
-        cmdAsk: 'ask',
-        cmdRead: 'read',
-        cmdNew: 'new',
-        cmdScreenshot: 'screenshot'
-      },
-      ja: {
-        title: 'Coder',
-        desc: 'coder のエンドポイントと通信方式を設定します。保存後、Anima はコーディング作業を coder に委任し、完了検証に集中できます。',
-        enabled: 'Coder 委任を有効化',
-        name: '名前',
-        backend: 'Coder バックエンド',
-        backendCodex: 'Codex',
-        backendCursor: 'Cursor',
-        backendCustom: 'カスタム',
-        backendCustomLabel: 'カスタムバックエンド名',
-        endpoint: 'エンドポイント種別',
-        transport: '通信方式',
-        autoStart: '自動起動',
-        command: '起動コマンド',
-        args: '起動引数',
-        cwd: '作業ディレクトリ（任意）',
-        remoteDebuggingPort: 'リモートデバッグポート',
-        refresh: '状態更新',
-        start: '起動',
-        stop: '停止',
-        running: '起動中',
-        stopped: '停止中',
-        debugReady: 'デバッグポート接続可',
-        debugNotReady: 'デバッグポート未接続',
-        terminal: 'ターミナル',
-        desktop: 'デスクトップ',
-        acp: 'ACP',
-        cdpbridge: 'CDPBridge',
-        profileList: 'Coders',
-        addProfile: 'Coderを追加',
-        duplicateProfile: '複製',
-        deleteProfile: '削除',
-        commandTemplates: 'コマンドテンプレート',
-        cmdStatus: 'status',
-        cmdSend: 'send',
-        cmdAsk: 'ask',
-        cmdRead: 'read',
-        cmdNew: 'new',
-        cmdScreenshot: 'screenshot'
-      }
-    } as const
+    const dict = SETTINGS_DIALOG_DICTIONARIES[3] as any
     return dict[language] || dict.en
   }, [language])
 
@@ -2977,62 +2214,7 @@ function StatusCenterSettings() {
     }
   }, [])
   const t = useMemo(() => {
-    const dict = {
-      en: {
-        title: 'Status Center',
-        desc: 'Configure menu bar tray icons and runtime state display.',
-        trayEnabled: 'Enable Menu Bar Icon',
-        trayAnimated: 'Enable State Animation',
-        frameInterval: 'Animation Interval (ms)',
-        states: 'State Icons',
-        test: 'Test State',
-        upload: 'Upload',
-        idle: 'Idle',
-        running: 'Running',
-        waiting: 'Waiting User',
-        done: 'Done',
-        error: 'Error',
-        frames: 'Image Slots (max 5)',
-        firstAsIcon: 'The first image is used as the icon',
-        iconBadge: 'Icon'
-      },
-      zh: {
-        title: '状态中心',
-        desc: '配置菜单栏图标与运行状态显示。',
-        trayEnabled: '启用菜单栏图标',
-        trayAnimated: '启用状态动画',
-        frameInterval: '动画间隔 (ms)',
-        states: '状态图标',
-        test: '测试状态',
-        upload: '上传',
-        idle: '空闲',
-        running: '运行中',
-        waiting: '等待用户',
-        done: '完成',
-        error: '错误',
-        frames: '图片槽位（最多 5 张）',
-        firstAsIcon: '第 1 张默认作为图标',
-        iconBadge: '图标'
-      },
-      ja: {
-        title: 'ステータスセンター',
-        desc: 'メニューバーアイコンと実行状態表示を設定します。',
-        trayEnabled: 'メニューバーアイコンを有効化',
-        trayAnimated: '状態アニメーションを有効化',
-        frameInterval: 'アニメ間隔 (ms)',
-        states: '状態アイコン',
-        test: '状態テスト',
-        upload: 'アップロード',
-        idle: '待機',
-        running: '実行中',
-        waiting: 'ユーザー待ち',
-        done: '完了',
-        error: 'エラー',
-        frames: '画像スロット（最大5枚）',
-        firstAsIcon: '1枚目をアイコンとして使用',
-        iconBadge: 'アイコン'
-      }
-    } as const
+    const dict = SETTINGS_DIALOG_DICTIONARIES[4] as any
     return dict[language] || dict.en
   }, [language])
 
@@ -3253,62 +2435,7 @@ function AboutSettings() {
   const language = (settings?.language || 'en') as 'en' | 'zh' | 'ja'
 
   const t = useMemo(() => {
-    const dict = {
-      en: {
-        name: 'Name',
-        version: 'Version',
-        author: 'Author',
-        github: 'GitHub',
-        open: 'Open',
-        checkUpdate: 'Update now',
-        status: {
-          disabled: 'Updates are disabled in dev.',
-          idle: 'Ready.',
-          checking: 'Checking for updates…',
-          available: 'Update available.',
-          notAvailable: 'You are up to date.',
-          downloading: 'Downloading…',
-          downloaded: 'Downloaded. Ready to install.',
-          error: 'Update error.'
-        }
-      },
-      zh: {
-        name: '名称',
-        version: '版本号',
-        author: '作者',
-        github: 'GitHub',
-        open: '打开',
-        checkUpdate: '立即更新',
-        status: {
-          disabled: '开发环境不支持自动更新。',
-          idle: '准备就绪。',
-          checking: '正在检查更新…',
-          available: '发现新版本可用。',
-          notAvailable: '当前已是最新版本。',
-          downloading: '正在下载…',
-          downloaded: '下载完成，准备安装。',
-          error: '更新失败。'
-        }
-      },
-      ja: {
-        name: '名称',
-        version: 'バージョン',
-        author: '作者',
-        github: 'GitHub',
-        open: '開く',
-        checkUpdate: '今すぐ更新',
-        status: {
-          disabled: '開発環境では更新が無効です。',
-          idle: '準備完了。',
-          checking: '更新を確認中…',
-          available: '新しいバージョンがあります。',
-          notAvailable: '最新です。',
-          downloading: 'ダウンロード中…',
-          downloaded: 'ダウンロード完了。',
-          error: '更新エラー。'
-        }
-      }
-    } as const
+    const dict = SETTINGS_DIALOG_DICTIONARIES[5] as any
     return dict[language] || dict.en
   }, [language])
 
@@ -3498,227 +2625,7 @@ function ProvidersSettings() {
   }
 
   const t = (() => {
-    const dict = {
-      en: {
-        search: 'Search providers...',
-        addCustom: 'Add Custom Provider',
-        addCustomAcp: 'Add Custom ACP Provider',
-        addLocalOllama: 'Add Ollama (Local)',
-        addLocalLmStudio: 'Add LM Studio (Local)',
-        detectLocalModels: 'Detect Local Models',
-        localProviderHint: 'Local provider does not require API key.',
-        active: 'Active',
-        inactive: 'Inactive',
-        default: 'Default',
-        setDefault: 'Set Default',
-        apiKey: 'API Key',
-        baseUrl: 'Base URL (Optional)',
-        baseUrlHint: 'Leave empty to use the default API endpoint',
-        thinkingMode: 'Thinking mode',
-        thinkingModeHint: 'Enable reasoning_content output (DeepSeek).',
-        models: 'Models',
-        defaultModel: 'Default Model',
-        manageModels: 'Manage Models',
-        enterModelId: 'Enter model ID',
-        enterApiKey: 'Enter your API key',
-        getKey: (name: string) => `Get your API key from ${name} API Keys`,
-        proxyEndpoints: 'API Proxy Endpoints',
-        advanced: 'Advanced',
-        proxyDesc: (name: string) => `Anima provides API proxy endpoints for ${name}. These endpoints convert API requests to Chat Completions format to be compatible with various AI tools.`,
-        responsesProxy: 'Responses API Proxy',
-        messagesProxy: 'Messages API Proxy',
-        responsesProxyDesc: (name: string) => `Use this endpoint for tools requiring ${name} Responses API (like Codex). Requests will be converted to Chat Completions format.`,
-        messagesProxyDesc: 'Use this endpoint for Anthropic compatible tools. Requests will be converted to Chat Completions format.',
-        useWithClaude: 'Use with Claude Code',
-        useWithClaudeDesc: 'You can use this provider with Claude Code by setting the following environment variables:',
-        copy: 'Copy',
-        copied: 'Copied',
-        fillBaseUrlFirst: 'Please enter Base URL first',
-        fillApiKeyFirst: 'Please enter API Key first',
-        detectLocalFailedHint: 'Failed to detect local models. Please ensure local server is running: Ollama http://127.0.0.1:11434 , LM Studio http://127.0.0.1:1234.',
-        qwenOAuthDesc: 'Device code login; credentials stay in local backend',
-        codexOAuthDesc: 'Browser login; credentials stay in local backend',
-        codexAuthRootDir: 'Codex auth root dir',
-        codexAuthRootDirHint: 'Default is ~/.codex. Sync reads auth.json from this directory.',
-        syncAccount: 'Sync account',
-        syncing: 'Syncing...',
-        signIn: 'Sign in',
-        logout: 'Logout',
-        profile: 'Profile',
-        email: 'Email',
-        status: 'Status',
-        loggedIn: 'Logged in',
-        expired: 'Expired',
-        notLoggedIn: 'Not logged in',
-        acpKind: 'ACP Kind',
-        framing: 'Framing',
-        command: 'Command',
-        args: 'Args',
-        approvalMode: 'Approval Mode',
-        env: 'Env (KEY=VALUE)',
-        testAcp: 'Test ACP',
-        resetApprovals: 'Reset approvals',
-        apiFormatHint: 'Choose the API endpoint format your provider uses',
-        fetchModels: 'Fetch Models',
-        noModelsConfigured: 'No models configured.',
-        hiddenModelsHint: 'Models are hidden by default. Click Fetch Models to load and manage them.',
-        selectProviderHint: 'Select a provider to configure',
-        openAuthLink: 'Open the authorization link',
-        openAuthLinkLocalRedirect: 'Open the authorization link (redirects back to localhost)',
-        openInBrowser: 'Open in browser',
-        userCodeIfPrompted: 'User code (if prompted)',
-        waitingForApproval: 'Waiting for approval…',
-        oauthFailed: 'OAuth failed',
-        oauthSuccess: 'Success',
-        close: 'Close'
-      },
-      zh: {
-        search: '搜索提供商…',
-        addCustom: '添加自定义 Provider',
-        addCustomAcp: '添加自定义 ACP Provider',
-        addLocalOllama: '添加 Ollama（本地）',
-        addLocalLmStudio: '添加 LM Studio（本地）',
-        detectLocalModels: '探测本地模型',
-        localProviderHint: '本地 provider 不需要 API Key。',
-        active: '启用',
-        inactive: '未启用',
-        default: '默认',
-        setDefault: '设为默认',
-        apiKey: 'API Key',
-        baseUrl: 'Base URL (Optional)',
-        baseUrlHint: '留空则使用默认 OpenAI API 端点',
-        thinkingMode: '思考模式',
-        thinkingModeHint: '开启 reasoning_content 输出（DeepSeek）。',
-        models: '模型',
-        defaultModel: '默认模型',
-        manageModels: '管理模型',
-        enterModelId: '输入模型 ID',
-        enterApiKey: 'Enter your API key',
-        getKey: (name: string) => `Get your API key from ${name} API Keys`,
-        proxyEndpoints: 'API 代理端点',
-        advanced: '高级',
-        proxyDesc: (name: string) => `Anima 为 ${name} 提供 API 代理端点。这些端点会将 API 请求转换为 Chat Completions 格式，以兼容各种 AI 工具。`,
-        responsesProxy: 'OpenAI Responses API 代理',
-        messagesProxy: 'Anthropic Messages API 代理',
-        responsesProxyDesc: (name: string) => `将此端点用于需要 ${name} Responses API 的工具（如 Codex）。请求将被转换为 Chat Completions 格式。`,
-        messagesProxyDesc: '将此端点用于 Anthropic 兼容的工具。请求将被转换为 Chat Completions 格式。',
-        useWithClaude: '与 Claude Code 一起使用',
-        useWithClaudeDesc: '您可以通过设置以下环境变量，将此提供商与 Claude Code 一起使用：',
-        copy: '复制',
-        copied: '已复制',
-        fillBaseUrlFirst: '请先填写 Base URL',
-        fillApiKeyFirst: '请先填写 API Key',
-        detectLocalFailedHint: '本地模型探测失败。请确认本地服务已启动：Ollama http://127.0.0.1:11434 ，LM Studio http://127.0.0.1:1234。',
-        qwenOAuthDesc: '使用设备码登录，凭据仅保存在本地后端',
-        codexOAuthDesc: '浏览器登录，凭据仅保存在本地后端',
-        codexAuthRootDir: 'Codex 授权根目录',
-        codexAuthRootDirHint: '默认是 ~/.codex。同步账号会读取该目录下的 auth.json。',
-        syncAccount: '同步账号',
-        syncing: '同步中...',
-        signIn: '登录',
-        logout: '退出',
-        profile: 'Profile',
-        email: '邮箱',
-        status: '状态',
-        loggedIn: '已登录',
-        expired: '已过期',
-        notLoggedIn: '未登录',
-        acpKind: 'ACP 类型',
-        framing: '分帧',
-        command: '命令',
-        args: '参数',
-        approvalMode: '审批模式',
-        env: '环境变量（KEY=VALUE）',
-        testAcp: '测试 ACP',
-        resetApprovals: '重置审批',
-        apiFormatHint: '选择该 Provider 使用的 API 端点格式',
-        fetchModels: '拉取模型',
-        noModelsConfigured: '暂无已配置模型。',
-        hiddenModelsHint: '默认不展示模型列表。点击“拉取模型”后再进行选择与管理。',
-        selectProviderHint: '请选择要配置的 Provider',
-        openAuthLink: '打开链接授权',
-        openAuthLinkLocalRedirect: '打开链接授权（会回调到本机）',
-        openInBrowser: '在浏览器打开',
-        userCodeIfPrompted: '验证码（如提示）',
-        waitingForApproval: '等待授权完成…',
-        oauthFailed: 'OAuth 失败',
-        oauthSuccess: '登录成功',
-        close: '关闭'
-      },
-      ja: {
-        search: 'Provider を検索…',
-        addCustom: 'カスタム Provider を追加',
-        addCustomAcp: 'カスタム ACP Provider を追加',
-        addLocalOllama: 'Ollama（ローカル）を追加',
-        addLocalLmStudio: 'LM Studio（ローカル）を追加',
-        detectLocalModels: 'ローカルモデルを検出',
-        localProviderHint: 'ローカル Provider では API Key は不要です。',
-        active: '有効',
-        inactive: '無効',
-        default: 'デフォルト',
-        setDefault: 'デフォルトに設定',
-        apiKey: 'API Key',
-        baseUrl: 'Base URL（任意）',
-        baseUrlHint: '空欄の場合は既定の API エンドポイントを使用します',
-        thinkingMode: '思考モード',
-        thinkingModeHint: 'reasoning_content 出力を有効化（DeepSeek）。',
-        models: 'モデル',
-        defaultModel: 'デフォルトモデル',
-        manageModels: 'モデル管理',
-        enterModelId: 'モデル ID を入力',
-        enterApiKey: 'API Key を入力',
-        getKey: (name: string) => `${name} の API Keys で API Key を取得`,
-        proxyEndpoints: 'API プロキシエンドポイント',
-        advanced: '詳細',
-        proxyDesc: (name: string) => `Anima は ${name} 向けに API プロキシを提供します。リクエストは Chat Completions 形式に変換され、さまざまな AI ツールと互換になります。`,
-        responsesProxy: 'Responses API プロキシ',
-        messagesProxy: 'Messages API プロキシ',
-        responsesProxyDesc: (name: string) => `${name} Responses API（Codex など）が必要なツール向けのエンドポイントです。リクエストは Chat Completions 形式に変換されます。`,
-        messagesProxyDesc: 'Anthropic 互換ツール向けのエンドポイントです。リクエストは Chat Completions 形式に変換されます。',
-        useWithClaude: 'Claude Code で使用',
-        useWithClaudeDesc: '次の環境変数を設定すると、この Provider を Claude Code で使えます。',
-        copy: 'コピー',
-        copied: 'コピーしました',
-        fillBaseUrlFirst: '先に Base URL を入力してください',
-        fillApiKeyFirst: '先に API Key を入力してください',
-        detectLocalFailedHint: 'ローカルモデルの検出に失敗しました。ローカルサーバーが起動していることを確認してください: Ollama http://127.0.0.1:11434 , LM Studio http://127.0.0.1:1234.',
-        qwenOAuthDesc: 'デバイスコードでログイン。認証情報はローカルバックエンドのみに保存されます',
-        codexOAuthDesc: 'ブラウザログイン。認証情報はローカルバックエンドのみに保存されます',
-        codexAuthRootDir: 'Codex 認証ルート',
-        codexAuthRootDirHint: '既定値は ~/.codex。このディレクトリの auth.json を同期します。',
-        syncAccount: 'アカウント同期',
-        syncing: '同期中...',
-        signIn: 'ログイン',
-        logout: 'ログアウト',
-        profile: 'Profile',
-        email: 'メール',
-        status: '状態',
-        loggedIn: 'ログイン済み',
-        expired: '期限切れ',
-        notLoggedIn: '未ログイン',
-        acpKind: 'ACP 種別',
-        framing: 'フレーミング',
-        command: 'コマンド',
-        args: '引数',
-        approvalMode: '承認モード',
-        env: '環境変数（KEY=VALUE）',
-        testAcp: 'ACP テスト',
-        resetApprovals: '承認をリセット',
-        apiFormatHint: 'この Provider が使う API エンドポイント形式を選択します',
-        fetchModels: 'モデル取得',
-        noModelsConfigured: 'モデルが設定されていません。',
-        hiddenModelsHint: 'モデル一覧は初期状態で非表示です。「モデル取得」をクリックして読み込み・管理してください。',
-        selectProviderHint: '設定する Provider を選択してください',
-        openAuthLink: '認可リンクを開く',
-        openAuthLinkLocalRedirect: '認可リンクを開く（localhost にリダイレクト）',
-        openInBrowser: 'ブラウザで開く',
-        userCodeIfPrompted: 'ユーザーコード（必要な場合）',
-        waitingForApproval: '認可完了を待機中…',
-        oauthFailed: 'OAuth 失敗',
-        oauthSuccess: '成功',
-        close: '閉じる'
-      }
-    } as const
+    const dict = SETTINGS_DIALOG_DICTIONARIES[6] as any
     return dict[settings.language as keyof typeof dict] || dict.en
   })()
 
@@ -4983,41 +3890,7 @@ function GeneralSettings() {
   const { settings, updateSettings } = useStore()
   if (!settings) return null
   const t = (() => {
-    const dict = {
-      en: {
-        language: 'Language',
-        theme: 'Theme',
-        themeColor: 'Theme Color',
-        density: 'UI Density',
-        system: 'System',
-        light: 'Light',
-        dark: 'Dark',
-        comfortable: 'Comfortable',
-        compact: 'Compact'
-      },
-      zh: {
-        language: '语言',
-        theme: '主题',
-        themeColor: '主题色',
-        density: '界面密度',
-        system: '跟随系统',
-        light: '浅色',
-        dark: '深色',
-        comfortable: '舒适',
-        compact: '紧凑'
-      },
-      ja: {
-        language: '言語',
-        theme: 'テーマ',
-        themeColor: 'テーマ色',
-        density: '表示密度',
-        system: 'システム',
-        light: 'ライト',
-        dark: 'ダーク',
-        comfortable: '標準',
-        compact: 'コンパクト'
-      }
-    } as const
+    const dict = SETTINGS_DIALOG_DICTIONARIES[7] as any
     return dict[settings.language as keyof typeof dict] || dict.en
   })()
   return (
@@ -5107,35 +3980,7 @@ function NetworkSettings() {
   const settings = settings0!
   const [status, setStatus] = useState<{ type: 'idle' | 'ok' | 'error'; text?: string }>({ type: 'idle' })
   const t = (() => {
-    const dict = {
-      en: {
-        proxyUrl: 'Proxy URL',
-        hint: 'Supports HTTP/HTTPS proxies (e.g. http://127.0.0.1:7890). Leave empty for direct.',
-        apply: 'Apply',
-        clear: 'Clear',
-        proxyApplied: 'Proxy applied.',
-        directApplied: 'Direct connection applied.',
-        applyFailed: 'Failed to apply proxy.'
-      },
-      zh: {
-        proxyUrl: '代理地址',
-        hint: '支持 HTTP/HTTPS 代理（例如 http://127.0.0.1:7890）。留空为直连。',
-        apply: '应用',
-        clear: '清空',
-        proxyApplied: '代理已应用。',
-        directApplied: '已切换为直连。',
-        applyFailed: '应用代理失败。'
-      },
-      ja: {
-        proxyUrl: 'プロキシURL',
-        hint: 'HTTP/HTTPS プロキシ対応（例: http://127.0.0.1:7890）。空欄で直結。',
-        apply: '適用',
-        clear: 'クリア',
-        proxyApplied: 'プロキシを適用しました。',
-        directApplied: '直結に切り替えました。',
-        applyFailed: 'プロキシ適用に失敗しました。'
-      }
-    } as const
+    const dict = SETTINGS_DIALOG_DICTIONARIES[8] as any
     return dict[settings.language as keyof typeof dict] || dict.en
   })()
 
@@ -5199,77 +4044,7 @@ function McpSettings() {
   const [mcpErrors, setMcpErrors] = useState<Array<{ path?: string; code?: string; message?: string }>>([])
   const [mcpCatalogText, setMcpCatalogText] = useState('')
   const t = (() => {
-    const dict = {
-      en: {
-        mcpConfig: 'MCP Config (JSON)',
-        mcpConfigHint: 'Manage MCP servers using JSON. Use ${input:...} or ${env:...} for secrets.',
-        mcpScope: 'MCP Scope',
-        mcpScopeUser: 'User',
-        mcpScopeProject: 'Project',
-        mcpLoad: 'Load',
-        mcpValidate: 'Validate',
-        mcpSave: 'Save',
-        mcpTest: 'Test',
-        mcpCatalog: 'Catalog',
-        mcpServerId: 'Server ID',
-        mcpServerIdHint: 'Input a server id for test/catalog.',
-        mcpValidationPassed: 'Validation passed.',
-        mcpValidationFailed: 'Validation failed.',
-        mcpSaveDone: 'Saved.',
-        mcpLoadDone: 'Loaded.',
-        mcpTestDone: 'Test passed.',
-        mcpCatalogDone: 'Catalog loaded.',
-        mcpWorkspaceRequired: 'Project scope requires workspaceDir.',
-        mcpErrors: 'Validation Errors',
-        mcpCatalogTitle: 'Catalog Preview',
-      },
-      zh: {
-        mcpConfig: 'MCP 配置（JSON）',
-        mcpConfigHint: '通过 JSON 管理 MCP 服务器。敏感信息请使用 ${input:...} 或 ${env:...}。',
-        mcpScope: 'MCP 范围',
-        mcpScopeUser: '用户级',
-        mcpScopeProject: '项目级',
-        mcpLoad: '加载',
-        mcpValidate: '校验',
-        mcpSave: '保存',
-        mcpTest: '测试',
-        mcpCatalog: '目录',
-        mcpServerId: 'Server ID',
-        mcpServerIdHint: '输入 server id 以执行测试或读取目录。',
-        mcpValidationPassed: '校验通过。',
-        mcpValidationFailed: '校验失败。',
-        mcpSaveDone: '保存成功。',
-        mcpLoadDone: '加载成功。',
-        mcpTestDone: '测试通过。',
-        mcpCatalogDone: '目录已加载。',
-        mcpWorkspaceRequired: '项目级作用域需要 workspaceDir。',
-        mcpErrors: '校验错误',
-        mcpCatalogTitle: '目录预览',
-      },
-      ja: {
-        mcpConfig: 'MCP 設定 (JSON)',
-        mcpConfigHint: 'JSON で MCP サーバーを管理します。機密値は ${input:...} または ${env:...} を使用してください。',
-        mcpScope: 'MCP スコープ',
-        mcpScopeUser: 'ユーザー',
-        mcpScopeProject: 'プロジェクト',
-        mcpLoad: '読み込み',
-        mcpValidate: '検証',
-        mcpSave: '保存',
-        mcpTest: 'テスト',
-        mcpCatalog: 'カタログ',
-        mcpServerId: 'Server ID',
-        mcpServerIdHint: 'テスト/カタログ取得に使う server id を入力します。',
-        mcpValidationPassed: '検証に成功しました。',
-        mcpValidationFailed: '検証に失敗しました。',
-        mcpSaveDone: '保存しました。',
-        mcpLoadDone: '読み込みました。',
-        mcpTestDone: 'テスト成功。',
-        mcpCatalogDone: 'カタログを取得しました。',
-        mcpWorkspaceRequired: 'project スコープでは workspaceDir が必要です。',
-        mcpErrors: '検証エラー',
-        mcpCatalogTitle: 'カタログプレビュー',
-      }
-    } as const
+    const dict = SETTINGS_DIALOG_DICTIONARIES[9] as any
     const lang = (settings?.language || 'en') as keyof typeof dict
     return dict[lang] || dict.en
   })()
@@ -5529,299 +4304,7 @@ function ChatSettings() {
   const [commandBlacklistInput, setCommandBlacklistInput] = useState('')
   const [commandWhitelistInput, setCommandWhitelistInput] = useState('')
   const t = (() => {
-    const dict = {
-      en: {
-        systemPrompts: 'System Prompts',
-        new: 'New',
-        delete: 'Delete',
-        clear: 'Clear',
-        selectedHint: 'The selected prompt is used as the base system message.',
-        chatParams: 'Chat Parameters',
-        temperature: 'Temperature',
-        temperatureHint: 'Controls randomness: Lower is more deterministic, higher is more creative.',
-        conservative: 'Conservative',
-        balanced: 'Balanced',
-        creative: 'Creative',
-        maxTokens: 'Max Tokens',
-        maxTokensHint: 'Maximum length limit for single response (1-8192)',
-        orchestrationForce: 'Force Worker Orchestration',
-        orchestrationForceHint: 'Always enable multi-worker planning/execution for each chat request (for debugging and parallel runs).',
-        commandBlacklist: 'Command Blacklist',
-        commandBlacklistHint: 'Input command entries (e.g. rm, curl). Under default permission, matched commands require manual approval.',
-        commandWhitelist: 'Command Whitelist',
-        commandWhitelistHint: 'Input command entries to bypass blacklist checks.',
-        addCommand: 'Add',
-        commandPlaceholder: 'Enter command',
-        tabCompletionModelTitle: 'Tab Completion Model',
-        tabCompletionProvider: 'Provider',
-        tabCompletionModel: 'Model',
-        tabCompletionFollowChat: 'Follow current chat model',
-        tabCompletionProviderDefault: 'Use provider default model',
-        tabCompletionProviderHint: 'Choose a provider for Tab completion only.',
-        tabCompletionModelHint: 'Choose the model used by Tab completion.',
-        responseSettings: 'Response Settings',
-        collapseHistoricalProcess: 'Collapse historical process by default',
-        collapseHistoricalProcessHint: 'For all turns except the latest one, hide thinking/tool/skill process and keep final assistant reply only.',
-        streamingResponse: 'Enable Streaming Response',
-        streamingResponseHint: 'Show response in real-time as it generates.',
-        markdown: 'Enable Markdown Rendering',
-        markdownHint: 'Automatically render Markdown content in responses.',
-        singleDollarMath: 'Render Single Dollar Math',
-        singleDollarMathHint: 'Enable inline math rendering with single dollar signs (e.g. $x = y$). Default off to avoid conflicts.',
-        infoCard: 'Enable Info Card Visualization',
-        infoCardHint: 'Injects info card prompt into system prompt to guide AI in generating visual content.',
-        autoCompression: 'Auto Compression',
-        enableAutoCompression: 'Enable Auto Compression',
-        compressionDesc: 'Automatically compress history when context limit is reached. Allows infinite conversation without manual intervention.',
-        compressionThreshold: 'Compression Threshold',
-        early: 'Early',
-        late: 'Late',
-        compressionThresholdHint: 'Triggers compression when context usage exceeds this percentage.',
-        keepRecentMessages: 'Keep Recent Messages',
-        keepRecentMessagesHint: 'Number of recent messages to keep uncompressed (2-20).',
-        name: 'Name',
-        mediaSettings: 'Media Generation',
-        imageGenEnabled: 'Enable Image Generation',
-        imageGenProvider: 'Image Provider',
-        videoGenEnabled: 'Enable Video Generation',
-        videoGenProvider: 'Video Provider',
-        defaultImageModel: 'Default Image Model',
-        defaultImageSize: 'Default Image Size',
-        defaultVideoModel: 'Default Video Model',
-        useChatProvider: 'Use Chat Provider',
-        artifactsCleanup: 'Artifacts Cleanup',
-        cleanupArtifacts: 'Clean Up Artifacts',
-        cleanupArtifactsHint: 'Deletes old artifacts under workspace/.anima/artifacts.',
-        cleanupDone: 'Cleanup done.',
-        cleanupFailed: 'Cleanup failed.',
-        acpSettings: 'ACP Agents',
-        acpEnable: 'Enable ACP Agents',
-        acpEnableHint: 'Run external ACP coding agents (e.g. Qwen Code, codex-acp) instead of the built-in provider runtime.',
-        acpApprovalMode: 'Approval mode',
-        acpApprovalPerAction: 'Ask every time',
-        acpApprovalPerProject: 'Remember per project',
-        acpApprovalAlways: 'Always allow',
-        acpDefaultAgent: 'Default agent',
-        acpAgents: 'Agents',
-        acpAgentId: 'ID',
-        acpAgentName: 'Name',
-        acpAgentKind: 'Kind',
-        acpCommand: 'Command',
-        acpArgs: 'Args',
-        acpEnv: 'Env (KEY=VALUE)',
-        acpFraming: 'Framing',
-        acpFramingAuto: 'Auto',
-        acpFramingJsonl: 'JSONL (newline)',
-        acpFramingContentLength: 'Content-Length',
-        acpAddAgent: 'Add agent',
-        acpDeleteAgent: 'Delete',
-        acpAddFromTemplate: 'Add from template',
-        acpTemplateQwen: 'Qwen Code (ACP)',
-        acpTemplateCodexAcp: 'Codex (codex-acp)',
-        acpTemplateCodexNpx: 'Codex (npx @zed-industries/codex-acp)',
-        acpTestAgent: 'Test',
-        acpTestOk: 'OK',
-        acpTestFailed: 'Failed',
-        acpResetApprovals: 'Reset approvals',
-        acpResetApprovalsHint: 'Clears remembered approvals for ACP actions.',
-        acpResetApprovalsDone: 'Approvals reset.',
-        acpResetApprovalsFailed: 'Reset failed.'
-      },
-      zh: {
-        systemPrompts: '系统提示词',
-        new: '新建',
-        delete: '删除',
-        clear: '清空',
-        selectedHint: '当前选中的提示词会作为 system message 的基础内容。',
-        chatParams: '聊天参数',
-        temperature: '温度',
-        temperatureHint: '控制回复的随机性。较低的值产生一致的回复，较高的值产生更有创意的回复。',
-        conservative: '保守',
-        balanced: '平衡',
-        creative: '创意',
-        maxTokens: '最大令牌数',
-        maxTokensHint: '单次回复的最大长度限制 (1-8192)',
-        orchestrationForce: '强制多代理编排',
-        orchestrationForceHint: '为每次聊天请求都启用 worker 规划/执行（用于调试与并行任务验证）。',
-        commandBlacklist: '命令黑名单',
-        commandBlacklistHint: '输入命令词条（例如 rm、curl）。默认权限下命中会触发人工确认。',
-        commandWhitelist: '命令白名单',
-        commandWhitelistHint: '输入命令词条，可绕过黑名单检查。',
-        addCommand: '添加',
-        commandPlaceholder: '请输入命令',
-        tabCompletionModelTitle: 'Tab 补全模型',
-        tabCompletionProvider: 'Provider',
-        tabCompletionModel: '模型',
-        tabCompletionFollowChat: '跟随当前聊天模型',
-        tabCompletionProviderDefault: '使用 Provider 默认模型',
-        tabCompletionProviderHint: '仅用于 Tab 补全，不影响常规聊天模型。',
-        tabCompletionModelHint: '选择 Tab 补全时使用的模型。',
-        responseSettings: '响应设置',
-        collapseHistoricalProcess: '默认折叠历史过程',
-        collapseHistoricalProcessHint: '除最后一条消息外，默认折叠思考/工具/skill过程，仅保留最终 AI 回复内容。',
-        streamingResponse: '启用流式响应',
-        streamingResponseHint: '启用后，AI 回复将实时显示，否则等待完整回复后一次性显示',
-        markdown: '启用 Markdown 渲染',
-        markdownHint: '自动渲染回复中的 Markdown 格式内容',
-        singleDollarMath: '渲染单美元符号数学公式',
-        singleDollarMathHint: '启用单美元符号内联数学公式渲染（例如 $x = y$）。默认关闭以避免与普通美元符号冲突。详见 https://github.com/vercel/streamdown/issues/108',
-        infoCard: '启用信息图可视化',
-        infoCardHint: '开启时会在 system prompt 中注入信息图相关提示，引导 AI 生成可视化内容。关闭仅移除该提示，不影响已有信息图块的渲染。',
-        autoCompression: '自动压缩',
-        enableAutoCompression: '启用自动压缩',
-        compressionDesc: '当对话接近模型上下文窗口限制时，自动压缩历史消息。这使得对话可以无限延续，无需手动干预。',
-        compressionThreshold: '压缩阈值',
-        early: '提前',
-        late: '延迟',
-        compressionThresholdHint: '当上下文使用率超过此百分比时触发压缩。较低的值提供更多缓冲空间，较高的值保留更多原始内容。',
-        keepRecentMessages: '保留最近消息数',
-        keepRecentMessagesHint: '始终保留的最近消息数量，这些消息不会被压缩到摘要中 (2-20)。',
-        name: '名称',
-        mediaSettings: '媒体生成',
-        imageGenEnabled: '启用生图',
-        imageGenProvider: '生图 Provider',
-        videoGenEnabled: '启用生视频',
-        videoGenProvider: '生视频 Provider',
-        defaultImageModel: '默认生图模型',
-        defaultImageSize: '默认图片尺寸',
-        defaultVideoModel: '默认生视频模型',
-        useChatProvider: '使用聊天 Provider',
-        artifactsCleanup: '产物清理',
-        cleanupArtifacts: '清理产物',
-        cleanupArtifactsHint: '清理 workspace/.anima/artifacts 下的旧产物。',
-        cleanupDone: '清理完成。',
-        cleanupFailed: '清理失败。',
-        acpSettings: 'ACP Agents',
-        acpEnable: '启用 ACP Agents',
-        acpEnableHint: '使用外部 ACP 编码代理（例如 Qwen Code、codex-acp）作为运行时，而不是内置 Provider 运行时。',
-        acpApprovalMode: '授权模式',
-        acpApprovalPerAction: '每次询问',
-        acpApprovalPerProject: '按项目记住',
-        acpApprovalAlways: '始终允许',
-        acpDefaultAgent: '默认 Agent',
-        acpAgents: 'Agents',
-        acpAgentId: 'ID',
-        acpAgentName: '名称',
-        acpAgentKind: '类型',
-        acpCommand: '命令',
-        acpArgs: '参数',
-        acpEnv: '环境变量（KEY=VALUE）',
-        acpFraming: '分帧',
-        acpFramingAuto: '自动',
-        acpFramingJsonl: 'JSONL（换行）',
-        acpFramingContentLength: 'Content-Length',
-        acpAddAgent: '添加 Agent',
-        acpDeleteAgent: '删除',
-        acpAddFromTemplate: '按模板添加',
-        acpTemplateQwen: 'Qwen Code（ACP）',
-        acpTemplateCodexAcp: 'Codex（codex-acp）',
-        acpTemplateCodexNpx: 'Codex（npx @zed-industries/codex-acp）',
-        acpTestAgent: '测试',
-        acpTestOk: '正常',
-        acpTestFailed: '失败',
-        acpResetApprovals: '重置授权',
-        acpResetApprovalsHint: '清空 ACP 动作的“记住授权”。',
-        acpResetApprovalsDone: '已重置授权。',
-        acpResetApprovalsFailed: '重置失败。'
-      },
-      ja: {
-        systemPrompts: 'システムプロンプト',
-        new: '新規',
-        delete: '削除',
-        clear: 'クリア',
-        selectedHint: '選択中のプロンプトが system message のベースになります。',
-        chatParams: 'チャットパラメータ',
-        temperature: '温度',
-        temperatureHint: '応答のランダム性を制御します。',
-        conservative: '保守的',
-        balanced: 'バランス',
-        creative: '創造的',
-        maxTokens: '最大トークン数',
-        maxTokensHint: '1回の応答の最大長制限 (1-8192)',
-        orchestrationForce: 'Worker 編成を強制',
-        orchestrationForceHint: '各チャット要求で常にマルチ worker の計画/実行を有効化します（デバッグ用）。',
-        commandBlacklist: 'コマンドブラックリスト',
-        commandBlacklistHint: 'コマンド項目（例: rm、curl）を入力します。既定権限では一致時に手動承認が必要です。',
-        commandWhitelist: 'コマンドホワイトリスト',
-        commandWhitelistHint: 'ブラックリスト判定を回避するコマンド項目を入力します。',
-        addCommand: '追加',
-        commandPlaceholder: 'コマンドを入力',
-        tabCompletionModelTitle: 'Tab 補完モデル',
-        tabCompletionProvider: 'Provider',
-        tabCompletionModel: 'モデル',
-        tabCompletionFollowChat: '現在のチャットモデルに従う',
-        tabCompletionProviderDefault: 'Provider の既定モデルを使用',
-        tabCompletionProviderHint: 'Tab 補完専用の Provider を選択します。',
-        tabCompletionModelHint: 'Tab 補完で使うモデルを選択します。',
-        responseSettings: '応答設定',
-        collapseHistoricalProcess: '履歴プロセスを既定で折りたたむ',
-        collapseHistoricalProcessHint: '最新メッセージ以外では、思考/ツール/スキル過程を折りたたみ、最終のAI応答のみ表示します。',
-        streamingResponse: 'ストリーミング応答を有効化',
-        streamingResponseHint: '応答を生成しながらリアルタイムで表示します。',
-        markdown: 'Markdown レンダリングを有効化',
-        markdownHint: '応答内の Markdown コンテンツを自動的にレンダリングします。',
-        mediaSettings: 'メディア生成',
-        imageGenEnabled: '画像生成を有効化',
-        imageGenProvider: '画像 Provider',
-        videoGenEnabled: '動画生成を有効化',
-        videoGenProvider: '動画 Provider',
-        defaultImageModel: '既定の画像モデル',
-        defaultImageSize: '既定の画像サイズ',
-        defaultVideoModel: '既定の動画モデル',
-        useChatProvider: 'チャット Provider を使用',
-        artifactsCleanup: '成果物のクリーンアップ',
-        cleanupArtifacts: '成果物を削除',
-        cleanupArtifactsHint: 'workspace/.anima/artifacts の古い成果物を削除します。',
-        cleanupDone: 'クリーンアップ完了。',
-        cleanupFailed: 'クリーンアップ失敗。',
-        acpSettings: 'ACP Agents',
-        acpEnable: 'ACP Agents を有効化',
-        acpEnableHint: '外部 ACP コーディングエージェント（例: Qwen Code、codex-acp）を実行します。',
-        acpApprovalMode: 'Approval mode',
-        acpApprovalPerAction: 'Ask every time',
-        acpApprovalPerProject: 'Remember per project',
-        acpApprovalAlways: 'Always allow',
-        acpDefaultAgent: 'Default agent',
-        acpAgents: 'Agents',
-        acpAgentId: 'ID',
-        acpAgentName: 'Name',
-        acpAgentKind: 'Kind',
-        acpCommand: 'Command',
-        acpArgs: 'Args',
-        acpEnv: 'Env (KEY=VALUE)',
-        acpAddAgent: 'Add agent',
-        acpDeleteAgent: 'Delete',
-        acpFraming: 'Framing',
-        acpFramingAuto: 'Auto',
-        acpFramingJsonl: 'JSONL (newline)',
-        acpFramingContentLength: 'Content-Length',
-        acpAddFromTemplate: 'Add from template',
-        acpTemplateQwen: 'Qwen Code (ACP)',
-        acpTemplateCodexAcp: 'Codex (codex-acp)',
-        acpTemplateCodexNpx: 'Codex (npx @zed-industries/codex-acp)',
-        acpTestAgent: 'Test',
-        acpTestOk: 'OK',
-        acpTestFailed: 'Failed',
-        acpResetApprovals: 'Reset approvals',
-        acpResetApprovalsHint: 'Clears remembered approvals for ACP actions.',
-        acpResetApprovalsDone: 'Approvals reset.',
-        acpResetApprovalsFailed: 'Reset failed.',
-        singleDollarMath: '単一ドル記号の数式をレンダリング',
-        singleDollarMathHint: '単一ドル記号によるインライン数式 ($x = y$など) を有効にします。',
-        infoCard: '情報カードの可視化を有効化',
-        infoCardHint: 'システムプロンプトに情報カードの指示を注入し、視覚的なコンテンツ生成を誘導します。',
-        autoCompression: '自動圧縮',
-        enableAutoCompression: '自動圧縮を有効化',
-        compressionDesc: 'コンテキスト制限に近づくと履歴を自動圧縮します。',
-        compressionThreshold: '圧縮しきい値',
-        early: '早め',
-        late: '遅め',
-        compressionThresholdHint: 'コンテキスト使用率がこの割合を超えると圧縮をトリガーします。',
-        keepRecentMessages: '直近メッセージ保持数',
-        keepRecentMessagesHint: '圧縮せずに保持する直近メッセージ数 (2-20)。',
-        name: '名前',
-      }
-    } as const
+    const dict = SETTINGS_DIALOG_DICTIONARIES[10] as any
     return dict[settings.language as keyof typeof dict] || dict.en
   })()
   const commandBlacklist = Array.isArray((settings as any).commandBlacklist) ? (settings as any).commandBlacklist.map((x: any) => String(x)) : []
@@ -6341,260 +4824,7 @@ function AutomationSettings() {
   })
 
   const t = (() => {
-    const dict = {
-      en: {
-        title: 'Automation',
-        desc: 'Create scheduled AI tasks around projects, prompts, and models.',
-        serviceTitle: 'Cron Service',
-        serviceDesc: 'This service drives all local scheduled jobs.',
-        serviceCompactHint: 'Disable to stop all local automation. Default check interval: 500ms.',
-        cronEnable: 'Enable Cron Service',
-        cronEnableHint: 'When disabled, local scheduled jobs will not run.',
-        pollInterval: 'Check Interval (ms)',
-        pollIntervalHint: 'How often Cron checks whether any task is due. Default 500ms.',
-        allowAgentManage: 'Allow Agent Manage Cron',
-        allowAgentManageHint: 'Enables cron_list / cron_upsert / cron_delete / cron_run tools for agents.',
-        jobsTitle: 'Scheduled Jobs',
-        refresh: 'Refresh',
-        newJob: 'New Job',
-        edit: 'Edit',
-        saveJob: 'Save Job',
-        deleteJob: 'Delete Job',
-        deleteShort: 'Delete',
-        runNow: 'Run Now',
-        empty: 'No scheduled jobs yet.',
-        jobName: 'Job Name',
-        enabled: 'Enabled',
-        disabled: 'Disabled',
-        close: 'Close',
-        scheduleKind: 'Schedule Type',
-        scheduleAt: 'At',
-        scheduleEvery: 'Every',
-        scheduleCron: 'Cron',
-        atTime: 'Run At',
-        everyMs: 'Every (ms)',
-        cronExpr: 'Cron Expression',
-        cronTz: 'Cron Timezone',
-        payloadKind: 'Payload Type',
-        payloadRun: 'Run Task',
-        payloadTelegram: 'Telegram Message',
-        threadMode: 'Conversation Mode',
-        threadModeFixed: 'Fixed thread',
-        threadModeNewChat: 'New chat every run',
-        project: 'Project',
-        noProject: 'No project',
-        provider: 'Provider',
-        model: 'Model',
-        followDefault: 'Follow default',
-        prompt: 'Prompt',
-        telegramChatId: 'Telegram Chat ID',
-        telegramText: 'Telegram Text',
-        ifNonEmpty: 'Only send when non-empty',
-        deliveryTitle: 'Run Result Delivery',
-        deliveryKind: 'Delivery Type',
-        deliveryNone: 'None',
-        deliveryTelegram: 'Telegram',
-        saved: 'Saved.',
-        deleted: 'Deleted.',
-        triggered: 'Triggered.',
-        failedLoad: 'Failed to load jobs.',
-        failedSave: 'Failed to save job.',
-        failedDelete: 'Failed to delete job.',
-        failedRun: 'Failed to run job.',
-        nextRun: 'Next Run',
-        lastStatus: 'Last Status',
-        historyTitle: 'Execution History',
-        historyEmpty: 'No execution records yet.',
-        historyStarted: 'Started',
-        historyDuration: 'Duration',
-        historyOutput: 'Output',
-        historyError: 'Error',
-        openThread: 'Open thread',
-        listTitle: 'Tasks',
-        listHint: 'Review status, next run, and schedule at a glance. Click a task to edit it.',
-        editorEmpty: 'Select a task on the left to edit it.',
-        sectionTask: '1. Task',
-        sectionContext: '2. Context',
-        sectionSchedule: '3. Schedule',
-        sectionDelivery: '4. Delivery',
-        sectionHistory: '5. Recent runs',
-        promptHint: 'Describe the outcome you want the model to produce each time this task runs.',
-        projectHint: 'Bind the task to a project so the run can reuse its workspace and conversations.',
-        threadModeHint: 'Fixed thread keeps context across runs. New chat creates a fresh conversation each time.',
-        scheduleHint: 'Choose when this task should run.',
-        telegramHint: 'Send the result summary to Telegram after the run completes.',
-        taskTypeHint: 'Run task is the main flow. Telegram message is kept for simple message-only jobs.',
-        lastRunEmpty: 'Never run'
-      },
-      zh: {
-        title: '自动化',
-        desc: '围绕项目、提示词和模型创建定时 AI 任务。',
-        serviceTitle: 'Cron 服务',
-        serviceDesc: '这个服务负责驱动所有本地定时任务。',
-        serviceCompactHint: '关闭后将停止所有本地自动执行。默认检查间隔为 500 毫秒。',
-        cronEnable: '启用 Cron 服务',
-        cronEnableHint: '关闭后，本地定时任务不会自动执行。',
-        pollInterval: '检查间隔（毫秒）',
-        pollIntervalHint: 'Cron 服务每隔多久检查一次是否有到期任务。默认 500 毫秒。',
-        allowAgentManage: '允许 Agent 管理 Cron',
-        allowAgentManageHint: '开启后，Agent 可使用 cron_list / cron_upsert / cron_delete / cron_run 工具。',
-        jobsTitle: '定时任务',
-        refresh: '刷新',
-        newJob: '新建任务',
-        edit: '编辑',
-        saveJob: '保存任务',
-        deleteJob: '删除任务',
-        deleteShort: '删除',
-        runNow: '立即执行',
-        empty: '暂无定时任务。',
-        jobName: '任务名称',
-        enabled: '启用',
-        disabled: '停用',
-        close: '关闭',
-        scheduleKind: '调度类型',
-        scheduleAt: '单次',
-        scheduleEvery: '间隔',
-        scheduleCron: 'Cron',
-        atTime: '执行时间',
-        everyMs: '间隔（毫秒）',
-        cronExpr: 'Cron 表达式',
-        cronTz: 'Cron 时区',
-        payloadKind: '任务类型',
-        payloadRun: '运行任务',
-        payloadTelegram: '发送 Telegram 消息',
-        threadMode: '对话模式',
-        threadModeFixed: '固定线程',
-        threadModeNewChat: '每次新建对话',
-        project: '项目',
-        noProject: '不绑定项目',
-        provider: 'Provider',
-        model: '模型',
-        followDefault: '跟随默认',
-        prompt: '提示词',
-        telegramChatId: 'Telegram Chat ID',
-        telegramText: 'Telegram 文本',
-        ifNonEmpty: '仅在内容非空时发送',
-        deliveryTitle: '运行结果投递',
-        deliveryKind: '投递方式',
-        deliveryNone: '不投递',
-        deliveryTelegram: 'Telegram',
-        saved: '已保存。',
-        deleted: '已删除。',
-        triggered: '已触发执行。',
-        failedLoad: '加载任务失败。',
-        failedSave: '保存任务失败。',
-        failedDelete: '删除任务失败。',
-        failedRun: '执行任务失败。',
-        nextRun: '下次执行',
-        lastStatus: '最近状态',
-        historyTitle: '执行记录',
-        historyEmpty: '暂无执行记录。',
-        historyStarted: '开始时间',
-        historyDuration: '耗时',
-        historyOutput: '输出摘要',
-        historyError: '错误',
-        openThread: '打开对话',
-        listTitle: '任务列表',
-        listHint: '这里展示最近状态、下次执行和调度摘要。点击任务后再编辑。',
-        editorEmpty: '先在左侧选择一个任务。',
-        sectionTask: '1. 任务内容',
-        sectionContext: '2. 执行上下文',
-        sectionSchedule: '3. 调度',
-        sectionDelivery: '4. 结果处理',
-        sectionHistory: '5. 最近执行',
-        promptHint: '写清楚每次定时执行时，希望模型完成什么结果。',
-        projectHint: '绑定项目后，任务会复用该项目的工作区和对话。',
-        threadModeHint: '固定线程会延续上下文；每次新建对话会为每次执行创建新会话。',
-        scheduleHint: '设置这个任务何时自动运行。',
-        telegramHint: '任务完成后，把结果摘要投递到 Telegram。',
-        taskTypeHint: '运行任务是主流程；发送 Telegram 消息保留给简单的消息类任务。',
-        lastRunEmpty: '尚未执行'
-      },
-      ja: {
-        title: '自動化',
-        desc: 'プロジェクト・プロンプト・モデルを軸に定期 AI タスクを管理します。',
-        serviceTitle: 'Cron サービス',
-        serviceDesc: 'このサービスがローカル定期ジョブを動かします。',
-        serviceCompactHint: '無効化するとローカル自動実行を停止します。既定の確認間隔は 500ms です。',
-        cronEnable: 'Cron サービスを有効化',
-        cronEnableHint: '無効時はローカル定期ジョブが実行されません。',
-        pollInterval: '確認間隔（ms）',
-        pollIntervalHint: 'Cron が実行時刻に達したタスクを確認する間隔です。既定値は 500ms です。',
-        allowAgentManage: 'Agent に Cron 管理を許可',
-        allowAgentManageHint: '有効時、Agent が cron_list / cron_upsert / cron_delete / cron_run を使えます。',
-        jobsTitle: '定期ジョブ',
-        refresh: '更新',
-        newJob: '新規ジョブ',
-        edit: '編集',
-        saveJob: '保存',
-        deleteJob: '削除',
-        deleteShort: '削除',
-        runNow: '今すぐ実行',
-        empty: '定期ジョブはまだありません。',
-        jobName: 'ジョブ名',
-        enabled: '有効',
-        disabled: '無効',
-        close: '閉じる',
-        scheduleKind: 'スケジュール種別',
-        scheduleAt: '単発',
-        scheduleEvery: '間隔',
-        scheduleCron: 'Cron',
-        atTime: '実行時刻',
-        everyMs: '間隔（ms）',
-        cronExpr: 'Cron 式',
-        cronTz: 'Cron タイムゾーン',
-        payloadKind: '処理種別',
-        payloadRun: 'Run タスク',
-        payloadTelegram: 'Telegram メッセージ',
-        threadMode: '会話モード',
-        threadModeFixed: '固定スレッド',
-        threadModeNewChat: '毎回新しい会話',
-        project: 'プロジェクト',
-        noProject: 'プロジェクトなし',
-        provider: 'Provider',
-        model: 'モデル',
-        followDefault: '既定に従う',
-        prompt: 'プロンプト',
-        telegramChatId: 'Telegram Chat ID',
-        telegramText: 'Telegram テキスト',
-        ifNonEmpty: '非空時のみ送信',
-        deliveryTitle: '実行結果の配送',
-        deliveryKind: '配送方式',
-        deliveryNone: 'なし',
-        deliveryTelegram: 'Telegram',
-        saved: '保存しました。',
-        deleted: '削除しました。',
-        triggered: '実行を開始しました。',
-        failedLoad: 'ジョブの読み込みに失敗しました。',
-        failedSave: 'ジョブの保存に失敗しました。',
-        failedDelete: 'ジョブの削除に失敗しました。',
-        failedRun: 'ジョブの実行に失敗しました。',
-        nextRun: '次回実行',
-        lastStatus: '前回状態',
-        historyTitle: '実行履歴',
-        historyEmpty: '実行履歴はまだありません。',
-        historyStarted: '開始時刻',
-        historyDuration: '所要時間',
-        historyOutput: '出力概要',
-        historyError: 'エラー',
-        openThread: 'スレッドを開く',
-        listTitle: 'タスク一覧',
-        listHint: '状態・次回実行・スケジュール概要を確認できます。クリックすると編集します。',
-        editorEmpty: '左側でタスクを選択してください。',
-        sectionTask: '1. タスク内容',
-        sectionContext: '2. 実行コンテキスト',
-        sectionSchedule: '3. スケジュール',
-        sectionDelivery: '4. 配送',
-        sectionHistory: '5. 最近の実行',
-        promptHint: '毎回の実行でモデルに達成してほしい結果を記述します。',
-        projectHint: 'プロジェクトに紐付けると、ワークスペースと会話を再利用します。',
-        threadModeHint: '固定スレッドは文脈を維持し、毎回新しい会話は毎回新規スレッドを作成します。',
-        scheduleHint: 'このタスクをいつ実行するか設定します。',
-        telegramHint: '実行完了後に結果概要を Telegram に送ります。',
-        taskTypeHint: 'Run タスクが主な用途です。Telegram メッセージは単純な通知向けです。',
-        lastRunEmpty: '未実行'
-      }
-    } as const
+    const dict = SETTINGS_DIALOG_DICTIONARIES[11] as any
     return dict[settings.language as keyof typeof dict] || dict.en
   })()
 
@@ -7477,71 +5707,7 @@ function ImSettings() {
   const providers = useStore((s) => s.providers)
 
   const t = (() => {
-    const dict = {
-      en: {
-        provider: 'IM Provider',
-        telegram: 'Telegram',
-        enableTelegram: 'Enable Telegram',
-        botToken: 'Bot Token',
-        botTokenHint: 'Telegram Bot token, e.g. 123:ABC...',
-        allowedUserIds: 'Allowed User IDs',
-        allowedUserIdsHint: 'Comma or newline separated. At least one is required.',
-        allowGroups: 'Allow Groups',
-        allowGroupsHint: 'Default off for safety.',
-        pollingIntervalMs: 'Polling Interval (ms)',
-        pollingIntervalHint: 'Lower is more responsive but uses more requests.',
-        telegramProject: 'Project',
-        telegramProjectHint: 'Bind Telegram to a project workspace directory.',
-        telegramProjectAll: 'All projects (no project binding)',
-        chatProvider: 'Chat Provider',
-        chatProviderHint: 'Optional. Use a specific provider/model for Telegram.',
-        chatModel: 'Chat Model',
-        chatModelHint: 'Optional. Overrides the provider default model.',
-        followDefault: 'Follow desktop default'
-      },
-      zh: {
-        provider: 'IM 服务商',
-        telegram: 'Telegram',
-        enableTelegram: '启用 Telegram',
-        botToken: 'Bot Token',
-        botTokenHint: 'Telegram 机器人 Token，例如 123:ABC...',
-        allowedUserIds: '允许的用户 ID',
-        allowedUserIdsHint: '用逗号或换行分隔，至少填写 1 个。',
-        allowGroups: '允许群聊',
-        allowGroupsHint: '默认关闭以保证安全。',
-        pollingIntervalMs: '轮询间隔（毫秒）',
-        pollingIntervalHint: '越小越及时，但请求次数更多。',
-        telegramProject: '项目',
-        telegramProjectHint: '为 Telegram 绑定一个项目的工作目录。',
-        telegramProjectAll: '所有项目（不绑定项目）',
-        chatProvider: '聊天提供商',
-        chatProviderHint: '可选。为 Telegram 单独指定 provider / model。',
-        chatModel: '聊天模型',
-        chatModelHint: '可选。覆盖 provider 的默认模型。',
-        followDefault: '跟随桌面默认'
-      },
-      ja: {
-        provider: 'IM プロバイダー',
-        telegram: 'Telegram',
-        enableTelegram: 'Telegram を有効化',
-        botToken: 'Bot Token',
-        botTokenHint: 'Telegram Bot token（例: 123:ABC...）',
-        allowedUserIds: '許可ユーザーID',
-        allowedUserIdsHint: 'カンマ/改行区切り。最低1つ必要です。',
-        allowGroups: 'グループを許可',
-        allowGroupsHint: '安全のため既定はオフ。',
-        pollingIntervalMs: 'ポーリング間隔（ms）',
-        pollingIntervalHint: '小さいほど応答が速いが、リクエストが増えます。',
-        telegramProject: 'プロジェクト',
-        telegramProjectHint: 'Telegram 用のプロジェクト作業ディレクトリを設定します。',
-        telegramProjectAll: '全プロジェクト（プロジェクト未バインド）',
-        chatProvider: 'チャットプロバイダー',
-        chatProviderHint: '任意。Telegram 用に provider/model を指定できます。',
-        chatModel: 'チャットモデル',
-        chatModelHint: '任意。プロバイダー既定モデルを上書きします。',
-        followDefault: 'デスクトップ既定に従う'
-      }
-    } as const
+    const dict = SETTINGS_DIALOG_DICTIONARIES[12] as any
     return dict[settings.language as keyof typeof dict] || dict.en
   })()
 
@@ -7764,41 +5930,7 @@ function SkillsSettings() {
   const [status, setStatus] = useState<{ type: 'idle' | 'loading' | 'ok' | 'error'; text?: string }>({ type: 'idle' })
 
   const t = (() => {
-    const dict = {
-      en: {
-        notFound: 'No skills found',
-        found: (n: number) => `${n} skills`,
-        refresh: 'Refresh',
-        openFolder: 'Open folder',
-        emptyTitle: 'No skills installed',
-        emptyHint: (p: string) => `Place folders containing SKILL.md into ${p} to add skills.`,
-        enabled: 'Enabled',
-        disabled: 'Disabled',
-        followChatDefaults: 'Follows Chat → Default skill selection.'
-      },
-      zh: {
-        notFound: '未找到技能',
-        found: (n: number) => `已找到 ${n} 个技能`,
-        refresh: '刷新',
-        openFolder: '打开文件夹',
-        emptyTitle: '尚未安装技能',
-        emptyHint: (p: string) => `将包含 SKILL.md 的文件夹放入 ${p} 来添加技能`,
-        enabled: '已启用',
-        disabled: '未启用',
-        followChatDefaults: '遵循「聊天 → 默认技能选择」。'
-      },
-      ja: {
-        notFound: 'スキルが見つかりません',
-        found: (n: number) => `${n} 件`,
-        refresh: '更新',
-        openFolder: 'フォルダーを開く',
-        emptyTitle: 'スキル未インストール',
-        emptyHint: (p: string) => `SKILL.md を含むフォルダーを ${p} に置いて追加します。`,
-        enabled: '有効',
-        disabled: '無効',
-        followChatDefaults: 'チャット → 既定スキル選択に従います。'
-      }
-    } as const
+    const dict = SETTINGS_DIALOG_DICTIONARIES[13] as any
     return dict[settings.language as keyof typeof dict] || dict.en
   })()
 
@@ -7966,101 +6098,7 @@ function KnowledgeBaseSettings() {
   const kbImportPollRef = useRef<number | null>(null)
 
   const t = (() => {
-    const dict = {
-      en: {
-        feature: 'Knowledge Base (Markdown RAG)',
-        featureDesc: 'Import markdown files and inject retrieved chunks into chat context.',
-        enabled: 'Enable knowledge base retrieval',
-        autoQuery: 'Auto query on each user message',
-        hybrid: 'Hybrid retrieval (vector + keyword)',
-        maxRetrieve: 'Max retrieved chunks',
-        similarity: 'Similarity threshold',
-        chunkSize: 'Chunk size',
-        chunkOverlap: 'Chunk overlap',
-        import: 'Import Markdown',
-        refresh: 'Refresh',
-        empty: 'No markdown documents imported.',
-        docCount: 'Documents',
-        chunkCount: 'Chunks',
-        failedLoad: 'Failed to load knowledge base',
-        failedImport: 'Failed to import markdown files',
-        failedDelete: 'Failed to delete markdown file',
-        workspaceRequiredToManage: 'Please select a workspace before managing knowledge base.',
-        loading: 'Loading…',
-        noMarkdownPicked: 'No markdown files selected.',
-        importSummary: (i: number, s: number, f: number) => `Import finished: imported ${i}, skipped ${s}, failed ${f}`,
-        importing: 'Importing markdown files...',
-        testTitle: 'Retrieval test',
-        testPlaceholder: 'Input a query to test retrieval...',
-        testAction: 'Run retrieval',
-        testEmpty: 'No retrieval result.',
-        failedTest: 'Failed to run retrieval test',
-        testScoreLabel: 'Score',
-        testSimilarityLabel: 'Similarity'
-      },
-      zh: {
-        feature: '知识库（Markdown RAG）',
-        featureDesc: '导入 Markdown 文件，检索后自动注入到对话上下文。',
-        enabled: '启用知识库检索',
-        autoQuery: '每次提问自动检索',
-        hybrid: '混合检索（向量 + 关键词）',
-        maxRetrieve: '最大检索分块数',
-        similarity: '相似度阈值',
-        chunkSize: '分块大小',
-        chunkOverlap: '分块重叠',
-        import: '导入 Markdown',
-        refresh: '刷新',
-        empty: '暂无已导入的 Markdown 文档。',
-        docCount: '文档数',
-        chunkCount: '分块数',
-        failedLoad: '加载知识库失败',
-        failedImport: '导入 Markdown 失败',
-        failedDelete: '删除 Markdown 失败',
-        workspaceRequiredToManage: '请先选择工作区后再管理知识库。',
-        loading: '加载中…',
-        noMarkdownPicked: '未选择 Markdown 文件。',
-        importSummary: (i: number, s: number, f: number) => `导入完成：成功 ${i}，跳过 ${s}，失败 ${f}`,
-        importing: '正在导入 Markdown 文件...',
-        testTitle: '检索测试',
-        testPlaceholder: '输入问题后测试检索结果...',
-        testAction: '测试检索',
-        testEmpty: '没有检索结果。',
-        failedTest: '检索测试失败',
-        testScoreLabel: '综合分',
-        testSimilarityLabel: '相似度'
-      },
-      ja: {
-        feature: 'ナレッジベース（Markdown RAG）',
-        featureDesc: 'Markdown を取り込み、検索結果を会話コンテキストへ注入します。',
-        enabled: 'ナレッジベース検索を有効化',
-        autoQuery: '各ユーザーメッセージで自動検索',
-        hybrid: 'ハイブリッド検索（ベクトル + キーワード）',
-        maxRetrieve: '最大取得チャンク数',
-        similarity: '類似度しきい値',
-        chunkSize: 'チャンクサイズ',
-        chunkOverlap: 'チャンクオーバーラップ',
-        import: 'Markdown を取り込む',
-        refresh: '再読み込み',
-        empty: '取り込み済み Markdown はありません。',
-        docCount: 'ドキュメント数',
-        chunkCount: 'チャンク数',
-        failedLoad: 'ナレッジベースの読み込みに失敗しました',
-        failedImport: 'Markdown の取り込みに失敗しました',
-        failedDelete: 'Markdown の削除に失敗しました',
-        workspaceRequiredToManage: 'ナレッジベース管理の前にワークスペースを選択してください。',
-        loading: '読み込み中…',
-        noMarkdownPicked: 'Markdown ファイルが選択されていません。',
-        importSummary: (i: number, s: number, f: number) => `取り込み完了: 成功 ${i} / スキップ ${s} / 失敗 ${f}`,
-        importing: 'Markdown を取り込み中...',
-        testTitle: '検索テスト',
-        testPlaceholder: 'クエリを入力して検索結果を確認...',
-        testAction: '検索をテスト',
-        testEmpty: '検索結果がありません。',
-        failedTest: '検索テストに失敗しました',
-        testScoreLabel: 'スコア',
-        testSimilarityLabel: '類似度'
-      }
-    } as const
+    const dict = SETTINGS_DIALOG_DICTIONARIES[14] as any
     return dict[settings.language as keyof typeof dict] || dict.en
   })()
 
@@ -8452,203 +6490,7 @@ function MemorySettings() {
   const embeddingPollTimersRef = useRef<Record<string, number>>({})
 
   const t = (() => {
-    const dict = {
-      en: {
-        feature: 'Memory',
-        featureDesc: 'Store persistent facts and preferences for future chats.',
-        enableMemory: 'Enable memory',
-        retrieval: 'Memory retrieval',
-        enableRetrieval: 'Enable retrieval',
-        maxRetrieve: 'Max retrieved memories',
-        similarity: 'Similarity threshold',
-        summary: 'Memory summary',
-        enableSummary: 'Auto summarize',
-        toolModel: 'Memory tool model',
-        toolModelHint: 'Used for memory-related tasks such as summarization.',
-        followChatModel: 'Follow chat model',
-        embedding: 'Embedding model',
-        embeddingHint: 'Used to convert text to vectors for retrieval.',
-        embeddingSource: 'Embedding source',
-        embeddingProvider: 'Provider model',
-        embeddingLocal: 'Local model',
-        embeddingDownload: 'Download',
-        embeddingCancel: 'Cancel',
-        embeddingInstalled: 'Installed',
-        embeddingDownloading: 'Downloading',
-        embeddingDownloadError: 'Download failed',
-        globalMemory: 'Global memory',
-        enableGlobalMemory: 'Enable global memory',
-        enableGlobalWrite: 'Allow global writes',
-        globalTopK: 'Global retrieve count',
-        writePolicy: 'Write policy',
-        autoScope: 'Auto scope decision',
-        defaultScope: 'Default write scope',
-        addScope: 'Add scope',
-        scopeAuto: 'Auto',
-        scopeWorkspace: 'Workspace',
-        scopeGlobal: 'Global',
-        scopeAll: 'All',
-        listScopeFilter: 'Scope filter',
-        stats: 'Stats',
-        total: 'Total',
-        enabled: 'Enabled',
-        disabled: 'Disabled',
-        addMemory: 'Add memory',
-        add: 'Add',
-        addPlaceholder: 'Add a memory item…',
-        searchMemory: 'Search memory',
-        searchPlaceholder: 'Search memories…',
-        testTitle: 'Retrieval test',
-        testPlaceholder: 'Input a query to test retrieval...',
-        testAction: 'Run retrieval',
-        testEmpty: 'No retrieval result.',
-        memoryList: 'Memory list',
-        clearAll: 'Clear all',
-        empty: 'No memories yet.',
-        scopeAutoNoWorkspace: 'No workspace and global memory is disabled. Cannot auto decide memory scope.',
-        workspaceRequired: 'No workspace selected. Cannot manage workspace memories.',
-        workspaceRequiredToManage: 'Please select a workspace before managing memories.',
-        loading: 'Loading…',
-        failedLoad: 'Failed to load memories',
-        failedAdd: 'Failed to add memory',
-        failedUpdate: 'Failed to update memory',
-        failedDelete: 'Failed to delete memory',
-        failedClear: 'Failed to clear memories',
-        failedTest: 'Failed to run retrieval test',
-        testScoreLabel: 'Score',
-        testSimilarityLabel: 'Similarity'
-      },
-      zh: {
-        feature: '记忆功能',
-        featureDesc: '保存长期偏好与事实，用于后续对话。',
-        enableMemory: '启用记忆',
-        retrieval: '记忆检索',
-        enableRetrieval: '启用检索',
-        maxRetrieve: '最大检索记忆',
-        similarity: '相似度阈值',
-        summary: '记忆总结',
-        enableSummary: '自动总结',
-        toolModel: '记忆工具模型',
-        toolModelHint: '用于总结等记忆相关任务。',
-        followChatModel: '跟随聊天模型',
-        embedding: '嵌入模型',
-        embeddingHint: '用于将文本转换为向量，以支持检索。',
-        embeddingSource: '嵌入来源',
-        embeddingProvider: '服务商模型',
-        embeddingLocal: '本地模型',
-        embeddingDownload: '下载',
-        embeddingCancel: '取消',
-        embeddingInstalled: '已安装',
-        embeddingDownloading: '下载中',
-        embeddingDownloadError: '下载失败',
-        globalMemory: '全局记忆',
-        enableGlobalMemory: '启用全局记忆',
-        enableGlobalWrite: '允许写入全局记忆',
-        globalTopK: '全局检索数量',
-        writePolicy: '写入策略',
-        autoScope: '自动判定写入范围',
-        defaultScope: '默认写入范围',
-        addScope: '写入范围',
-        scopeAuto: '自动',
-        scopeWorkspace: '工作区',
-        scopeGlobal: '全局',
-        scopeAll: '全部',
-        listScopeFilter: '范围筛选',
-        stats: '统计',
-        total: '记忆数量',
-        enabled: '启用数量',
-        disabled: '停用数量',
-        addMemory: '添加记忆',
-        add: '添加',
-        addPlaceholder: '写下你想长期记住的内容…',
-        searchMemory: '搜索记忆',
-        searchPlaceholder: '输入关键词搜索…',
-        testTitle: '检索测试',
-        testPlaceholder: '输入问题后测试检索结果...',
-        testAction: '测试检索',
-        testEmpty: '没有检索结果。',
-        memoryList: '记忆列表',
-        clearAll: '全部清空',
-        empty: '暂无记忆内容。',
-        scopeAutoNoWorkspace: '未选择工作区且未启用全局记忆，无法自动判定写入范围。',
-        workspaceRequired: '未选择工作区，无法管理工作区记忆。',
-        workspaceRequiredToManage: '请先选择工作区后再管理记忆。',
-        loading: '加载中…',
-        failedLoad: '加载记忆失败',
-        failedAdd: '添加记忆失败',
-        failedUpdate: '更新记忆失败',
-        failedDelete: '删除记忆失败',
-        failedClear: '清空记忆失败',
-        failedTest: '检索测试失败',
-        testScoreLabel: '综合分',
-        testSimilarityLabel: '相似度'
-      },
-      ja: {
-        feature: 'メモリー',
-        featureDesc: '今後のチャットのために事実や好みを保存します。',
-        enableMemory: '有効化',
-        retrieval: 'メモリー検索',
-        enableRetrieval: '検索を有効化',
-        maxRetrieve: '最大取得数',
-        similarity: '類似度しきい値',
-        summary: 'メモリー要約',
-        enableSummary: '自動要約',
-        toolModel: 'メモリーツールモデル',
-        toolModelHint: '要約などメモリー関連タスクに使用します。',
-        followChatModel: 'チャットモデルに従う',
-        embedding: '埋め込みモデル',
-        embeddingHint: '検索のためにテキストをベクトル化します。',
-        embeddingSource: '埋め込みソース',
-        embeddingProvider: 'プロバイダーモデル',
-        embeddingLocal: 'ローカルモデル',
-        embeddingDownload: 'ダウンロード',
-        embeddingCancel: 'キャンセル',
-        embeddingInstalled: 'インストール済み',
-        embeddingDownloading: 'ダウンロード中',
-        embeddingDownloadError: 'ダウンロード失敗',
-        globalMemory: 'グローバルメモリー',
-        enableGlobalMemory: 'グローバルメモリーを有効化',
-        enableGlobalWrite: 'グローバル書き込みを許可',
-        globalTopK: 'グローバル取得数',
-        writePolicy: '書き込みポリシー',
-        autoScope: '自動スコープ判定',
-        defaultScope: 'デフォルト書き込みスコープ',
-        addScope: '追加スコープ',
-        scopeAuto: '自動',
-        scopeWorkspace: 'ワークスペース',
-        scopeGlobal: 'グローバル',
-        scopeAll: 'すべて',
-        listScopeFilter: 'スコープ絞り込み',
-        stats: '統計',
-        total: '合計',
-        enabled: '有効',
-        disabled: '無効',
-        addMemory: '追加',
-        add: '追加',
-        addPlaceholder: 'メモリーを追加…',
-        searchMemory: '検索',
-        searchPlaceholder: 'キーワードで検索…',
-        testTitle: '検索テスト',
-        testPlaceholder: 'クエリを入力して検索結果を確認...',
-        testAction: '検索をテスト',
-        testEmpty: '検索結果がありません。',
-        memoryList: '一覧',
-        clearAll: '全て削除',
-        empty: 'メモリーはまだありません。',
-        scopeAutoNoWorkspace: 'ワークスペース未選択かつグローバルメモリーが無効のため、自動スコープ判定できません。',
-        workspaceRequired: 'ワークスペース未選択のため、ワークスペースメモリーを管理できません。',
-        workspaceRequiredToManage: 'メモリー管理の前にワークスペースを選択してください。',
-        loading: '読み込み中…',
-        failedLoad: 'メモリーの読み込みに失敗しました',
-        failedAdd: 'メモリーの追加に失敗しました',
-        failedUpdate: 'メモリーの更新に失敗しました',
-        failedDelete: 'メモリーの削除に失敗しました',
-        failedClear: 'メモリーの全削除に失敗しました',
-        failedTest: '検索テストに失敗しました',
-        testScoreLabel: 'スコア',
-        testSimilarityLabel: '類似度'
-      }
-    } as const
+    const dict = SETTINGS_DIALOG_DICTIONARIES[15] as any
     return dict[settings.language as keyof typeof dict] || dict.en
   })()
 
@@ -9585,53 +7427,7 @@ function DataSettings() {
   }
 
   const t = (() => {
-    const dict = {
-      en: {
-        dbPath: 'Database',
-        dbPathHint: 'Current SQLite database path.',
-        export: 'Export',
-        exportHint: 'Exports settings, providers (without API keys), and chat history.',
-        exportJson: 'Export JSON',
-        import: 'Import',
-        importHint: 'Imports settings, providers, and chat history from a JSON file.',
-        importJson: 'Import JSON',
-        importOk: 'Import completed.',
-        importFailed: 'Import failed.',
-        danger: 'Danger Zone',
-        dangerHint: 'Clears chat history, memory, and deletes stored API keys.',
-        clearAll: 'Clear All Data'
-      },
-      zh: {
-        dbPath: '数据库',
-        dbPathHint: '当前 SQLite 数据库路径。',
-        export: '导出',
-        exportHint: '导出设置、提供商（不含 API Key）与聊天记录。',
-        exportJson: '导出 JSON',
-        import: '导入',
-        importHint: '从 JSON 导入设置、提供商与聊天记录。',
-        importJson: '导入 JSON',
-        importOk: '导入完成。',
-        importFailed: '导入失败。',
-        danger: '危险区域',
-        dangerHint: '清空聊天记录、记忆，并删除已保存的 API Key。',
-        clearAll: '清空所有数据'
-      },
-      ja: {
-        dbPath: 'データベース',
-        dbPathHint: '現在の SQLite データベースパス。',
-        export: 'エクスポート',
-        exportHint: '設定・プロバイダー（API Key除外）・履歴を出力します。',
-        exportJson: 'JSON出力',
-        import: 'インポート',
-        importHint: 'JSON から設定・プロバイダー・履歴を読み込みます。',
-        importJson: 'JSON読込',
-        importOk: 'インポート完了。',
-        importFailed: 'インポート失敗。',
-        danger: '危険',
-        dangerHint: '履歴・メモリー・保存済み API Key を削除します。',
-        clearAll: '全データ削除'
-      }
-    } as const
+    const dict = SETTINGS_DIALOG_DICTIONARIES[16] as any
     return dict[settings.language as keyof typeof dict] || dict.en
   })()
 

@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
 import { cn } from '@/lib/utils';
 import materialThemeRaw from 'material-icon-theme/dist/material-icons.json';
+import { i18nText, resolveAppLang } from '@/i18n'
 
 interface FileNode {
   name: string;
@@ -196,6 +197,7 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
   const activeProjectDir = activeProjectId
     ? String((projects.find((p) => String(p?.id || '').trim() === activeProjectId) as any)?.dir || '').trim()
     : ''
+  const lang = resolveAppLang(settings?.language)
   const [rootPath, setRootPath] = useState<string>('');
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
@@ -343,16 +345,16 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
         const res = await window.anima.fs.copyFilesToDir({ sourcePaths, targetDir: dir })
         if (res.ok) {
           if (Array.isArray(res.failed) && res.failed.length) {
-            alert(`部分文件复制失败：${res.failed.slice(0, 3).map((x: any) => String(x?.sourcePath || '')).join(', ')}`)
+            alert(i18nText(lang, 'fileExplorer.copyPartialFailed', { items: res.failed.slice(0, 3).map((x: any) => String(x?.sourcePath || '')).join(', ') }))
           }
           setRefreshKey((k) => k + 1)
         } else {
           console.error('copyFilesToDir failed', res.error)
-          alert(`拖拽复制失败：${String(res.error || 'unknown error')}`)
+          alert(i18nText(lang, 'fileExplorer.copyFailed', { error: String(res.error || 'unknown error') }))
         }
       } catch (e) {
         console.error('copyFilesToDir error', e)
-        alert(`拖拽复制失败：${String(e || 'unknown error')}`)
+        alert(i18nText(lang, 'fileExplorer.copyFailed', { error: String(e || 'unknown error') }))
       } finally {
         setUploadingDirPath('')
         setDragOverDirPath('')
@@ -372,14 +374,14 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
       const res = await window.anima.fs.writeFilesToDir({ files: payload, targetDir: dir })
       if (res.ok) {
         if (Array.isArray(res.failed) && res.failed.length) {
-          alert(`部分文件写入失败：${res.failed.slice(0, 3).map((x: any) => String(x?.name || '')).join(', ')}`)
+          alert(i18nText(lang, 'fileExplorer.writePartialFailed', { items: res.failed.slice(0, 3).map((x: any) => String(x?.name || '')).join(', ') }))
         }
         setRefreshKey((k) => k + 1)
       } else {
-        alert(`拖拽写入失败：${String(res.error || 'unknown error')}`)
+        alert(i18nText(lang, 'fileExplorer.writeFailed', { error: String(res.error || 'unknown error') }))
       }
     } catch (e) {
-      alert(`拖拽写入失败：${String(e || 'unknown error')}`)
+      alert(i18nText(lang, 'fileExplorer.writeFailed', { error: String(e || 'unknown error') }))
     } finally {
       setUploadingDirPath('')
       setDragOverDirPath('')
@@ -395,16 +397,16 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
       const res = await window.anima.fs.movePathsToDir({ sourcePaths: sources, targetDir: dir })
       if (res.ok) {
         if (Array.isArray(res.failed) && res.failed.length) {
-          alert(`部分项目移动失败：${res.failed.slice(0, 3).map((x: any) => String(x?.sourcePath || '')).join(', ')}`)
+          alert(i18nText(lang, 'fileExplorer.movePartialFailed', { items: res.failed.slice(0, 3).map((x: any) => String(x?.sourcePath || '')).join(', ') }))
         }
         setRefreshKey((k) => k + 1)
       } else {
         console.error('movePathsToDir failed', res.error)
-        alert(`拖拽移动失败：${String(res.error || 'unknown error')}`)
+        alert(i18nText(lang, 'fileExplorer.moveFailed', { error: String(res.error || 'unknown error') }))
       }
     } catch (e) {
       console.error('movePathsToDir error', e)
-      alert(`拖拽移动失败：${String(e || 'unknown error')}`)
+      alert(i18nText(lang, 'fileExplorer.moveFailed', { error: String(e || 'unknown error') }))
     } finally {
       setUploadingDirPath('')
       setDragOverDirPath('')
@@ -525,8 +527,8 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
     return (
       <div className="flex flex-col items-center justify-center h-full p-4 text-center space-y-4">
         <img src={resolveIconUrlByThemeKey('folder-open') || resolveIconUrlByThemeKey('folder')} alt="folder" className="w-12 h-12 opacity-30" draggable={false} />
-        <p className="text-sm text-muted-foreground">No folder opened.</p>
-        <Button onClick={handlePickRoot} size="sm">Open Folder</Button>
+        <p className="text-sm text-muted-foreground">{i18nText(lang, 'fileExplorer.noFolderOpened')}</p>
+        <Button onClick={handlePickRoot} size="sm">{i18nText(lang, 'fileExplorer.openFolder')}</Button>
       </div>
     );
   }
@@ -539,7 +541,7 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
               size="icon"
               className="h-6 w-6 text-muted-foreground hover:text-foreground"
               onClick={handleToggleExplorer}
-              title="Expand"
+              title={i18nText(lang, 'fileExplorer.expand')}
             >
               <PanelLeftOpen className="w-3.5 h-3.5" />
             </Button>
@@ -550,7 +552,7 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
               size="icon"
               className="h-7 w-7 text-muted-foreground hover:text-foreground"
               onClick={handleSwapPaneSides}
-              title={swapPaneSides ? 'Move explorer to left' : 'Move explorer to right'}
+              title={swapPaneSides ? i18nText(lang, 'fileExplorer.moveExplorerLeft') : i18nText(lang, 'fileExplorer.moveExplorerRight')}
             >
               <ArrowLeftRight className="w-3.5 h-3.5" />
             </Button>
@@ -559,7 +561,7 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
               size="icon"
               className="h-7 w-7 text-muted-foreground hover:text-foreground"
               onClick={handleRefresh}
-              title="Refresh"
+              title={i18nText(lang, 'fileExplorer.refresh')}
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </Button>
@@ -568,7 +570,7 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
               size="icon"
               className="h-7 w-7 text-muted-foreground hover:text-foreground"
               onClick={() => void handleOpenInFinder()}
-              title="Open in Finder"
+              title={i18nText(lang, 'fileExplorer.openInFinder')}
             >
               <ExternalLink className="w-3.5 h-3.5" />
             </Button>
@@ -580,14 +582,14 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
           style={{ width: isPreviewVisible ? sidebarWidth : '100%' }}
         >
           <div className="h-9 px-2 flex items-center justify-between border-b border-black/5 bg-white shrink-0">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground px-2">Explorer</span>
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground px-2">{i18nText(lang, 'fileExplorer.explorer')}</span>
             <div className="flex items-center gap-1">
               <Button
                 variant="ghost"
                 size="icon"
                 className="h-6 w-6 text-muted-foreground hover:text-foreground"
                 onClick={handleToggleExplorer}
-                title="Collapse"
+                title={i18nText(lang, 'fileExplorer.collapse')}
               >
                 <PanelLeftClose className="w-3.5 h-3.5" />
               </Button>
@@ -596,7 +598,7 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
                 size="icon"
                 className="h-6 w-6 text-muted-foreground hover:text-foreground"
                 onClick={handleSwapPaneSides}
-                title={swapPaneSides ? 'Move explorer to left' : 'Move explorer to right'}
+                title={swapPaneSides ? i18nText(lang, 'fileExplorer.moveExplorerLeft') : i18nText(lang, 'fileExplorer.moveExplorerRight')}
               >
                 <ArrowLeftRight className="w-3.5 h-3.5" />
               </Button>
@@ -605,7 +607,7 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
                 size="icon"
                 className="h-6 w-6 text-muted-foreground hover:text-foreground"
                 onClick={() => void handleOpenInFinder()}
-                title="Open in Finder"
+                title={i18nText(lang, 'fileExplorer.openInFinder')}
               >
                 <ExternalLink className="w-3.5 h-3.5" />
               </Button>
@@ -614,7 +616,7 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
                 size="icon"
                 className="h-6 w-6 text-muted-foreground hover:text-foreground"
                 onClick={handleRefresh}
-                title="Refresh"
+                title={i18nText(lang, 'fileExplorer.refresh')}
               >
                 <RefreshCw className="w-3.5 h-3.5" />
               </Button>
@@ -663,7 +665,7 @@ export const FileExplorer: React.FC<{ active?: boolean }> = ({ active = true }) 
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-2 p-8 text-center opacity-50">
             <Search className="w-10 h-10 stroke-1" />
-            <p className="text-xs">Select a file to preview</p>
+            <p className="text-xs">{i18nText(lang, 'fileExplorer.selectFileToPreview')}</p>
           </div>
         )}
     </div>
@@ -791,7 +793,8 @@ const FileTreeItem: React.FC<{
     }
     const droppedFiles = Array.from(e.dataTransfer.files || [])
     if (!droppedFiles.length) {
-      alert('检测到外部拖拽，但未读取到文件列表。请把文件拖到文件夹名称行后松开，或直接使用上传入口。')
+      const lang = resolveAppLang(useStore.getState().settings?.language)
+      alert(i18nText(lang, 'fileExplorer.externalDropEmpty'))
       return
     }
     await onDropFilesToDir(path, droppedFiles)
@@ -877,6 +880,7 @@ const FileTreeItem: React.FC<{
 };
 
 const FilePreview: React.FC<{ file: SelectedFile, loading: boolean, onClose: () => void; active: boolean }> = ({ file, loading, onClose, active }) => {
+  const lang = resolveAppLang(useStore((s) => s.settings?.language))
   const [scale, setScale] = useState(1);
 
   if (!active) {
@@ -887,23 +891,23 @@ const FilePreview: React.FC<{ file: SelectedFile, loading: boolean, onClose: () 
             {getFileIcon(file.name)}
             <span className="text-xs font-medium truncate">{file.name}</span>
           </div>
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose} title="Close">
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose} title={i18nText(lang, 'common.close')}>
             <X className="w-3.5 h-3.5" />
           </Button>
         </div>
-        <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground">Preview paused</div>
+        <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground">{i18nText(lang, 'fileExplorer.previewPaused')}</div>
       </div>
     );
   }
 
   if (loading) {
-    return <div className="flex items-center justify-center h-full text-sm text-muted-foreground">Loading...</div>;
+    return <div className="flex items-center justify-center h-full text-sm text-muted-foreground">{i18nText(lang, 'fileExplorer.loading')}</div>;
   }
 
   if (file.error) {
     return (
       <div className="flex flex-col items-center justify-center h-full p-4 text-center text-destructive space-y-2">
-        <p className="font-medium">Error loading file</p>
+        <p className="font-medium">{i18nText(lang, 'fileExplorer.errorLoadingFile')}</p>
         <p className="text-xs opacity-70">{file.error}</p>
       </div>
     );
@@ -918,7 +922,7 @@ const FilePreview: React.FC<{ file: SelectedFile, loading: boolean, onClose: () 
           <span className="text-xs font-medium truncate">{file.name}</span>
         </div>
         <div className="flex items-center gap-1">
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose} title="Close">
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose} title={i18nText(lang, 'common.close')}>
             <X className="w-3.5 h-3.5" />
           </Button>
           {file.type === 'image' && (
@@ -987,8 +991,8 @@ const FilePreview: React.FC<{ file: SelectedFile, loading: boolean, onClose: () 
             <div className="flex flex-col items-center justify-center h-full p-8 text-center space-y-4">
               <img src={resolveIconUrlByThemeKey(String(materialTheme.file || 'file'))} alt="file" className="w-16 h-16 opacity-20" draggable={false} />
               <div className="space-y-1">
-                <p className="text-sm font-medium">Preview not available</p>
-                <p className="text-xs text-muted-foreground">This file type cannot be previewed directly.</p>
+                <p className="text-sm font-medium">{i18nText(lang, 'fileExplorer.previewNotAvailable')}</p>
+                <p className="text-xs text-muted-foreground">{i18nText(lang, 'fileExplorer.previewNotAvailableHint')}</p>
               </div>
               <p className="text-xs font-mono bg-muted px-2 py-1 rounded">{file.path}</p>
             </div>

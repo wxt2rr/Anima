@@ -6,6 +6,8 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
 import { Artifacts } from './Artifacts'
+import { useStore } from '@/store/useStore'
+import { i18nText, resolveAppLang } from '@/i18n'
 
 interface CodeBlockProps {
   language: string
@@ -15,6 +17,7 @@ interface CodeBlockProps {
 }
 
 export const CodeBlock: React.FC<CodeBlockProps> = ({ language, value, className, ...props }) => {
+  const lang = resolveAppLang(useStore((s) => s.settings?.language))
   const [copied, setCopied] = useState(false)
   const [isPreview, setIsPreview] = useState(false)
   const reduceMotion = useReducedMotion()
@@ -47,7 +50,7 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({ language, value, className
               size="icon"
               className="h-6 w-6 hover:bg-background/50"
               onClick={() => setIsPreview(!isPreview)}
-              title={isPreview ? "Show Code" : "Preview"}
+              title={isPreview ? i18nText(lang, 'codeBlock.showCode') : i18nText(lang, 'codeBlock.preview')}
             >
               {isPreview ? <CodeIcon className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
             </Button>
@@ -58,7 +61,7 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({ language, value, className
               size="icon"
               className="h-6 w-6 hover:bg-background/50"
               onClick={handleRun}
-              title="Run code"
+              title={i18nText(lang, 'codeBlock.runCode')}
             >
               <Play className="h-3.5 w-3.5" />
             </Button>
@@ -68,7 +71,7 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({ language, value, className
             size="icon"
             className="h-6 w-6 hover:bg-background/50 relative"
             onClick={handleCopy}
-            title="Copy code"
+            title={i18nText(lang, 'codeBlock.copyCode')}
           >
             <AnimatePresence initial={false}>
               {copied && !reduceMotion ? (
@@ -113,7 +116,7 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({ language, value, className
       </div>
       <div className="relative">
         {isPreview ? (
-          <Artifacts content={value} title={`${language.toUpperCase()} Preview`} className="border-0 my-0" />
+          <Artifacts content={value} title={i18nText(lang, 'codeBlock.previewTitle', { lang: language.toUpperCase() })} className="border-0 my-0" />
         ) : (
           <SyntaxHighlighter
             language={language}

@@ -29,6 +29,9 @@ import { useUpdateStore } from './store/useUpdateStore'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { SHORTCUTS, isMacLike, matchShortcut, normalizeBinding, type ShortcutId } from '@/lib/shortcuts'
 import { useLeftPaneLayout } from './hooks/useLeftPaneLayout'
+import { i18nText, resolveAppLang } from './i18n'
+import { APP_RUNTIME_STRINGS } from './i18n/legacyDictionaries'
+import { APP_SHADCN_DICTIONARIES } from './i18n/legacyDictionaries'
 import {
   filterSlashCommands,
   parseProjectSlashCommandFile,
@@ -396,40 +399,14 @@ function toTtsSpeakText(input: string): string {
 function App(): JSX.Element {
   const { configLoaded, configError, loadRemoteConfig } = useStore()
   const reduceMotion = useReducedMotion()
-  const loadingLang = useMemo(() => {
-    const nav = (() => {
-      try {
-        return String(navigator.language || '').toLowerCase()
-      } catch {
-        return ''
-      }
-    })()
-    if (nav.startsWith('zh')) return 'zh'
-    if (nav.startsWith('ja')) return 'ja'
-    return 'en'
-  }, [])
+  const loadingLang = useMemo(() => resolveAppLang('auto'), [])
   const tLoading = useMemo(() => {
-    const dict = {
-      en: {
-        loadingTitle: 'Loading settings…',
-        failedTitle: 'Failed to load settings',
-        subtitle: 'Connecting to local backend',
-        retry: 'Retry'
-      },
-      zh: {
-        loadingTitle: '正在加载设置…',
-        failedTitle: '加载设置失败',
-        subtitle: '正在连接本地后端',
-        retry: '重试'
-      },
-      ja: {
-        loadingTitle: '設定を読み込み中…',
-        failedTitle: '設定の読み込みに失敗しました',
-        subtitle: 'ローカルバックエンドに接続中',
-        retry: '再試行'
-      }
-    } as const
-    return dict[loadingLang as keyof typeof dict] || dict.en
+    return {
+      loadingTitle: i18nText(loadingLang, 'appInit.loadingTitle'),
+      failedTitle: i18nText(loadingLang, 'appInit.failedTitle'),
+      subtitle: i18nText(loadingLang, 'appInit.subtitle'),
+      retry: i18nText(loadingLang, 'appInit.retry')
+    }
   }, [loadingLang])
   useEffect(() => {
     void loadRemoteConfig().catch(() => {})
@@ -1042,7 +1019,7 @@ function AppLoaded(): JSX.Element {
       el.scrollTop = el.scrollHeight
     }, [content, showBody])
 
-    const title = state === 'running' ? '在压缩对话历史以节省上下文…' : '已压缩对话历史'
+    const title = state === 'running' ? appRuntimeText.compressionRunning : appRuntimeText.compressionDone
     const canToggle = state === 'done'
     return (
       <div className="w-full">
@@ -1297,7 +1274,7 @@ function AppLoaded(): JSX.Element {
     }
 
     if (!isVoiceModelAvailable) {
-      alert('请配置模型')
+      alert(i18nText(appLang, 'app.configureModelFirst'))
       return
     }
 
@@ -1856,16 +1833,18 @@ function AppLoaded(): JSX.Element {
   }
 
   const builtinTools = useMemo(() => {
+    const runtimeLang = resolveAppLang(settings.language)
+    const runtimeText = APP_RUNTIME_STRINGS[runtimeLang] || APP_RUNTIME_STRINGS.en
     return [
-      { id: 'glob_files', name: 'Glob 文件' },
-      { id: 'bash', name: 'Bash 命令' },
-      { id: 'read_file', name: '读文件' },
-      { id: 'rg_search', name: 'ripgrep 搜索' },
-      { id: 'WebSearch', name: 'WebSearch 搜索' },
-      { id: 'WebFetch', name: 'WebFetch 抓取' },
-      { id: 'list_dir', name: '列目录' }
+      { id: 'glob_files', name: runtimeText.builtinTools.glob_files },
+      { id: 'bash', name: runtimeText.builtinTools.bash },
+      { id: 'read_file', name: runtimeText.builtinTools.read_file },
+      { id: 'rg_search', name: runtimeText.builtinTools.rg_search },
+      { id: 'WebSearch', name: runtimeText.builtinTools.WebSearch },
+      { id: 'WebFetch', name: runtimeText.builtinTools.WebFetch },
+      { id: 'list_dir', name: runtimeText.builtinTools.list_dir }
     ]
-  }, [])
+  }, [settings.language])
 
   const uuid = () => {
     const anyCrypto = globalThis.crypto as any
@@ -1980,6 +1959,7 @@ function AppLoaded(): JSX.Element {
       thinkingLevel,
       completionEnabled: composer.completionEnabled !== false,
       completionTranslateEnabled: composer.completionTranslateEnabled !== false,
+      completionSpellSuggestEnabled: composer.completionSpellSuggestEnabled !== false,
       completionContextLimit,
       completionProviderId,
       completionModelId,
@@ -2221,466 +2201,14 @@ function AppLoaded(): JSX.Element {
   }
 
   const t = (() => {
-    const dict = {
-      en: {
-        appName: 'Anima',
-        helloTitle: 'Hello. I am Anima.',
-        helloSubtitleConnected: (name: string) => `Connected to ${name}`,
-        helloSubtitleDisconnected: 'Please configure a provider to start.',
-        configureProvider: 'Configure Provider',
-        typeMessage: 'Type a message...',
-        noProviderActive: 'No Provider Active',
-        settings: 'Settings',
-        noProject: 'No project selected',
-        foldProcessSummary: (memories: number, thinking: number, tools: number, skills: number) =>
-          `Injected memories ${memories}, thought ${thinking} times, tools ${tools} calls, skills ${skills}`,
-        foldProcessExpand: 'Expand process',
-        foldProcessCollapse: 'Collapse process',
-        dangerousApprovalQuestion: 'Do you want to run this dangerous command?',
-        dangerousApprovalOptionOnce: 'Yes',
-        dangerousApprovalOptionAlways: 'Yes, do not intercept again in this conversation',
-        dangerousApprovalOptionReject: 'No',
-        dangerousApprovalSubmit: 'Submit',
-        dangerousApprovalPending: 'Waiting for your choice',
-        dangerousApprovalRejected: 'Canceled',
-        dangerousApprovalStatusApprovedOnce: 'Allowed',
-        dangerousApprovalStatusApprovedThread: 'Allowed (this conversation)',
-        dangerousApprovalStatusRejected: 'Rejected',
-        proxyOrKeyError: (msg: string) => `Error: ${msg}\n\nPlease check your API Key and Network settings.`,
-        composer: {
-          attachments: 'Attachments',
-          workspace: 'Workspace',
-          tools: 'Tools',
-          skills: 'Skills',
-        model: 'Model',
-          context: 'Context',
-          addFiles: 'Add files',
-          clear: 'Clear',
-          selectFolder: 'Select folder',
-          openSettings: 'Open Settings',
-          toolMode: 'Tool mode',
-          permission: 'Permission',
-          permissionDefault: 'Default permission',
-          permissionFull: 'Full access',
-          permissionConfirmTitle: 'Enable full access?',
-          permissionConfirmDesc:
-            'In full access mode, Anima can run commands outside workspace restrictions. Continue only if you trust the current task.',
-          permissionConfirmCancel: 'Cancel',
-          permissionConfirmContinue: 'Yes, continue',
-          dangerousCommandConfirmTitle: 'Approve dangerous command?',
-          dangerousCommandConfirmDesc: 'This command matched your blacklist under default permission. Continue only if you trust it.',
-          dangerousCommandConfirmCancel: 'Cancel',
-          dangerousCommandConfirmContinue: 'Approve and run',
-          skillMode: 'Skill mode',
-          auto: 'Auto',
-          all: 'All',
-          disabled: 'Disabled',
-          mcpServers: 'MCP Servers',
-          refresh: 'Refresh',
-          openFolder: 'Open folder',
-          skillsLoaded: (n: number) => `${n} loaded`,
-          skillName: 'Name',
-          skillType: 'Type',
-          skillTypeSystem: 'System',
-          skillTypePersonal: 'Personal',
-          invalid: 'Invalid',
-          modelOverride: 'Override model',
-          useProviderDefault: 'Use provider default',
-          contextWindow: 'Context window (messages)',
-          thinking: 'Thinking',
-          thinkingSelect: 'Reasoning level',
-          thinkingOff: 'Off',
-          thinkingLow: 'Low',
-          thinkingMedium: 'Medium',
-          thinkingHigh: 'High',
-          thinkingXHigh: 'Ultra',
-          completion: 'Completion',
-          completionEnable: 'Enable Tab completion',
-          completionTranslate: 'Enable mixed CN/EN translation',
-          completionSpellSuggest: 'Enable misspelling suggestion popup',
-          completionContextLimit: 'Recent context messages',
-          completionApplyHint: 'Tab to apply suggestion, Esc to cancel',
-          preview: 'Preview',
-          prepare: 'Prepare'
-        },
-        trace: {
-          title: 'Steps & Tools',
-          steps: 'Steps',
-          tools: 'Tool calls',
-          reasoning: 'Summary',
-          thinkingPending: 'Thinking...',
-          analyzing: 'Analyzing...',
-          analysisDone: 'Analysis complete',
-          running: 'Running',
-          succeeded: 'Succeeded',
-          failed: 'Failed',
-          toolCount: (n: number) => `Tools ${n}`,
-          failedCount: (n: number) => `Failed ${n}`,
-          durationMs: (n: number) => `${n}ms`,
-          args: 'Args',
-          result: 'Result',
-          error: 'Error'
-        }
-      },
-      zh: {
-        appName: 'Anima',
-        helloTitle: '你好，我是 Anima。',
-        helloSubtitleConnected: (name: string) => `已连接：${name}`,
-        helloSubtitleDisconnected: '请先配置一个提供商以开始使用。',
-        configureProvider: '配置提供商',
-        typeMessage: '输入消息…',
-        noProviderActive: '未启用提供商',
-        settings: '设置',
-        noProject: '未选择项目',
-        foldProcessSummary: (memories: number, thinking: number, tools: number, skills: number) =>
-          `注入记忆${memories}条，思考了${thinking}次，工具调用${tools}次，技能使用${skills}个`,
-        foldProcessExpand: '展开过程',
-        foldProcessCollapse: '收起过程',
-        dangerousApprovalQuestion: '是否执行这个危险命令？',
-        dangerousApprovalOptionOnce: '是',
-        dangerousApprovalOptionAlways: '是，本次对话不再拦截',
-        dangerousApprovalOptionReject: '否',
-        dangerousApprovalSubmit: '提交',
-        dangerousApprovalPending: '等待你的选择',
-        dangerousApprovalRejected: '已取消',
-        dangerousApprovalStatusApprovedOnce: '已允许',
-        dangerousApprovalStatusApprovedThread: '本次对话已允许',
-        dangerousApprovalStatusRejected: '已拒绝',
-        proxyOrKeyError: (msg: string) => `错误：${msg}\n\n请检查 API Key 与网络代理设置。`,
-        composer: {
-          attachments: '附件',
-          workspace: '工作区',
-          tools: '工具 / MCP',
-          skills: '技能',
-        model: '模型',
-          context: '上下文',
-          addFiles: '添加文件',
-          clear: '清除',
-          selectFolder: '选择目录',
-          openSettings: '打开设置',
-          toolMode: '工具模式',
-          permission: '权限',
-          permissionDefault: '当前项目',
-          permissionFull: '当前电脑',
-          permissionConfirmTitle: '启用完全访问权限？',
-          permissionConfirmDesc: '开启后将不再限制工作区和白名单范围，请仅在可信任务中使用。',
-          permissionConfirmCancel: '取消',
-          permissionConfirmContinue: '是，仍然继续',
-          dangerousCommandConfirmTitle: '确认执行危险命令？',
-          dangerousCommandConfirmDesc: '该命令在默认权限下命中了黑名单，仅在你确认可信时继续执行。',
-          dangerousCommandConfirmCancel: '取消',
-          dangerousCommandConfirmContinue: '确认并执行',
-          skillMode: '技能模式',
-          auto: '自动',
-          all: '全部',
-          disabled: '禁用',
-          mcpServers: 'MCP 服务器',
-          refresh: '刷新',
-          openFolder: '打开文件夹',
-          skillsLoaded: (n: number) => `已加载 ${n} 个`,
-          skillName: '名称',
-          skillType: '类型',
-          skillTypeSystem: '系统',
-          skillTypePersonal: '个人',
-          invalid: '无效',
-          modelOverride: '临时覆盖模型',
-          useProviderDefault: '使用提供商默认',
-          contextWindow: '上下文窗口（消息数）',
-          thinking: '思考',
-          thinkingSelect: '选择推理功能',
-          thinkingOff: '关闭',
-          thinkingLow: '低',
-          thinkingMedium: '中',
-          thinkingHigh: '高',
-          thinkingXHigh: '超高',
-          completion: '补全',
-          completionEnable: '启用 Tab 补全',
-          completionTranslate: '启用中英混输翻译补全',
-          completionSpellSuggest: '启用拼写纠错提示弹框',
-          completionContextLimit: '最近上下文消息数',
-          completionApplyHint: 'Tab 应用建议，Esc 取消',
-          preview: '预览',
-          prepare: '准备'
-        },
-        trace: {
-          title: '步骤与工具',
-          steps: '步骤',
-          tools: '工具调用',
-          reasoning: '思考过程',
-          thinkingPending: '思考中…',
-          analyzing: '分析中…',
-          analysisDone: '分析完成',
-          running: '运行中',
-          succeeded: '成功',
-          failed: '失败',
-          toolCount: (n: number) => `工具 ${n} 次`,
-          failedCount: (n: number) => `失败 ${n} 次`,
-          durationMs: (n: number) => `${n}ms`,
-          args: '参数',
-          result: '结果',
-          error: '错误'
-        }
-      },
-      ja: {
-        appName: 'Anima',
-        helloTitle: 'こんにちは。Anima です。',
-        helloSubtitleConnected: (name: string) => `${name} に接続中`,
-        helloSubtitleDisconnected: 'まずプロバイダーを設定してください。',
-        configureProvider: 'プロバイダー設定',
-        typeMessage: 'メッセージを入力…',
-        noProviderActive: 'プロバイダー未有効',
-        settings: '設定',
-        noProject: 'プロジェクト未選択',
-        foldProcessSummary: (memories: number, thinking: number, tools: number, skills: number) =>
-          `注入記憶 ${memories} 件、思考 ${thinking} 回、ツール ${tools} 回、スキル ${skills} 件`,
-        foldProcessExpand: 'プロセスを表示',
-        foldProcessCollapse: 'プロセスを折りたたむ',
-        dangerousApprovalQuestion: 'この危険なコマンドを実行しますか？',
-        dangerousApprovalOptionOnce: 'はい',
-        dangerousApprovalOptionAlways: 'はい、この会話では以後ブロックしない',
-        dangerousApprovalOptionReject: 'いいえ',
-        dangerousApprovalSubmit: '送信',
-        dangerousApprovalPending: '選択待ち',
-        dangerousApprovalRejected: 'キャンセル済み',
-        dangerousApprovalStatusApprovedOnce: '許可済み',
-        dangerousApprovalStatusApprovedThread: 'この会話で許可済み',
-        dangerousApprovalStatusRejected: '拒否済み',
-        proxyOrKeyError: (msg: string) => `エラー: ${msg}\n\nAPI Key とネットワーク設定を確認してください。`,
-        composer: {
-          attachments: '添付',
-          workspace: 'ワークスペース',
-          tools: 'ツール / MCP',
-          skills: 'スキル',
-        model: 'モデル',
-          context: 'コンテキスト',
-          addFiles: 'ファイル追加',
-          clear: 'クリア',
-          selectFolder: 'フォルダー選択',
-          openSettings: '設定を開く',
-          toolMode: 'ツールモード',
-          permission: '権限',
-          permissionDefault: 'デフォルト権限',
-          permissionFull: 'フルアクセス',
-          permissionConfirmTitle: 'フルアクセスを有効化しますか？',
-          permissionConfirmDesc:
-            'フルアクセスではワークスペース制限なしでコマンド実行できます。信頼できるタスクでのみ使用してください。',
-          permissionConfirmCancel: 'キャンセル',
-          permissionConfirmContinue: 'はい、続行',
-          dangerousCommandConfirmTitle: '危険コマンドを許可しますか？',
-          dangerousCommandConfirmDesc: 'このコマンドは既定権限のブラックリストに一致しました。信頼できる場合のみ続行してください。',
-          dangerousCommandConfirmCancel: 'キャンセル',
-          dangerousCommandConfirmContinue: '許可して実行',
-          skillMode: 'スキルモード',
-          auto: '自動',
-          all: 'すべて',
-          disabled: '無効',
-          mcpServers: 'MCP サーバー',
-          refresh: '更新',
-          openFolder: 'フォルダーを開く',
-          skillsLoaded: (n: number) => `${n} 件を読み込み`,
-          skillName: '名前',
-          skillType: '種別',
-          skillTypeSystem: 'システム',
-          skillTypePersonal: '個人',
-          invalid: '無効',
-          modelOverride: 'モデル上書き',
-          useProviderDefault: '既定モデルを使用',
-          contextWindow: 'コンテキスト（メッセージ数）',
-          thinking: 'Thinking',
-          thinkingSelect: '推論レベルを選択',
-          thinkingOff: 'Off',
-          thinkingLow: 'Low',
-          thinkingMedium: 'Medium',
-          thinkingHigh: 'High',
-          thinkingXHigh: 'Ultra',
-          completion: '補完',
-          completionEnable: 'Tab 補完を有効化',
-          completionTranslate: '中英混在入力の翻訳補完を有効化',
-          completionSpellSuggest: 'スペル修正候補ポップアップを有効化',
-          completionContextLimit: '直近コンテキスト件数',
-          completionApplyHint: 'Tab で適用、Esc でキャンセル',
-          preview: 'プレビュー',
-          prepare: '準備'
-        },
-        trace: {
-          title: '手順とツール',
-          steps: '手順',
-          tools: 'ツール呼び出し',
-          reasoning: '要約',
-          thinkingPending: '思考中…',
-          analyzing: '分析中…',
-          analysisDone: '分析完了',
-          running: '実行中',
-          succeeded: '成功',
-          failed: '失敗',
-          toolCount: (n: number) => `ツール ${n} 回`,
-          failedCount: (n: number) => `失敗 ${n} 回`,
-          durationMs: (n: number) => `${n}ms`,
-          args: '引数',
-          result: '結果',
-          error: 'エラー'
-        }
-      }
-    } as const
+    const dict = APP_SHADCN_DICTIONARIES[0] as any
     return dict[settings.language as keyof typeof dict] || dict.en
   })()
+  const appLang = resolveAppLang(settings.language)
+  const appRuntimeText = APP_RUNTIME_STRINGS[appLang] || APP_RUNTIME_STRINGS.en
 
   const slashText = (() => {
-    const dict = {
-      en: {
-        empty: 'No matching commands',
-        commandSection: 'Commands',
-        skillSection: 'Skills',
-        kindCommand: 'Command',
-        kindSkill: 'Skill',
-        personal: 'Personal',
-        system: 'System',
-        noSkills: 'No skills',
-        builtIn: 'Built-in',
-        project: 'Project',
-        menuTitle: 'Slash Commands',
-        menuHint: 'Up/Down Select · Enter Apply',
-        newDesc: 'Create a new chat',
-        statusDesc: 'Show current workspace and model status',
-        reviewDesc: 'Send a code review prompt',
-        planDesc: 'Send a planning prompt',
-        summarizeDesc: 'Summarize the current context',
-        mcpDesc: 'Show MCP and tool summary',
-        coderStatusDesc: 'Show current coder status',
-        coderStartDesc: 'Start the configured coder',
-        coderStopDesc: 'Stop the running coder',
-        statusTitle: '# Current Session Status',
-        statusProject: 'Project',
-        statusWorkspace: 'Workspace',
-        statusProvider: 'Provider',
-        statusModel: 'Model',
-        statusTools: 'Tool mode',
-        statusPermission: 'Permission',
-        statusSkills: 'Skill mode',
-        statusMcp: 'Enabled MCP servers',
-        mcpTitle: '# MCP Summary',
-        mcpEnabled: 'Enabled servers',
-        mcpDisabled: 'Disabled servers',
-        mcpNone: 'No MCP servers configured',
-        coderTitle: '# Coder Status',
-        coderName: 'Profile',
-        coderRunning: 'Running',
-        coderPid: 'PID',
-        coderTransport: 'Transport',
-        coderEndpoint: 'Endpoint',
-        coderError: 'Last error',
-        coderDebugPort: 'Debug port ready',
-        coderStarted: 'Coder start requested.',
-        coderStopped: 'Coder stopped.',
-        coderStartFailed: (msg: string) => `Failed to start coder: ${msg}`,
-        coderStopFailed: (msg: string) => `Failed to stop coder: ${msg}`,
-        reviewPrompt: (args: string) => `Please review the current workspace changes with a code-review mindset.${args ? ` Focus on: ${args}` : ''}`,
-        planPrompt: (args: string) => `Please produce a minimal executable plan before implementation.${args ? ` Requirement: ${args}` : ''}`,
-        summarizePrompt: (args: string) => `Please summarize the current context and preserve the details needed for follow-up work.${args ? ` Extra focus: ${args}` : ''}`
-      },
-      zh: {
-        empty: '没有匹配的命令',
-        commandSection: '命令',
-        skillSection: '技能',
-        kindCommand: '命令',
-        kindSkill: '技能',
-        personal: '个人',
-        system: '系统',
-        noSkills: '暂无技能',
-        builtIn: '内建',
-        project: '项目',
-        menuTitle: 'Slash 命令',
-        menuHint: '上下键切换 · 回车选中',
-        newDesc: '新建一个对话',
-        statusDesc: '显示当前工作区和模型状态',
-        reviewDesc: '发送代码审查提示词',
-        planDesc: '发送计划提示词',
-        summarizeDesc: '总结当前上下文',
-        mcpDesc: '显示 MCP 与工具摘要',
-        coderStatusDesc: '查看当前 coder 状态',
-        coderStartDesc: '启动当前配置的 coder',
-        coderStopDesc: '停止正在运行的 coder',
-        statusTitle: '# 当前会话状态',
-        statusProject: '项目',
-        statusWorkspace: '工作区',
-        statusProvider: '提供商',
-        statusModel: '模型',
-        statusTools: '工具模式',
-        statusPermission: '权限',
-        statusSkills: '技能模式',
-        statusMcp: '已启用 MCP 服务器',
-        mcpTitle: '# MCP 摘要',
-        mcpEnabled: '已启用服务器',
-        mcpDisabled: '未启用服务器',
-        mcpNone: '当前没有配置 MCP 服务器',
-        coderTitle: '# Coder 状态',
-        coderName: '配置',
-        coderRunning: '运行中',
-        coderPid: '进程号',
-        coderTransport: '传输方式',
-        coderEndpoint: '端点',
-        coderError: '最近错误',
-        coderDebugPort: '调试端口就绪',
-        coderStarted: '已请求启动 coder。',
-        coderStopped: '已停止 coder。',
-        coderStartFailed: (msg: string) => `启动 coder 失败：${msg}`,
-        coderStopFailed: (msg: string) => `停止 coder 失败：${msg}`,
-        reviewPrompt: (args: string) => `请按代码审查模式检查当前工作区改动，优先指出 bug、风险、行为回归和缺失测试。${args ? ` 重点关注：${args}` : ''}`,
-        planPrompt: (args: string) => `请先给出最小可执行计划，再开始实现。${args ? ` 当前目标：${args}` : ''}`,
-        summarizePrompt: (args: string) => `请总结当前上下文，并保留后续执行所需的关键信息。${args ? ` 额外关注：${args}` : ''}`
-      },
-      ja: {
-        empty: '一致するコマンドがありません',
-        commandSection: 'コマンド',
-        skillSection: 'スキル',
-        kindCommand: 'コマンド',
-        kindSkill: 'スキル',
-        personal: '個人',
-        system: 'システム',
-        noSkills: 'スキルがありません',
-        builtIn: '内蔵',
-        project: 'プロジェクト',
-        menuTitle: 'Slash コマンド',
-        menuHint: '上下キーで選択 · Enter で適用',
-        newDesc: '新しいチャットを作成',
-        statusDesc: '現在のワークスペースとモデル状態を表示',
-        reviewDesc: 'コードレビュー用のプロンプトを送信',
-        planDesc: '計画用のプロンプトを送信',
-        summarizeDesc: '現在のコンテキストを要約',
-        mcpDesc: 'MCP とツールの概要を表示',
-        coderStatusDesc: '現在の coder 状態を表示',
-        coderStartDesc: '設定済み coder を起動',
-        coderStopDesc: '実行中の coder を停止',
-        statusTitle: '# 現在のセッション状態',
-        statusProject: 'プロジェクト',
-        statusWorkspace: 'ワークスペース',
-        statusProvider: 'プロバイダー',
-        statusModel: 'モデル',
-        statusTools: 'ツールモード',
-        statusPermission: '権限',
-        statusSkills: 'スキルモード',
-        statusMcp: '有効な MCP サーバー',
-        mcpTitle: '# MCP サマリー',
-        mcpEnabled: '有効なサーバー',
-        mcpDisabled: '無効なサーバー',
-        mcpNone: 'MCP サーバーが設定されていません',
-        coderTitle: '# Coder 状態',
-        coderName: 'プロファイル',
-        coderRunning: '実行中',
-        coderPid: 'PID',
-        coderTransport: '転送方式',
-        coderEndpoint: 'エンドポイント',
-        coderError: '最新エラー',
-        coderDebugPort: 'デバッグポート準備完了',
-        coderStarted: 'Coder の起動を要求しました。',
-        coderStopped: 'Coder を停止しました。',
-        coderStartFailed: (msg: string) => `Coder の起動に失敗しました: ${msg}`,
-        coderStopFailed: (msg: string) => `Coder の停止に失敗しました: ${msg}`,
-        reviewPrompt: (args: string) => `コードレビューの観点で現在のワークスペース変更を確認してください。バグ、リスク、回帰、不足テストを優先してください。${args ? ` 注目点: ${args}` : ''}`,
-        planPrompt: (args: string) => `実装前に最小実行可能な計画を提示してください。${args ? ` 要件: ${args}` : ''}`,
-        summarizePrompt: (args: string) => `現在のコンテキストを要約し、次の作業に必要な情報を残してください。${args ? ` 追加の焦点: ${args}` : ''}`
-      }
-    } as const
+    const dict = APP_SHADCN_DICTIONARIES[1] as any
     return dict[settings.language as keyof typeof dict] || dict.en
   })()
 
@@ -3129,7 +2657,9 @@ function AppLoaded(): JSX.Element {
       const input = String(rawInput || '')
       if (!input.trim()) return null
       const composerPayload = buildComposerPayload()
-      if (composerPayload.completionEnabled === false) return null
+      if (mode === 'complete' && composerPayload.completionEnabled === false) return null
+      if (mode === 'translate' && composerPayload.completionTranslateEnabled === false) return null
+      if (mode === 'spell_suggest' && (composerPayload as any).completionSpellSuggestEnabled === false) return null
 
       const completionProviderId = String(composerPayload.completionProviderId || '').trim()
       const completionProvider = completionProviderId
@@ -3634,7 +3164,7 @@ function AppLoaded(): JSX.Element {
                   return
                 }
                 if (e.type === 'error') {
-                  const err = typeof e.error === 'string' && e.error.trim() ? e.error.trim() : 'Unknown error'
+                  const err = typeof e.error === 'string' && e.error.trim() ? e.error.trim() : appRuntimeText.unknownError
                   reject(new Error(err))
                   return
                 }
@@ -3812,7 +3342,7 @@ function AppLoaded(): JSX.Element {
                 } else if (evt.type === 'trace' && evt.trace) {
                   upsertTrace(evt.trace)
                 } else if (evt.type === 'error') {
-                  const err = typeof evt.error === 'string' && evt.error.trim() ? evt.error.trim() : 'Unknown error'
+                  const err = typeof evt.error === 'string' && evt.error.trim() ? evt.error.trim() : appRuntimeText.unknownError
                   throw new Error(err)
                 } else if (evt.type === 'compression_start') {
                   compressionSeenStart = true
@@ -3832,8 +3362,8 @@ function AppLoaded(): JSX.Element {
                   if (ok) {
                     if (typeof evt.summary === 'string') compressionFullContent = evt.summary
                   } else {
-                    const err = typeof evt.error === 'string' && evt.error.trim() ? evt.error.trim() : '未知错误'
-                    compressionFullContent = `压缩失败：${err}`
+                    const err = typeof evt.error === 'string' && evt.error.trim() ? evt.error.trim() : appRuntimeText.unknownError
+                    compressionFullContent = appRuntimeText.compressionFailed.replace('{error}', err)
                   }
                   ensureCompressionMsg('done', compressionFullContent)
                   if (ok) {
@@ -4297,7 +3827,7 @@ function AppLoaded(): JSX.Element {
       {imageDragActive ? (
         <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-primary/5">
           <div className="rounded-xl border border-primary/30 bg-background/95 px-4 py-2 text-sm text-primary shadow-sm">
-            松开即可添加图片附件
+            {i18nText(appLang, 'app.dropImageHint')}
           </div>
         </div>
       ) : null}
@@ -4314,19 +3844,19 @@ function AppLoaded(): JSX.Element {
         >
           <DialogContent className="max-w-2xl">
             <DialogHeader>
-              <DialogTitle>对话摘要</DialogTitle>
+              <DialogTitle>{i18nText(appLang, 'app.summaryTitle')}</DialogTitle>
             </DialogHeader>
             <div className="space-y-3">
               {summaryUpdatedAt != null && (
                 <div className="text-xs text-muted-foreground">
-                  更新时间：{new Date(summaryUpdatedAt).toLocaleString()}
+                  {i18nText(appLang, 'app.updatedAt', { time: new Date(summaryUpdatedAt).toLocaleString() })}
                 </div>
               )}
               <ScrollArea className="h-[420px] rounded-md border p-3">
                 {summaryLoading ? (
-                  <div className="text-sm text-muted-foreground">加载中…</div>
+                  <div className="text-sm text-muted-foreground">{i18nText(appLang, 'app.summaryLoading')}</div>
                 ) : !summaryText ? (
-                  <div className="text-sm text-muted-foreground">暂无摘要。</div>
+                  <div className="text-sm text-muted-foreground">{i18nText(appLang, 'app.summaryEmpty')}</div>
                 ) : settings.enableMarkdown ? (
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkMath]}
@@ -4463,12 +3993,12 @@ function AppLoaded(): JSX.Element {
                   }
                 }}
               >
-                立即压缩
+                {appRuntimeText.compressNow}
               </Button>
               <Button
                 onClick={() => setSummaryOpen(false)}
               >
-                关闭
+                {i18nText(appLang, 'common.close')}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -4528,7 +4058,7 @@ function AppLoaded(): JSX.Element {
                             <PanelLeftOpen className="w-4 h-4" />
                           </Button>
                         </TooltipTrigger>
-                        <TooltipContent>Show Sidebar</TooltipContent>
+                        <TooltipContent>{i18nText(appLang, 'app.showSidebar')}</TooltipContent>
                       </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -4543,7 +4073,7 @@ function AppLoaded(): JSX.Element {
                             <MessageCircle className="w-4 h-4" />
                           </Button>
                         </TooltipTrigger>
-                        <TooltipContent>New Chat</TooltipContent>
+                        <TooltipContent>{i18nText(appLang, 'app.newChat')}</TooltipContent>
                       </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -4556,7 +4086,7 @@ function AppLoaded(): JSX.Element {
                             <Settings className="w-4 h-4" />
                           </Button>
                         </TooltipTrigger>
-                        <TooltipContent>Settings</TooltipContent>
+                        <TooltipContent>{i18nText(appLang, 'common.settings')}</TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
                   </div>
@@ -4576,7 +4106,7 @@ function AppLoaded(): JSX.Element {
                           <Folder className="w-4 h-4" />
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent>Files</TooltipContent>
+                      <TooltipContent>{i18nText(appLang, 'app.files')}</TooltipContent>
                     </Tooltip>
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -4589,7 +4119,7 @@ function AppLoaded(): JSX.Element {
                           <GitBranch className="w-4 h-4" />
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent>Commit</TooltipContent>
+                      <TooltipContent>{i18nText(appLang, 'app.commit')}</TooltipContent>
                     </Tooltip>
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -4602,7 +4132,7 @@ function AppLoaded(): JSX.Element {
                           <TerminalSquare className="w-4 h-4" />
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent>Terminal</TooltipContent>
+                      <TooltipContent>{i18nText(appLang, 'app.terminal')}</TooltipContent>
                     </Tooltip>
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -4615,7 +4145,7 @@ function AppLoaded(): JSX.Element {
                           <Globe className="w-4 h-4" />
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent>Preview</TooltipContent>
+                      <TooltipContent>{i18nText(appLang, 'app.preview')}</TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
                 )}
@@ -4623,7 +4153,7 @@ function AppLoaded(): JSX.Element {
 
               <div className="absolute left-0 right-0 top-[6px] flex items-center justify-center pointer-events-none">
                 <div className="flex items-center gap-2 text-xs text-primary">
-                  <span>{messages.length} 条消息</span>
+                  <span>{i18nText(appLang, 'app.messageCount', { count: messages.length })}</span>
                 </div>
               </div>
             </header>
@@ -5026,7 +4556,7 @@ function AppLoaded(): JSX.Element {
                                   copiedMessageId === String(msg.id || '') ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                                 }`}
                                 onClick={() => void handleCopyMessage(String(msg.id || ''), String(msg.content || ''))}
-                                title={copiedMessageId === String(msg.id || '') ? '已复制' : '复制'}
+                                title={copiedMessageId === String(msg.id || '') ? appRuntimeText.copied : appRuntimeText.copy}
                               >
                                 {copiedMessageId === String(msg.id || '') ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
                               </button>
@@ -5243,25 +4773,20 @@ function AppLoaded(): JSX.Element {
                                           : null
                                     const traceLang =
                                       settings.language === 'zh' ? 'zh' : settings.language === 'ja' ? 'ja' : 'en'
+                                    const runtimeByLang = APP_RUNTIME_STRINGS[traceLang as 'en' | 'zh' | 'ja'] || APP_RUNTIME_STRINGS.en
                                     const traceI18n = {
                                       searchResultSummary: (n: number) =>
-                                        traceLang === 'zh'
-                                          ? `已搜索到${n}条结果`
-                                          : traceLang === 'ja'
-                                            ? `${n}件の検索結果を取得`
-                                            : `Found ${n} search results`,
-                                      linkFallback: traceLang === 'zh' ? '链接' : traceLang === 'ja' ? 'リンク' : 'Link',
-                                      webpageLink: traceLang === 'zh' ? '网页链接' : traceLang === 'ja' ? 'ページリンク' : 'Page Link',
-                                      status: traceLang === 'zh' ? '状态' : traceLang === 'ja' ? '状態' : 'Status',
-                                      truncated: traceLang === 'zh' ? '已截断' : traceLang === 'ja' ? '切り詰め済み' : 'Truncated',
-                                      dir: traceLang === 'zh' ? '文件夹' : traceLang === 'ja' ? 'フォルダー' : 'Directory',
-                                      file: traceLang === 'zh' ? '文件' : traceLang === 'ja' ? 'ファイル' : 'File',
-                                      lineLabel: (n: number | string) =>
-                                        traceLang === 'zh' ? `第${n}行` : traceLang === 'ja' ? `${n}行目` : `line ${n}`,
-                                      matchedContent:
-                                        traceLang === 'zh' ? '匹配内容' : traceLang === 'ja' ? '一致内容' : 'Matched content',
-                                      readDone: traceLang === 'zh' ? '已读取' : traceLang === 'ja' ? '読み取り済み' : 'Read',
-                                      failed: traceLang === 'zh' ? '失败' : traceLang === 'ja' ? '失敗' : 'Failed'
+                                        runtimeByLang.trace.searchResultSummary.replace('{count}', String(n)),
+                                      linkFallback: runtimeByLang.trace.linkFallback,
+                                      webpageLink: runtimeByLang.trace.webpageLink,
+                                      status: runtimeByLang.trace.status,
+                                      truncated: runtimeByLang.trace.truncated,
+                                      dir: runtimeByLang.trace.dir,
+                                      file: runtimeByLang.trace.file,
+                                      lineLabel: (n: number | string) => runtimeByLang.trace.lineLabel.replace('{line}', String(n)),
+                                      matchedContent: runtimeByLang.trace.matchedContent,
+                                      readDone: runtimeByLang.trace.readDone,
+                                      failed: runtimeByLang.trace.failed
                                     }
                                     let resultSummary = ''
                                     let detailMarkdown = ''
@@ -5292,32 +4817,8 @@ function AppLoaded(): JSX.Element {
                                               ? 'browse'
                                               : 'execute'
                                     const traceStatusText = (() => {
-                                      const textMap = {
-                                        zh: {
-                                          execute: { running: '在执行', done: '已执行', failed: '执行失败' },
-                                          search: { running: '在搜索', done: '已搜索', failed: '搜索失败' },
-                                          browse: { running: '在浏览', done: '已浏览', failed: '浏览失败' },
-                                          read: { running: '在阅读', done: '已读取', failed: '读取失败' },
-                                          edit: { running: '在编辑', done: '已编辑', failed: '编辑失败' }
-                                        },
-                                        ja: {
-                                          execute: { running: '実行中', done: '実行完了', failed: '実行失敗' },
-                                          search: { running: '検索中', done: '検索完了', failed: '検索失敗' },
-                                          browse: { running: '閲覧中', done: '閲覧完了', failed: '閲覧失敗' },
-                                          read: { running: '読込中', done: '読込完了', failed: '読込失敗' },
-                                          edit: { running: '編集中', done: '編集完了', failed: '編集失敗' }
-                                        },
-                                        en: {
-                                          execute: { running: 'Running', done: 'Executed', failed: 'Failed' },
-                                          search: { running: 'Searching', done: 'Searched', failed: 'Search failed' },
-                                          browse: { running: 'Browsing', done: 'Browsed', failed: 'Browse failed' },
-                                          read: { running: 'Reading', done: 'Read', failed: 'Read failed' },
-                                          edit: { running: 'Editing', done: 'Edited', failed: 'Edit failed' }
-                                        }
-                                      } as const
-                                      const lang = traceLang === 'zh' ? 'zh' : traceLang === 'ja' ? 'ja' : 'en'
                                       const key = isFailed ? 'failed' : isRunning ? 'running' : 'done'
-                                      return textMap[lang][traceKind][key]
+                                      return runtimeByLang.trace.statusText[traceKind][key]
                                     })()
 
                                     if (traceName === 'bash') {
@@ -5372,30 +4873,17 @@ function AppLoaded(): JSX.Element {
                                       String((tr as any)?.resultPreview?.text || '').toLowerCase().includes('user rejected dangerous command approval') ||
                                       String((tr as any)?.error?.message || '').toLowerCase().includes('user rejected dangerous command approval')
                                     const isRejectedByUser = traceName === 'bash' && (matchedApproval?.status === 'rejected' || rejectedByUserHint)
-                                    const notExecutedText =
-                                      traceLang === 'zh' ? '未执行' : traceLang === 'ja' ? '未実行' : 'Not executed'
+                                    const notExecutedText = runtimeByLang.notExecuted
                                     const isEditTrace = traceName === 'apply_patch'
                                     const runningStatusText =
                                       isRejectedByUser
                                         ? notExecutedText
                                         : traceName === 'load_skill' && !isRunning && !isFailed
-                                        ? traceLang === 'zh'
-                                          ? '已加载技能'
-                                          : traceLang === 'ja'
-                                            ? 'スキル読み込み完了'
-                                            : 'Loaded skill'
+                                        ? runtimeByLang.loadSkillDone
                                         : isParallelTrace && isRunning
-                                          ? traceLang === 'zh'
-                                            ? '并行执行中'
-                                            : traceLang === 'ja'
-                                              ? '並列実行中'
-                                              : 'Parallel running'
+                                          ? runtimeByLang.parallelRunning
                                         : isEditTrace && !isRunning && !isFailed
-                                          ? traceLang === 'zh'
-                                            ? '已编辑的文件'
-                                            : traceLang === 'ja'
-                                              ? '編集済みファイル'
-                                              : 'Edited file'
+                                          ? runtimeByLang.editedFiles
                                           : traceStatusText
                                     const displayEntity = (() => {
                                       const text = String(entity || '').trim()
@@ -5634,7 +5122,7 @@ function AppLoaded(): JSX.Element {
                                               >
                                                 {Array.isArray((tr as any).artifacts) && (tr as any).artifacts.length > 0 && (
                                                   <div className="space-y-1">
-                                                    <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Artifacts</div>
+                                                    <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{i18nText(appLang, 'app.artifacts')}</div>
                                                     {renderArtifacts((tr as any).artifacts as Artifact[], 'sm')}
                                                   </div>
                                                 )}
@@ -5768,7 +5256,7 @@ function AppLoaded(): JSX.Element {
                                     aria-expanded={hasItems ? open : false}
                                   >
                                     <span className="text-[12px] font-medium text-muted-foreground group-hover:text-foreground">
-                                      已注入 {memoryCount}条记忆
+                                      {appRuntimeText.injectedMemories.replace('{count}', String(memoryCount))}
                                     </span>
                                     <span className="text-[11px] text-muted-foreground/40 whitespace-nowrap tabular-nums">
                                       {typeof injection?.durationMs === 'number' ? `${injection.durationMs}ms` : ''}
@@ -5837,18 +5325,7 @@ function AppLoaded(): JSX.Element {
                               const isThinking = Boolean(isThinkingRaw && isLoading && isLatest)
                               const msgId = String(msg.id || '')
                               const open = reasoningOpenByMsgId[msgId] ?? isThinking
-                              const headerText =
-                                settings.language === 'zh'
-                                  ? isThinking
-                                    ? '思考中…'
-                                    : '思考已完成'
-                                  : settings.language === 'ja'
-                                    ? isThinking
-                                      ? '思考中…'
-                                      : '思考完了'
-                                    : isThinking
-                                      ? 'Thinking…'
-                                      : 'Thought complete'
+                              const headerText = isThinking ? appRuntimeText.thinkingRunning : appRuntimeText.thinkingDone
                               const toggle = () => {
                                 setReasoningOpenByMsgId((prev) => {
                                   const curr = prev[msgId] ?? isThinking
@@ -6095,7 +5572,7 @@ function AppLoaded(): JSX.Element {
                                     : 'opacity-0 group-hover:opacity-100'
                                 }`}
                                 onClick={() => void handleCopyMessage(String(msg.id || ''), String(msg.content || ''))}
-                                title={copiedMessageId === String(msg.id || '') ? '已复制' : '复制'}
+                                title={copiedMessageId === String(msg.id || '') ? appRuntimeText.copied : appRuntimeText.copy}
                               >
                                 {copiedMessageId === String(msg.id || '') ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
                               </button>
@@ -6228,7 +5705,7 @@ function AppLoaded(): JSX.Element {
                           <ChevronDown className="w-4 h-4" />
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent>下方有新内容</TooltipContent>
+                      <TooltipContent>{i18nText(appLang, 'app.newContentBelow')}</TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
                 </motion.div>
@@ -6308,7 +5785,7 @@ function AppLoaded(): JSX.Element {
                     isVoiceModelAvailable={isVoiceModelAvailable}
                     onToggleRecording={() => {
                       if (!isRecording && !isVoiceModelAvailable) {
-                        alert('请配置模型')
+                        alert(i18nText(appLang, 'app.configureModelFirst'))
                         return
                       }
                       void toggleRecording()
@@ -6352,7 +5829,7 @@ function AppLoaded(): JSX.Element {
                                   </div>
 
                                   <div className="space-y-2">
-                                    <h5 className="text-[11px] font-medium text-muted-foreground uppercase">Built-in</h5>
+                                    <h5 className="text-[11px] font-medium text-muted-foreground uppercase">{i18nText(appLang, 'common.builtIn')}</h5>
                                     <ScrollArea className="h-[240px]">
                                       <div className="flex flex-col gap-1 pr-3">
                                         {builtinTools.map((tool) => (
@@ -6516,7 +5993,7 @@ function AppLoaded(): JSX.Element {
                               <div className="flex items-center justify-between">
                                 <h4 className="font-medium text-xs leading-none">{t.composer.model}</h4>
                                 <div className="flex items-center gap-2">
-                                  <span className="text-xs text-muted-foreground">Auto</span>
+                                  <span className="text-xs text-muted-foreground">{i18nText(appLang, 'common.auto')}</span>
                                   <Switch checked={isAutoModel} onCheckedChange={toggleAutoModel} />
                                 </div>
                               </div>
@@ -6687,7 +6164,6 @@ function AppLoaded(): JSX.Element {
                           <span className="text-xs">{t.composer.completionTranslate}</span>
                           <Switch
                             checked={composer.completionTranslateEnabled !== false}
-                            disabled={composer.completionEnabled === false}
                             onCheckedChange={(checked) => updateComposer({ completionTranslateEnabled: Boolean(checked) })}
                           />
                         </div>
@@ -6695,7 +6171,6 @@ function AppLoaded(): JSX.Element {
                           <span className="text-xs">{t.composer.completionSpellSuggest}</span>
                           <Switch
                             checked={composer.completionSpellSuggestEnabled !== false}
-                            disabled={composer.completionEnabled === false}
                             onCheckedChange={(checked) => updateComposer({ completionSpellSuggestEnabled: Boolean(checked) })}
                           />
                         </div>
@@ -6704,7 +6179,6 @@ function AppLoaded(): JSX.Element {
                           <select
                             className="h-7 rounded-md border bg-background px-2 text-xs"
                             value={String(Math.max(0, Math.min(12, Number(composer.completionContextLimit ?? 4) || 4)))}
-                            disabled={composer.completionEnabled === false}
                             onChange={(e) => updateComposer({ completionContextLimit: Number(e.target.value) })}
                           >
                             {[0, 2, 4, 6, 8, 10, 12].map((n) => (
@@ -6730,21 +6204,21 @@ function AppLoaded(): JSX.Element {
                         <Button
                           variant="ghost"
                           className="h-8 rounded-md gap-1.5 px-2.5 text-xs font-normal text-muted-foreground hover:text-foreground hover:bg-black/5 shrink-0 focus-visible:ring-0 focus-visible:ring-offset-0"
-                          title={topGitRepoDir ? topGitRepoDir : '无 Git 仓库'}
+                          title={topGitRepoDir ? topGitRepoDir : i18nText(appLang, 'app.noGitRepo')}
                         >
                           <GitBranch className="w-3.5 h-3.5 shrink-0" />
-                          <span className="max-w-[140px] truncate">{topGitRepoDir ? (topGitBranch || 'HEAD') : '无'}</span>
+                          <span className="max-w-[140px] truncate">{topGitRepoDir ? (topGitBranch || 'HEAD') : i18nText(appLang, 'app.noGitRepo')}</span>
                           <ChevronDown className="w-3.5 h-3.5 opacity-50 shrink-0" />
                         </Button>
                       </PopoverTrigger>
                       <PopoverContent className="w-72 p-1.5" align="end" side="top" sideOffset={8}>
                         {!topGitRepoDir ? (
-                          <div className="px-2 py-2 text-xs text-muted-foreground">当前项目不是 Git 仓库</div>
+                          <div className="px-2 py-2 text-xs text-muted-foreground">{i18nText(appLang, 'app.currentProjectNotGitRepo')}</div>
                         ) : (
                           <div className="space-y-1">
-                            <div className="px-2 py-1 text-[11px] font-medium text-muted-foreground uppercase">分支</div>
+                            <div className="px-2 py-1 text-[11px] font-medium text-muted-foreground uppercase">{i18nText(appLang, 'app.branches')}</div>
                             {gitBranchLoading ? (
-                              <div className="px-2 py-2 text-xs text-muted-foreground">加载中…</div>
+                              <div className="px-2 py-2 text-xs text-muted-foreground">{i18nText(appLang, 'common.loading')}</div>
                             ) : (
                               (gitBranches.length ? gitBranches : [topGitBranch || 'HEAD']).map((b) => {
                                 const branch = String(b || '').trim()
@@ -6787,10 +6261,18 @@ function AppLoaded(): JSX.Element {
                         <TooltipContent side="top" className="text-xs">
                           <div className="flex flex-col gap-1">
                             <div className="font-medium">
-                              Context Usage: {usageStats.percentage > 0 ? `${usageStats.percentage.toFixed(1)}%` : '0%'}
+                              {i18nText(appLang, 'app.contextUsage', {
+                                percent: usageStats.percentage > 0 ? `${usageStats.percentage.toFixed(1)}%` : '0%'
+                              })}
                             </div>
-                            <div className="text-muted-foreground">Used: {formatTokenCount(usageStats.used)}</div>
-                            {usageStats.total > 0 && <div className="text-muted-foreground">Limit: {formatTokenCount(usageStats.total)}</div>}
+                            <div className="text-muted-foreground">
+                              {i18nText(appLang, 'app.contextUsed', { used: formatTokenCount(usageStats.used) })}
+                            </div>
+                            {usageStats.total > 0 && (
+                              <div className="text-muted-foreground">
+                                {i18nText(appLang, 'app.contextLimit', { limit: formatTokenCount(usageStats.total) })}
+                              </div>
+                            )}
                           </div>
                         </TooltipContent>
                       </Tooltip>
@@ -6879,6 +6361,7 @@ function ChatComposer({
   onToggleRecording: () => void
   leftControls: ReactNode
 }): JSX.Element {
+  const uiLang = resolveAppLang(useStore((s) => s.settings?.language))
   const [value, setValue] = useState('')
   const [pendingTabCompletion, setPendingTabCompletion] = useState<{
     base: string
@@ -7415,7 +6898,7 @@ function ChatComposer({
       {spellSuggestState && !slashMenuOpen ? (
         <div className="absolute left-0 bottom-full z-40 mb-2 w-[260px] max-w-[min(100vw-2.5rem,260px)] overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-md">
           <div className="border-b px-3 py-2 text-[11px] text-muted-foreground">
-            拼写建议：{spellSuggestState.word}
+            {i18nText(uiLang, 'app.spellSuggestions', { word: spellSuggestState.word })}
           </div>
           <div className="max-h-[220px] overflow-y-auto p-1.5 custom-scrollbar">
             {spellSuggestState.candidates.map((candidate, idx) => {
@@ -7632,7 +7115,7 @@ function ChatComposer({
                 : `text-muted-foreground hover:text-foreground hover:bg-black/5 ${isVoiceModelAvailable ? '' : 'opacity-50'}`
             }`}
             onClick={onToggleRecording}
-            title={isRecording ? 'Stop Recording' : 'Voice Input'}
+            title={isRecording ? i18nText(uiLang, 'app.stopRecording') : i18nText(uiLang, 'app.voiceInput')}
           >
             {isRecording ? (
               <div className="flex items-end justify-center gap-[2px] w-4 h-4">

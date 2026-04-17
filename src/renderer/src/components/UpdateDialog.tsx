@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { useUpdateStore } from '../store/useUpdateStore'
+import { useStore } from '../store/useStore'
+import { i18nText, resolveAppLang } from '@/i18n'
 
 function formatPercent(v: number | undefined): string {
   if (typeof v !== 'number' || Number.isNaN(v)) return ''
@@ -16,6 +18,7 @@ function toNotesText(raw: string | undefined): string {
 }
 
 export function UpdateDialog() {
+  const lang = resolveAppLang(useStore((s) => s.settings?.language))
   const dialogOpen = useUpdateStore((s) => s.dialogOpen)
   const setDialogOpen = useUpdateStore((s) => s.setDialogOpen)
   const updateState = useUpdateStore((s) => s.state)
@@ -23,18 +26,18 @@ export function UpdateDialog() {
 
   const t = useMemo(() => {
     return {
-      title: '软件更新',
-      found: '发现新版本可用',
-      upToDate: '当前已是最新版本',
-      error: '更新失败',
-      cancel: '取消',
-      later: '稍后',
-      downloadNow: '立即下载',
-      downloading: '下载中…',
-      downloaded: '下载完成！准备安装。',
-      restartNow: '立即重启'
+      title: i18nText(lang, 'update.title'),
+      found: i18nText(lang, 'update.found'),
+      upToDate: i18nText(lang, 'update.upToDate'),
+      error: i18nText(lang, 'update.error'),
+      cancel: i18nText(lang, 'update.cancel'),
+      later: i18nText(lang, 'update.later'),
+      downloadNow: i18nText(lang, 'update.downloadNow'),
+      downloading: i18nText(lang, 'update.downloading'),
+      downloaded: i18nText(lang, 'update.downloaded'),
+      restartNow: i18nText(lang, 'update.restartNow')
     }
-  }, [])
+  }, [lang])
 
   const status = updateState?.status || 'disabled'
   const currentVersion = updateState?.currentVersion || ''
@@ -96,7 +99,7 @@ export function UpdateDialog() {
 
         {notesText ? (
           <div className="mt-4 rounded-lg border border-black/5 dark:border-white/10 bg-secondary/10 p-3">
-            <div className="text-xs font-medium text-muted-foreground mb-2">更新内容</div>
+            <div className="text-xs font-medium text-muted-foreground mb-2">{i18nText(lang, 'update.releaseNotes')}</div>
             <div className="text-sm whitespace-pre-wrap leading-6 max-h-[260px] overflow-auto">{notesText}</div>
           </div>
         ) : null}

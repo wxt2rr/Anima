@@ -1,7 +1,10 @@
 import { CheckCircle2, Circle, Loader2, XCircle, ListTodo } from 'lucide-react'
 import { TodoItem } from '../store/useStore'
+import { useStore } from '../store/useStore'
+import { i18nText, resolveAppLang } from '@/i18n'
 
 export function TodoProgressCard({ todos }: { todos: TodoItem[] }) {
+  const lang = resolveAppLang(useStore((s) => s.settings?.language))
   if (!todos || todos.length === 0) return null
 
   const completedCount = todos.filter((t) => t.status === 'completed').length
@@ -12,7 +15,7 @@ export function TodoProgressCard({ todos }: { todos: TodoItem[] }) {
     <div className="mb-3 rounded-lg border border-border/50 bg-card/50 overflow-hidden">
       <div className="flex items-center gap-2 px-3 py-2 bg-muted/30 border-b border-border/50">
         <ListTodo className="w-4 h-4 text-primary" />
-        <span className="text-xs font-medium text-foreground">任务进度</span>
+        <span className="text-xs font-medium text-foreground">{i18nText(lang, 'todo.progress')}</span>
         <span className="text-xs text-muted-foreground ml-auto">
           {completedCount} / {totalCount} ({progress}%)
         </span>

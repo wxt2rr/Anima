@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useStore } from '@/store/useStore';
+import { i18nText, resolveAppLang } from '@/i18n'
 
 export const GitPanel: React.FC<{ active?: boolean }> = ({ active = true }) => {
   const settings = useStore((s) => s.settings)
@@ -16,6 +17,7 @@ export const GitPanel: React.FC<{ active?: boolean }> = ({ active = true }) => {
   const activeProjectDir = activeProjectId
     ? String((projects.find((p) => String(p?.id || '').trim() === activeProjectId) as any)?.dir || '').trim()
     : ''
+  const lang = resolveAppLang(settings?.language)
   const [cwd, setCwd] = useState<string>('');
   const [isRepo, setIsRepo] = useState(false);
   const [status, setStatus] = useState<any>(null);
@@ -211,8 +213,8 @@ export const GitPanel: React.FC<{ active?: boolean }> = ({ active = true }) => {
     return (
       <div className="flex flex-col items-center justify-center h-full p-4 space-y-4">
         <GitBranch className="w-12 h-12 text-muted-foreground/30" />
-        <p className="text-sm text-muted-foreground">No repository opened.</p>
-        <Button onClick={handlePickRepo} size="sm">Open Repository</Button>
+        <p className="text-sm text-muted-foreground">{i18nText(lang, 'git.noRepoOpened')}</p>
+        <Button onClick={handlePickRepo} size="sm">{i18nText(lang, 'git.openRepo')}</Button>
       </div>
     );
   }
@@ -222,11 +224,11 @@ export const GitPanel: React.FC<{ active?: boolean }> = ({ active = true }) => {
         <div className="flex flex-col items-center justify-center h-full p-6 space-y-6 text-center">
             <FolderPlus className="w-16 h-16 text-muted-foreground/20" />
             <div className="space-y-2">
-                <h3 className="font-semibold">No Git Repository</h3>
-                <p className="text-sm text-muted-foreground">The current folder is not a git repository.</p>
+                <h3 className="font-semibold">{i18nText(lang, 'git.noGitRepo')}</h3>
+                <p className="text-sm text-muted-foreground">{i18nText(lang, 'git.notGitFolder')}</p>
             </div>
-            <Button onClick={handleInit}>Initialize Repository</Button>
-            {!activeProjectDir && <Button variant="ghost" size="sm" onClick={handlePickRepo}>Open Different Folder</Button>}
+            <Button onClick={handleInit}>{i18nText(lang, 'git.initRepo')}</Button>
+            {!activeProjectDir && <Button variant="ghost" size="sm" onClick={handlePickRepo}>{i18nText(lang, 'git.openDifferentFolder')}</Button>}
         </div>
       );
   }
@@ -254,7 +256,7 @@ export const GitPanel: React.FC<{ active?: boolean }> = ({ active = true }) => {
              <GitBranch className="w-4 h-4 text-muted-foreground" />
              <Select value={currentBranch} onValueChange={handleBranchSwitch}>
                 <SelectTrigger className="h-7 text-xs border-none bg-transparent focus:ring-0 p-0 gap-1 w-auto max-w-full">
-                    <SelectValue placeholder="Branch" />
+                    <SelectValue placeholder={i18nText(lang, 'git.branchPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
                     {branches.map(b => <SelectItem key={b} value={b} className="text-xs">{b}</SelectItem>)}
@@ -274,14 +276,14 @@ export const GitPanel: React.FC<{ active?: boolean }> = ({ active = true }) => {
       {/* Commit Input */}
       <div className="p-3 space-y-3 shrink-0 border-b border-black/5">
         <Textarea 
-          placeholder="Commit message..." 
+          placeholder={i18nText(lang, 'git.commitPlaceholder')}
           className="resize-none h-20 text-xs bg-muted/30"
           value={message}
           onChange={e => setMessage(e.target.value)}
         />
         <Button className="w-full h-8 text-xs" onClick={handleCommit} disabled={!message || loading}>
           <Check className="w-3.5 h-3.5 mr-2" />
-          Commit
+          {i18nText(lang, 'git.commit')}
         </Button>
       </div>
 
@@ -292,7 +294,7 @@ export const GitPanel: React.FC<{ active?: boolean }> = ({ active = true }) => {
             <Collapsible open={changesOpen} onOpenChange={setChangesOpen} className="w-full">
                 <CollapsibleTrigger className="flex items-center w-full px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors">
                     {changesOpen ? <ChevronDown className="w-3.5 h-3.5 mr-1" /> : <ChevronRight className="w-3.5 h-3.5 mr-1" />}
-                    Changes ({allChangedFiles.length})
+                    {i18nText(lang, 'git.changes', { count: allChangedFiles.length })}
                     <div className="ml-auto flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
                         <Plus className="w-3.5 h-3.5" />
                     </div>
@@ -300,7 +302,7 @@ export const GitPanel: React.FC<{ active?: boolean }> = ({ active = true }) => {
                 <CollapsibleContent>
                     <div className="px-0 pb-2">
                         {allChangedFiles.length === 0 && (
-                            <p className="text-xs text-muted-foreground text-center py-4 italic">No changes detected</p>
+                            <p className="text-xs text-muted-foreground text-center py-4 italic">{i18nText(lang, 'git.noChanges')}</p>
                         )}
                         {allChangedFiles.map((file: any) => {
                             const isStaged = file.index !== '?' && file.index !== ' ' && file.index !== undefined;
@@ -331,12 +333,12 @@ export const GitPanel: React.FC<{ active?: boolean }> = ({ active = true }) => {
             <Collapsible open={stashesOpen} onOpenChange={setStashesOpen} className="w-full">
                 <CollapsibleTrigger className="flex items-center w-full px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors">
                     {stashesOpen ? <ChevronDown className="w-3.5 h-3.5 mr-1" /> : <ChevronRight className="w-3.5 h-3.5 mr-1" />}
-                    Stashes
+                    {i18nText(lang, 'git.stashes')}
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                     <div className="px-0 pb-2">
                         {stashes.length === 0 ? (
-                            <p className="text-xs text-muted-foreground text-center py-2 italic">No stashes</p>
+                            <p className="text-xs text-muted-foreground text-center py-2 italic">{i18nText(lang, 'git.noStashes')}</p>
                         ) : (
                             stashes.map((stash: any, i) => (
                                 <div key={i} className="flex items-center gap-2 px-4 py-1.5 hover:bg-accent/50 text-xs truncate">
@@ -353,12 +355,12 @@ export const GitPanel: React.FC<{ active?: boolean }> = ({ active = true }) => {
             <Collapsible open={headOpen} onOpenChange={setHeadOpen} className="w-full">
                 <CollapsibleTrigger className="flex items-center w-full px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors">
                     {headOpen ? <ChevronDown className="w-3.5 h-3.5 mr-1" /> : <ChevronRight className="w-3.5 h-3.5 mr-1" />}
-                    HEAD
+                    {i18nText(lang, 'git.head')}
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                     <div className="px-0 pb-2">
                         {logs.length === 0 ? (
-                            <p className="text-xs text-muted-foreground text-center py-4 italic">No commits yet</p>
+                            <p className="text-xs text-muted-foreground text-center py-4 italic">{i18nText(lang, 'git.noCommits')}</p>
                         ) : (
                             <div className="space-y-1">
                                 {logs.map((commit: any) => (

@@ -5,6 +5,7 @@ import 'xterm/css/xterm.css'
 import { Button } from '@/components/ui/button'
 import { Plus, X } from 'lucide-react'
 import { useStore } from '@/store/useStore'
+import { i18nText, resolveAppLang } from '@/i18n'
 
 type TerminalTab = {
   id: string
@@ -23,6 +24,7 @@ export const TerminalPanel: React.FC<{ active?: boolean }> = ({ active = true })
       : ''
     return activeProjectDir || workspaceDirSetting || undefined
   }, [activeProjectId, projects, workspaceDirSetting])
+  const lang = resolveAppLang(useStore((s) => s.settings?.language))
 
   const [tabs, setTabs] = useState<TerminalTab[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -72,7 +74,7 @@ export const TerminalPanel: React.FC<{ active?: boolean }> = ({ active = true })
     if (!res.ok || !res.id) return
 
     setTabs((prev) => {
-      const next = [...prev, { id: res.id!, title: `Terminal ${prev.length + 1}` }]
+      const next = [...prev, { id: res.id!, title: i18nText(lang, 'terminal.tabTitle', { index: prev.length + 1 }) }]
       return next
     })
     setActiveId(res.id)
@@ -189,7 +191,7 @@ export const TerminalPanel: React.FC<{ active?: boolean }> = ({ active = true })
               size="icon"
               className="h-6 w-6 hover:bg-[#333] text-gray-400"
               onClick={() => void createTerminal()}
-              title="Create Terminal"
+              title={i18nText(lang, 'terminal.create')}
             >
               <Plus className="w-3.5 h-3.5" />
             </Button>
@@ -202,7 +204,7 @@ export const TerminalPanel: React.FC<{ active?: boolean }> = ({ active = true })
             size="icon"
             className="h-6 w-6 hover:bg-[#333] text-gray-400"
             onClick={() => void createTerminal()}
-            title="Create Terminal"
+            title={i18nText(lang, 'terminal.create')}
           >
             <Plus className="w-3.5 h-3.5" />
           </Button>
@@ -212,10 +214,10 @@ export const TerminalPanel: React.FC<{ active?: boolean }> = ({ active = true })
       {tabs.length === 0 ? (
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center space-y-3">
-            <div className="text-xs text-gray-400">No active terminal</div>
+            <div className="text-xs text-gray-400">{i18nText(lang, 'terminal.noActive')}</div>
             <Button size="sm" variant="secondary" onClick={() => void createTerminal()}>
               <Plus className="w-4 h-4 mr-2" />
-              Create Terminal
+              {i18nText(lang, 'terminal.create')}
             </Button>
           </div>
         </div>
@@ -231,7 +233,7 @@ export const TerminalPanel: React.FC<{ active?: boolean }> = ({ active = true })
           ))}
           {!hasActive && (
             <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-400">
-              No active terminal
+              {i18nText(lang, 'terminal.noActive')}
             </div>
           )}
         </div>
