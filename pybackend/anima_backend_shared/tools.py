@@ -93,6 +93,18 @@ def _resolve_workspace_roots(args: Dict[str, Any], workspace_dir: str) -> List[s
     return roots
 
 
+def _resolve_effective_workspace_dir(workspace_dir: str, args: Dict[str, Any]) -> str:
+    wdir = str(workspace_dir or "").strip()
+    if wdir:
+        return wdir
+    if _resolve_permission_mode(args) == "full_access":
+        try:
+            return norm_abs(str(Path.home()))
+        except Exception:
+            return str(Path.home())
+    return ""
+
+
 def _is_path_allowed(target: str, workspace_dir: str, args: Dict[str, Any]) -> bool:
     if _resolve_permission_mode(args) == "full_access":
         return True
@@ -2015,18 +2027,20 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         res["text"] = text
         return json.dumps(res, ensure_ascii=False)
 
+    fs_workspace_dir = _resolve_effective_workspace_dir(workspace_dir, args)
+
     if name == "glob_files":
-        if not workspace_dir:
+        if not fs_workspace_dir:
             raise RuntimeError("No workspace directory selected")
         pattern = str(args.get("pattern") or "").strip()
         if not pattern:
             return json.dumps({"paths": []}, ensure_ascii=False)
-        paths = [str(p) for p in Path(workspace_dir).glob(pattern) if p.is_file()]
-        rel = [str(Path(p).resolve().relative_to(Path(workspace_dir).resolve())) for p in paths[:200]]
+        paths = [str(p) for p in Path(fs_workspace_dir).glob(pattern) if p.is_file()]
+        rel = [str(Path(p).resolve().relative_to(Path(fs_workspace_dir).resolve())) for p in paths[:200]]
         return json.dumps({"paths": rel}, ensure_ascii=False)
 
     if name == "screenshot":
-        if not workspace_dir:
+        if not fs_workspace_dir:
             raise RuntimeError("No workspace directory selected")
         mode = str(args.get("mode") or "screen").strip() or "screen"
         if mode != "screen":
@@ -2034,20 +2048,20 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
 
         rel_path = str(args.get("path") or "").strip()
         if rel_path:
-            target = norm_abs(str(Path(workspace_dir) / rel_path))
-            if not _is_path_allowed(target, workspace_dir, args):
+            target = norm_abs(str(Path(fs_workspace_dir) / rel_path))
+            if not _is_path_allowed(target, fs_workspace_dir, args):
                 raise RuntimeError("Path outside workspace")
             if not str(target).lower().endswith(".png"):
                 target = target + ".png"
         else:
-            out_dir = Path(workspace_dir) / ".anima" / "artifacts"
+            out_dir = Path(fs_workspace_dir) / ".anima" / "artifacts"
             out_dir.mkdir(parents=True, exist_ok=True)
             ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             target = norm_abs(str(out_dir / f"screenshot_{ts}.png"))
 
         p = subprocess.run(
             ["screencapture", "-x", "-t", "png", target],
-            cwd=workspace_dir,
+            cwd=fs_workspace_dir,
             capture_output=True,
             text=True,
             env=safe_env(),
@@ -2058,7 +2072,7 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         if not os.path.isfile(target):
             raise RuntimeError("Screenshot file not created")
 
-        rel = str(Path(target).resolve().relative_to(Path(workspace_dir).resolve()))
+        rel = str(Path(target).resolve().relative_to(Path(fs_workspace_dir).resolve()))
         return json.dumps(
             {
                 "ok": True,
@@ -2068,7 +2082,7 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         )
 
     if name == "generate_image":
-        if not workspace_dir:
+        if not fs_workspace_dir:
             raise RuntimeError("No workspace directory selected")
         prompt = str(args.get("prompt") or "").strip()
         if not prompt:
@@ -2150,13 +2164,13 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
 
         rel_path = str(args.get("path") or "").strip()
         if rel_path:
-            target = norm_abs(str(Path(workspace_dir) / rel_path))
-            if not _is_path_allowed(target, workspace_dir, args):
+            target = norm_abs(str(Path(fs_workspace_dir) / rel_path))
+            if not _is_path_allowed(target, fs_workspace_dir, args):
                 raise RuntimeError("Path outside workspace")
             if not str(target).lower().endswith(".png"):
                 target = target + ".png"
         else:
-            out_dir = Path(workspace_dir) / ".anima" / "artifacts"
+            out_dir = Path(fs_workspace_dir) / ".anima" / "artifacts"
             out_dir.mkdir(parents=True, exist_ok=True)
             ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             target = norm_abs(str(out_dir / f"image_{ts}.png"))
@@ -2166,14 +2180,14 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         if not os.path.isfile(target):
             raise RuntimeError("Image file not created")
 
-        rel = str(Path(target).resolve().relative_to(Path(workspace_dir).resolve()))
+        rel = str(Path(target).resolve().relative_to(Path(fs_workspace_dir).resolve()))
         return json.dumps(
             {"ok": True, "artifacts": [{"kind": "image", "path": rel, "mime": mime, "title": str(Path(rel).name)}]},
             ensure_ascii=False,
         )
 
     if name == "generate_video":
-        if not workspace_dir:
+        if not fs_workspace_dir:
             raise RuntimeError("No workspace directory selected")
         prompt = str(args.get("prompt") or "").strip()
         if not prompt:
@@ -2262,13 +2276,13 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
 
         rel_path = str(args.get("path") or "").strip()
         if rel_path:
-            target = norm_abs(str(Path(workspace_dir) / rel_path))
-            if not _is_path_allowed(target, workspace_dir, args):
+            target = norm_abs(str(Path(fs_workspace_dir) / rel_path))
+            if not _is_path_allowed(target, fs_workspace_dir, args):
                 raise RuntimeError("Path outside workspace")
             if not re.search(r"\.(mp4|webm|mov)$", str(target).lower()):
                 target = target + ".mp4"
         else:
-            out_dir = Path(workspace_dir) / ".anima" / "artifacts"
+            out_dir = Path(fs_workspace_dir) / ".anima" / "artifacts"
             out_dir.mkdir(parents=True, exist_ok=True)
             ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             target = norm_abs(str(out_dir / f"video_{ts}.mp4"))
@@ -2278,7 +2292,7 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         if not os.path.isfile(target):
             raise RuntimeError("Video file not created")
 
-        rel = str(Path(target).resolve().relative_to(Path(workspace_dir).resolve()))
+        rel = str(Path(target).resolve().relative_to(Path(fs_workspace_dir).resolve()))
         if not mime:
             mime = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
         return json.dumps(
@@ -2343,12 +2357,12 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         return json.dumps(out, ensure_ascii=False)
 
     if name == "list_dir":
-        if not workspace_dir:
+        if not fs_workspace_dir:
             raise RuntimeError("No workspace directory selected")
         path = str(args.get("path") or "").strip()
         max_entries = int(args.get("maxEntries") or 200)
-        target = norm_abs(str(Path(workspace_dir) / path))
-        if not _is_path_allowed(target, workspace_dir, args):
+        target = norm_abs(str(Path(fs_workspace_dir) / path))
+        if not _is_path_allowed(target, fs_workspace_dir, args):
             raise RuntimeError("Path outside workspace")
         p = Path(target)
         if not p.exists() or not p.is_dir():
@@ -2361,12 +2375,12 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         return json.dumps({"entries": entries}, ensure_ascii=False)
 
     if name == "read_file":
-        if not workspace_dir:
+        if not fs_workspace_dir:
             raise RuntimeError("No workspace directory selected")
         path = str(args.get("path") or "").strip()
         max_bytes = int(args.get("maxBytes") or MAX_FILE_BYTES_TOOL)
-        target = norm_abs(str(Path(workspace_dir) / path))
-        if not _is_path_allowed(target, workspace_dir, args):
+        target = norm_abs(str(Path(fs_workspace_dir) / path))
+        if not _is_path_allowed(target, fs_workspace_dir, args):
             raise RuntimeError("Path outside workspace")
         text, meta = read_text_file(target, max_bytes=max_bytes)
         return json.dumps({"meta": meta, "text": text}, ensure_ascii=False)
@@ -2375,11 +2389,11 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         patch_text = str(args.get("patch") or "")
         if not patch_text.strip():
             raise RuntimeError("patch is required")
-        out = _execute_freeform_patch(patch_text, workspace_dir, args)
+        out = _execute_freeform_patch(patch_text, fs_workspace_dir, args)
         return json.dumps(out, ensure_ascii=False)
 
     if name == "rg_search":
-        if not workspace_dir:
+        if not fs_workspace_dir:
             raise RuntimeError("No workspace directory selected")
         pattern = str(args.get("pattern") or "").strip()
         if not pattern:
@@ -2387,7 +2401,7 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         glob = str(args.get("glob") or "").strip()
         max_matches = int(args.get("maxMatches") or 200)
         max_matches = max(1, min(2000, max_matches))
-        cmd = ["rg", "--no-heading", "--line-number", "--color", "never", pattern, workspace_dir]
+        cmd = ["rg", "--no-heading", "--line-number", "--color", "never", pattern, fs_workspace_dir]
         if glob:
             cmd.extend(["--glob", glob])
         try:
@@ -2402,14 +2416,14 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
                     continue
                 fp, lno, txt = parts
                 try:
-                    rel = str(Path(fp).resolve().relative_to(Path(workspace_dir).resolve()))
+                    rel = str(Path(fp).resolve().relative_to(Path(fs_workspace_dir).resolve()))
                 except Exception:
                     rel = fp
                 matches.append({"path": rel, "line": int(lno) if lno.isdigit() else lno, "text": txt})
             return json.dumps({"matches": matches}, ensure_ascii=False)
         except FileNotFoundError:
             matches = []
-            root = Path(workspace_dir)
+            root = Path(fs_workspace_dir)
             rx = re.compile(pattern)
             for p in root.rglob("*"):
                 if not p.is_file():

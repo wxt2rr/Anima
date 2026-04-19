@@ -5716,6 +5716,38 @@ class BackendCoreIntegrationTests(unittest.TestCase):
             obj = json.loads(out)
             self.assertEqual(str((obj.get("text") or "").strip()), "hello")
 
+    def test_list_dir_full_access_without_workspace_uses_home_dir(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        with tempfile.TemporaryDirectory() as td:
+            os.makedirs(os.path.join(td, "docs"), exist_ok=True)
+            with patch("anima_backend_shared.tools.Path.home", return_value=shared_tools.Path(td)):
+                out = shared_tools.execute_builtin_tool(
+                    "list_dir",
+                    {"path": "", "_animaPermissionMode": "full_access"},
+                    workspace_dir="",
+                )
+            obj = json.loads(out)
+            entries = obj.get("entries") if isinstance(obj.get("entries"), list) else []
+            names = [str((x or {}).get("name") or "") for x in entries if isinstance(x, dict)]
+            self.assertIn("docs", names)
+
+    def test_read_file_full_access_without_workspace_uses_home_dir(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        with tempfile.TemporaryDirectory() as td:
+            target = os.path.join(td, "note.txt")
+            with open(target, "w", encoding="utf-8") as f:
+                f.write("hello-full-access")
+            with patch("anima_backend_shared.tools.Path.home", return_value=shared_tools.Path(td)):
+                out = shared_tools.execute_builtin_tool(
+                    "read_file",
+                    {"path": "note.txt", "_animaPermissionMode": "full_access"},
+                    workspace_dir="",
+                )
+            obj = json.loads(out)
+            self.assertEqual(str((obj.get("text") or "").strip()), "hello-full-access")
+
     def test_bash_workspace_whitelist_passes_additional_workspace_roots_to_sandbox(self) -> None:
         import anima_backend_shared.tools as shared_tools
 
