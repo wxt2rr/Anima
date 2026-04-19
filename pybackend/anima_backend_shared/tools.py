@@ -1,11 +1,13 @@
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import base64
 import mimetypes
 import time
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import html
@@ -63,13 +65,38 @@ def _resolve_permission_mode(args: Dict[str, Any]) -> str:
     return "full_access" if mode == "full_access" else "workspace_whitelist"
 
 
+def _resolve_workspace_roots(args: Dict[str, Any], workspace_dir: str) -> List[str]:
+    roots: List[str] = []
+    seen = set()
+    wdir = str(workspace_dir or "").strip()
+    if wdir:
+        try:
+            wd = norm_abs(wdir)
+            roots.append(wd)
+            seen.add(wd)
+        except Exception:
+            pass
+    raw = args.get("_animaWorkspaceRoots")
+    if isinstance(raw, list):
+        for item in raw:
+            s = str(item or "").strip()
+            if not s:
+                continue
+            try:
+                ap = norm_abs(s)
+            except Exception:
+                continue
+            if ap in seen:
+                continue
+            seen.add(ap)
+            roots.append(ap)
+    return roots
+
+
 def _is_path_allowed(target: str, workspace_dir: str, args: Dict[str, Any]) -> bool:
     if _resolve_permission_mode(args) == "full_access":
         return True
-    roots: List[str] = [ANIMA_COMMAND_WHITELIST_ROOT]
-    wdir = str(workspace_dir or "").strip()
-    if wdir:
-        roots.insert(0, norm_abs(wdir))
+    roots: List[str] = [ANIMA_COMMAND_WHITELIST_ROOT, *_resolve_workspace_roots(args, workspace_dir)]
     return any(is_within(root, target) for root in roots)
 
 
@@ -95,6 +122,56 @@ def _safe_optional_command_list(raw: Any) -> List[str]:
             continue
         out.append(s)
     return out
+
+
+def _log_coder_event(stage: str, payload: Dict[str, Any]) -> None:
+    try:
+        ts = datetime.now(timezone.utc).isoformat()
+        print(f"[coder][{ts}][{stage}] {json.dumps(payload, ensure_ascii=False)}", flush=True)
+    except Exception:
+        return
+
+
+def _log_coder_stream_line(stage: str, text: str, log_base: Dict[str, Any]) -> None:
+    line = str(text or "").rstrip("\n")
+    if not line.strip():
+        return
+    preview = _clip_text(line, 1200)
+    _log_coder_event(
+        stage,
+        {
+            **log_base,
+            "text": preview,
+            "truncated": len(line) > len(preview),
+        },
+    )
+
+
+def _read_coder_pipe_stream(pipe: Any, stage: str, bucket: List[str], log_base: Dict[str, Any]) -> None:
+    if pipe is None:
+        return
+    try:
+        while True:
+            line = pipe.readline()
+            if line == "":
+                break
+            text = str(line)
+            bucket.append(text)
+            _log_coder_stream_line(stage, text, log_base)
+    except Exception as e:
+        _log_coder_event(
+            "stream_error",
+            {
+                **log_base,
+                "stream": stage,
+                "error": str(e),
+            },
+        )
+    finally:
+        try:
+            pipe.close()
+        except Exception:
+            pass
 
 
 def _matches_command_entry(command_text: str, entry: str) -> bool:
@@ -591,6 +668,311 @@ def _execute_freeform_patch(raw_patch: str, workspace_dir: str, args: Dict[str, 
     }
 
 
+def _normalize_coder_profile(raw: Any) -> Dict[str, Any]:
+    c = dict(raw) if isinstance(raw, dict) else {}
+    backend_kind = str(c.get("backendKind") or "").strip().lower()
+    if backend_kind == "claude":
+        backend_kind = "claude"
+    elif backend_kind == "custom":
+        backend_kind = "custom"
+    else:
+        backend_kind = "codex"
+    default_command = "claude" if backend_kind == "claude" else "codex"
+    default_args = ["-p", "{prompt}"] if backend_kind == "claude" else ["exec", "{prompt}"]
+    args = c.get("args")
+    if not isinstance(args, list) or not args:
+        args = list(default_args)
+    args = [str(x) for x in args]
+    timeout_ms = int(c.get("timeoutMs") or 1200000)
+    if timeout_ms <= 0:
+        timeout_ms = 1200000
+    max_output_chars = int(c.get("maxOutputChars") or 120000)
+    if max_output_chars <= 0:
+        max_output_chars = 120000
+    rp = c.get("resultPolicy") if isinstance(c.get("resultPolicy"), dict) else {}
+    message_mode = str(rp.get("messageMode") or "").strip().lower()
+    if message_mode not in ("all", "last", "summary"):
+        message_mode = "summary"
+    artifact_mode = str(rp.get("artifactMode") or "").strip().lower()
+    if artifact_mode not in ("none", "final", "all"):
+        artifact_mode = "final"
+    return {
+        "id": str(c.get("id") or "").strip(),
+        "enabled": bool(c.get("enabled")),
+        "name": str(c.get("name") or "Coder").strip() or "Coder",
+        "backendKind": backend_kind,
+        "backendLabel": str(c.get("backendLabel") or "").strip(),
+        "command": str(c.get("command") or default_command).strip() or default_command,
+        "args": args,
+        "cwd": str(c.get("cwd") or "").strip(),
+        "env": c.get("env") if isinstance(c.get("env"), dict) else {},
+        "timeoutMs": timeout_ms,
+        "maxOutputChars": max_output_chars,
+        "resultPolicy": {
+            "messageMode": message_mode,
+            "artifactMode": artifact_mode,
+            "includeDecisionRequests": bool(rp.get("includeDecisionRequests", True)),
+        },
+    }
+
+
+def _normalize_proxy_url(proxy_url: Any) -> str:
+    s = str(proxy_url or "").strip()
+    if not s:
+        return ""
+    lower = s.lower()
+    if "://" in lower:
+        return s
+    if s.startswith("/"):
+        return s
+    if ":" in s:
+        return "http://" + s
+    return s
+
+
+def _resolve_coder_profile(args: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    from .settings import load_settings
+
+    settings_obj = load_settings()
+    settings = settings_obj.get("settings") if isinstance(settings_obj, dict) else {}
+    if not isinstance(settings, dict):
+        settings = {}
+
+    raw_profiles = settings.get("coderProfiles")
+    profiles: List[Dict[str, Any]] = []
+    if isinstance(raw_profiles, list):
+        for item in raw_profiles:
+            p = _normalize_coder_profile(item)
+            if p.get("id"):
+                profiles.append(p)
+    raw_single = settings.get("coder")
+    if isinstance(raw_single, dict):
+        fallback = _normalize_coder_profile(raw_single)
+        if fallback.get("id"):
+            if all(str(x.get("id") or "") != str(fallback.get("id") or "") for x in profiles):
+                profiles.append(fallback)
+        elif not profiles:
+            fallback["id"] = "coder-default"
+            profiles.append(fallback)
+    if not profiles:
+        profiles = [_normalize_coder_profile({"id": "coder-default"})]
+
+    profile_id = str(args.get("profileId") or "").strip()
+    provider = str(args.get("provider") or "").strip().lower()
+    active_id = str(settings.get("activeCoderProfileId") or "").strip()
+
+    if profile_id:
+        for p in profiles:
+            if str(p.get("id") or "") == profile_id:
+                return p, settings
+        raise RuntimeError("Coder profile not found")
+
+    if provider and provider != "auto":
+        for p in profiles:
+            if str(p.get("backendKind") or "") == provider:
+                return p, settings
+        raise RuntimeError(f"Coder provider '{provider}' not found")
+
+    for p in profiles:
+        if str(p.get("id") or "") == active_id:
+            return p, settings
+    return profiles[0], settings
+
+
+def _clip_text(text: str, max_chars: int) -> str:
+    s = str(text or "")
+    if max_chars <= 0:
+        return ""
+    if len(s) <= max_chars:
+        return s
+    return s[: max(0, max_chars)] + "\n...[truncated]"
+
+
+def _normalize_artifact_item(item: Any, workspace_dir: str) -> Optional[Dict[str, Any]]:
+    if not isinstance(item, dict):
+        return None
+    raw_path = str(item.get("path") or "").strip()
+    if not raw_path:
+        return None
+    if not os.path.isabs(raw_path):
+        raw_path = str(Path(workspace_dir) / raw_path)
+    try:
+        path_abs = norm_abs(raw_path)
+    except Exception:
+        return None
+    if workspace_dir:
+        try:
+            if not is_within(norm_abs(workspace_dir), path_abs):
+                return None
+        except Exception:
+            return None
+    mime = str(item.get("mime") or mimetypes.guess_type(path_abs)[0] or "").strip()
+    kind = str(item.get("kind") or "").strip().lower()
+    if kind not in ("image", "video", "file"):
+        if mime.startswith("image/"):
+            kind = "image"
+        elif mime.startswith("video/"):
+            kind = "video"
+        else:
+            kind = "file"
+    out = {"kind": kind, "path": path_abs}
+    if mime:
+        out["mime"] = mime
+    title = str(item.get("title") or "").strip()
+    if title:
+        out["title"] = title
+    caption = str(item.get("caption") or "").strip()
+    if caption:
+        out["caption"] = caption
+    return out
+
+
+def _collect_coder_events(stdout_text: str, stderr_text: str, workspace_dir: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    messages: List[Dict[str, Any]] = []
+    artifacts: List[Dict[str, Any]] = []
+    decision_requests: List[Dict[str, Any]] = []
+
+    for line in str(stdout_text or "").splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        obj: Any = None
+        try:
+            obj = json.loads(s)
+        except Exception:
+            obj = None
+        if isinstance(obj, dict):
+            content = str(obj.get("content") or obj.get("message") or "").strip()
+            if content:
+                role = str(obj.get("role") or "assistant").strip() or "assistant"
+                messages.append({"role": role, "content": content})
+            raw_artifacts = obj.get("artifacts")
+            if isinstance(raw_artifacts, list):
+                for item in raw_artifacts:
+                    normalized = _normalize_artifact_item(item, workspace_dir)
+                    if normalized:
+                        artifacts.append(normalized)
+            if isinstance(obj.get("artifact"), dict):
+                normalized = _normalize_artifact_item(obj.get("artifact"), workspace_dir)
+                if normalized:
+                    artifacts.append(normalized)
+            if isinstance(obj.get("approval"), dict):
+                decision_requests.append({"type": "approval", **obj.get("approval")})
+            if bool(obj.get("needsDecision")):
+                decision_requests.append(
+                    {
+                        "type": "decision",
+                        "message": str(obj.get("decisionMessage") or content or "").strip(),
+                    }
+                )
+            continue
+        messages.append({"role": "assistant", "content": s})
+
+    if not messages and str(stdout_text or "").strip():
+        messages.append({"role": "assistant", "content": str(stdout_text or "").strip()})
+    if str(stderr_text or "").strip():
+        messages.append({"role": "system", "content": str(stderr_text or "").strip()})
+    return messages, artifacts, decision_requests
+
+
+def _build_coder_result(
+    *,
+    profile: Dict[str, Any],
+    prompt: str,
+    command: str,
+    command_args: List[str],
+    cwd: str,
+    exit_code: int,
+    stdout_text: str,
+    stderr_text: str,
+    timeout_ms: int,
+    max_output_chars: int,
+    message_mode: str,
+    artifact_mode: str,
+    include_decision_requests: bool,
+    workspace_dir: str,
+    elapsed_ms: int,
+) -> Dict[str, Any]:
+    messages, artifacts, decision_requests = _collect_coder_events(stdout_text, stderr_text, workspace_dir)
+    clipped_stdout = _clip_text(stdout_text, max_output_chars)
+    clipped_stderr = _clip_text(stderr_text, max_output_chars)
+    if message_mode == "all":
+        selected_messages = messages
+    elif message_mode == "last":
+        selected_messages = messages[-1:] if messages else []
+    else:
+        last = messages[-1]["content"] if messages else clipped_stdout or clipped_stderr
+        selected_messages = [{"role": "assistant", "content": _clip_text(last, min(max_output_chars, 1200))}] if last else []
+    if artifact_mode == "none":
+        selected_artifacts: List[Dict[str, Any]] = []
+    elif artifact_mode == "final":
+        selected_artifacts = artifacts[-1:] if artifacts else []
+    else:
+        selected_artifacts = artifacts
+    final_message = ""
+    for msg in reversed(messages):
+        content = str(msg.get("content") or "").strip()
+        if content:
+            final_message = content
+            break
+    if not final_message:
+        final_message = _clip_text(clipped_stdout or clipped_stderr, min(max_output_chars, 2000))
+    summary = _clip_text(final_message, min(max_output_chars, 1200))
+    return {
+        "ok": exit_code == 0,
+        "provider": str(profile.get("backendKind") or "codex"),
+        "profileId": str(profile.get("id") or ""),
+        "profileName": str(profile.get("name") or ""),
+        "exitCode": exit_code,
+        "elapsedMs": elapsed_ms,
+        "command": command,
+        "args": command_args,
+        "cwd": cwd,
+        "timeoutMs": timeout_ms,
+        "prompt": _clip_text(prompt, 2000),
+        "summary": summary,
+        "finalMessage": final_message,
+        "messages": selected_messages,
+        "artifacts": selected_artifacts,
+        "needsDecision": bool(decision_requests) and include_decision_requests,
+        "decisionRequests": decision_requests if include_decision_requests else [],
+        "raw": {"stdout": clipped_stdout, "stderr": clipped_stderr},
+    }
+
+
+def _build_coder_tool_payload(result: Dict[str, Any]) -> Dict[str, Any]:
+    ok = bool(result.get("ok"))
+    exit_code_raw = result.get("exitCode")
+    try:
+        exit_code = int(exit_code_raw if exit_code_raw is not None else 0)
+    except Exception:
+        exit_code = 0
+
+    raw = result.get("raw") if isinstance(result.get("raw"), dict) else {}
+    stdout_text = str(raw.get("stdout") or "")
+    stderr_text = str(raw.get("stderr") or "")
+
+    out: Dict[str, Any] = {
+        "ok": ok,
+        "exitCode": exit_code,
+        "stdout": stdout_text,
+    }
+    if (not ok) and stderr_text.strip():
+        out["stderr"] = stderr_text
+
+    artifacts = result.get("artifacts")
+    if isinstance(artifacts, list) and artifacts:
+        out["artifacts"] = artifacts
+
+    decision_requests = result.get("decisionRequests")
+    if isinstance(decision_requests, list) and decision_requests:
+        out["needsDecision"] = True
+        out["decisionRequests"] = decision_requests
+    elif bool(result.get("needsDecision")):
+        out["needsDecision"] = True
+    return out
+
+
 def builtin_tools() -> List[Dict[str, Any]]:
     return [
         {
@@ -857,6 +1239,23 @@ def builtin_tools() -> List[Dict[str, Any]]:
                         }
                     },
                     "required": ["patch"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "coder",
+                "description": "Run local coder CLI (Codex/Claude) synchronously and return normalized messages/artifacts.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string"},
+                        "provider": {"type": "string", "enum": ["auto", "codex", "claude", "custom"]},
+                        "profileId": {"type": "string"},
+                        "workspaceDir": {"type": "string"},
+                    },
+                    "required": ["prompt"],
                 },
             },
         },
@@ -1362,6 +1761,223 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
             ensure_ascii=False,
         )
 
+    if name == "coder":
+        prompt = str(args.get("prompt") or "").strip()
+        if not prompt:
+            raise RuntimeError("prompt is required")
+        profile, settings = _resolve_coder_profile(args)
+        command = str(profile.get("command") or "").strip()
+        if not command:
+            raise RuntimeError("coder command is required")
+        raw_command_args = profile.get("args") if isinstance(profile.get("args"), list) else []
+        command_args = [str(x).replace("{prompt}", prompt) for x in raw_command_args]
+        if not any("{prompt}" in str(x) for x in raw_command_args):
+            command_args.append(prompt)
+        invoked_command = " ".join([shlex.quote(command), *[shlex.quote(str(x)) for x in command_args]])
+        call_workspace_dir = str(args.get("workspaceDir") or workspace_dir or "").strip()
+        cwd_raw = str(args.get("cwd") or profile.get("cwd") or call_workspace_dir or workspace_dir or "").strip()
+        cwd = norm_abs(cwd_raw) if cwd_raw else norm_abs(call_workspace_dir) if call_workspace_dir else ""
+        if cwd and call_workspace_dir:
+            ws = norm_abs(call_workspace_dir)
+            if not _is_path_allowed(cwd, ws, args):
+                raise RuntimeError("Coder cwd outside workspace")
+        timeout_ms = int(profile.get("timeoutMs") or 1200000)
+        if timeout_ms <= 0:
+            timeout_ms = 1200000
+        max_output_chars = int(profile.get("maxOutputChars") or 120000)
+        if max_output_chars <= 0:
+            max_output_chars = 120000
+        env = safe_env()
+        profile_env = profile.get("env") if isinstance(profile.get("env"), dict) else {}
+        for k, v in profile_env.items():
+            env[str(k)] = str(v)
+        extra_env = args.get("env") if isinstance(args.get("env"), dict) else {}
+        for k, v in extra_env.items():
+            env[str(k)] = str(v)
+        proxy_keys = (
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "NO_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+            "no_proxy",
+        )
+        proxy_env_keys = [k for k in proxy_keys if str(env.get(k) or "").strip()]
+        proxy_source = "env" if proxy_env_keys else "none"
+        if not proxy_env_keys:
+            px = _normalize_proxy_url((settings.get("proxyUrl") if isinstance(settings, dict) else ""))
+            if px:
+                for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+                    env[k] = px
+                proxy_env_keys = [k for k in proxy_keys if str(env.get(k) or "").strip()]
+                proxy_source = "settings.proxyUrl" if proxy_env_keys else "none"
+        rp = profile.get("resultPolicy") if isinstance(profile.get("resultPolicy"), dict) else {}
+        message_mode = str(rp.get("messageMode") or "summary").strip().lower()
+        if message_mode not in ("all", "last", "summary"):
+            message_mode = "summary"
+        artifact_mode = str(rp.get("artifactMode") or "final").strip().lower()
+        if artifact_mode not in ("none", "final", "all"):
+            artifact_mode = "final"
+        include_decision_requests = bool(rp.get("includeDecisionRequests", True))
+        log_base = {
+            "provider": str(profile.get("backendKind") or ""),
+            "profileId": str(profile.get("id") or ""),
+            "profileName": str(profile.get("name") or ""),
+            "command": command,
+            "commandArgs": command_args,
+            "invokedCommand": invoked_command,
+            "cwd": cwd,
+            "timeoutMs": timeout_ms,
+            "maxOutputChars": max_output_chars,
+            "messageMode": message_mode,
+            "artifactMode": artifact_mode,
+            "includeDecisionRequests": include_decision_requests,
+            "proxyEnvConfigured": bool(proxy_env_keys),
+            "proxyEnvKeys": proxy_env_keys,
+            "proxySource": proxy_source,
+            "stdinMode": "devnull",
+            "workspaceDir": call_workspace_dir or workspace_dir or cwd,
+            "promptChars": len(prompt),
+        }
+        _log_coder_event("start", log_base)
+        started_at = int(time.time() * 1000)
+        proc: Optional[subprocess.Popen] = None
+        stdout_parts: List[str] = []
+        stderr_parts: List[str] = []
+        stdout_thread: Optional[threading.Thread] = None
+        stderr_thread: Optional[threading.Thread] = None
+        try:
+            proc = subprocess.Popen(
+                [command, *command_args],
+                cwd=cwd or None,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=1,
+            )
+            stdout_thread = threading.Thread(
+                target=_read_coder_pipe_stream,
+                args=(proc.stdout, "stdout", stdout_parts, log_base),
+                daemon=True,
+            )
+            stderr_thread = threading.Thread(
+                target=_read_coder_pipe_stream,
+                args=(proc.stderr, "stderr", stderr_parts, log_base),
+                daemon=True,
+            )
+            stdout_thread.start()
+            stderr_thread.start()
+            proc.wait(timeout=max(1, int(timeout_ms / 1000)))
+        except subprocess.TimeoutExpired as e:
+            if proc is not None:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                try:
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
+            if stdout_thread is not None:
+                stdout_thread.join(timeout=1)
+            if stderr_thread is not None:
+                stderr_thread.join(timeout=1)
+            stdout_text = "".join(stdout_parts)
+            stderr_text = "".join(stderr_parts)
+            ended_at = int(time.time() * 1000)
+            _log_coder_event(
+                "timeout",
+                {
+                    **log_base,
+                    "elapsedMs": max(0, ended_at - started_at),
+                    "error": str(e),
+                    "stdoutChars": len(stdout_text),
+                    "stderrChars": len(stderr_text),
+                    "stdoutPreview": _clip_text(stdout_text, 1500),
+                    "stderrPreview": _clip_text(stderr_text, 1500),
+                },
+            )
+            raise
+        except Exception as e:
+            if proc is not None:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            if stdout_thread is not None:
+                stdout_thread.join(timeout=1)
+            if stderr_thread is not None:
+                stderr_thread.join(timeout=1)
+            stdout_text = "".join(stdout_parts)
+            stderr_text = "".join(stderr_parts)
+            ended_at = int(time.time() * 1000)
+            _log_coder_event(
+                "error",
+                {
+                    **log_base,
+                    "elapsedMs": max(0, ended_at - started_at),
+                    "error": str(e),
+                    "stdoutChars": len(stdout_text),
+                    "stderrChars": len(stderr_text),
+                    "stdoutPreview": _clip_text(stdout_text, 1500),
+                    "stderrPreview": _clip_text(stderr_text, 1500),
+                },
+            )
+            raise
+        if stdout_thread is not None:
+            stdout_thread.join(timeout=1)
+        if stderr_thread is not None:
+            stderr_thread.join(timeout=1)
+        stdout_text = "".join(stdout_parts)
+        stderr_text = "".join(stderr_parts)
+        ended_at = int(time.time() * 1000)
+        _log_coder_event(
+            "finish",
+            {
+                **log_base,
+                "elapsedMs": max(0, ended_at - started_at),
+                "exitCode": int(proc.returncode or 0) if proc is not None else -1,
+                "stdoutChars": len(stdout_text),
+                "stderrChars": len(stderr_text),
+                "stdoutPreview": _clip_text(stdout_text, 1500),
+                "stderrPreview": _clip_text(stderr_text, 1500),
+            },
+        )
+        full_res = _build_coder_result(
+            profile=profile,
+            prompt=prompt,
+            command=command,
+            command_args=command_args,
+            cwd=cwd,
+            exit_code=int(proc.returncode or 0) if proc is not None else 1,
+            stdout_text=stdout_text,
+            stderr_text=stderr_text,
+            timeout_ms=timeout_ms,
+            max_output_chars=max_output_chars,
+            message_mode=message_mode,
+            artifact_mode=artifact_mode,
+            include_decision_requests=include_decision_requests,
+            workspace_dir=call_workspace_dir or workspace_dir or cwd,
+            elapsed_ms=max(0, ended_at - started_at),
+        )
+        res = _build_coder_tool_payload(full_res)
+        _log_coder_event(
+            "result",
+            {
+                **log_base,
+                "ok": bool(full_res.get("ok")),
+                "exitCode": int(full_res.get("exitCode") or 0),
+                "summary": _clip_text(str(full_res.get("summary") or ""), 1200),
+                "finalMessage": _clip_text(str(full_res.get("finalMessage") or ""), 1200),
+                "needsDecision": bool(full_res.get("needsDecision")),
+            },
+        )
+        return json.dumps(res, ensure_ascii=False)
+
     if name == "WebSearch":
         query = str(args.get("query") or "").strip()
         if not query:
@@ -1701,13 +2317,14 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
                     }
                     raise RuntimeError("ANIMA_DANGEROUS_COMMAND_APPROVAL:" + json.dumps(payload, ensure_ascii=False))
 
-        base_cwd = norm_abs(workspace_dir) if workspace_dir else norm_abs(str(Path.home()))
+        workspace_roots = _resolve_workspace_roots(args, workspace_dir)
+        base_cwd = workspace_roots[0] if workspace_roots else (norm_abs(workspace_dir) if workspace_dir else norm_abs(str(Path.home())))
         raw_cwd = str(args.get("cwd") or "").strip()
         target = norm_abs(str(Path(base_cwd) / raw_cwd)) if raw_cwd and not os.path.isabs(raw_cwd) else norm_abs(raw_cwd or base_cwd)
         if permission_mode == "full_access":
             run_cwd = target
         else:
-            allowed_roots = [ANIMA_COMMAND_WHITELIST_ROOT, base_cwd]
+            allowed_roots = [ANIMA_COMMAND_WHITELIST_ROOT, *workspace_roots, base_cwd]
             if not any(is_within(root, target) for root in allowed_roots):
                 raise RuntimeError("cwd outside allowed directory")
             run_cwd = target
@@ -1719,7 +2336,7 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
             timeout_ms=timeout_ms,
             permission_mode=permission_mode,
             workspace_dir=base_cwd,
-            allowed_roots=[ANIMA_COMMAND_WHITELIST_ROOT],
+            allowed_roots=[ANIMA_COMMAND_WHITELIST_ROOT, *workspace_roots],
             env=safe_env(),
             max_chars=20000,
         )

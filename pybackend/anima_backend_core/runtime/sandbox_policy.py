@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from anima_backend_shared.util import norm_abs
 
@@ -25,10 +25,39 @@ def resolve_workspace_dir(*, composer: Optional[Dict[str, Any]], settings_obj: O
         return ""
 
 
+def resolve_workspace_roots(*, composer: Optional[Dict[str, Any]], settings_obj: Optional[Dict[str, Any]]) -> List[str]:
+    c = composer if isinstance(composer, dict) else {}
+    s = settings_obj if isinstance(settings_obj, dict) else {}
+    out: List[str] = []
+    seen = set()
+
+    raw_roots = c.get("workspaceRoots")
+    if isinstance(raw_roots, list):
+        for item in raw_roots:
+            raw = str(item or "").strip()
+            if not raw:
+                continue
+            try:
+                ap = norm_abs(raw)
+            except Exception:
+                continue
+            if ap in seen:
+                continue
+            seen.add(ap)
+            out.append(ap)
+
+    base = resolve_workspace_dir(composer=c, settings_obj=s)
+    if base and base not in seen:
+        out.insert(0, base)
+
+    return out
+
+
 def normalize_composer_sandbox_fields(*, composer: Optional[Dict[str, Any]], settings_obj: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     c = dict(composer) if isinstance(composer, dict) else {}
     c["permissionMode"] = normalize_permission_mode(c.get("permissionMode"))
     c["workspaceDir"] = resolve_workspace_dir(composer=c, settings_obj=settings_obj)
+    c["workspaceRoots"] = resolve_workspace_roots(composer=c, settings_obj=settings_obj)
     approvals = c.get("dangerousCommandApprovals")
     if isinstance(approvals, list):
         out = []

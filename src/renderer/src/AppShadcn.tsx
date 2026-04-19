@@ -631,6 +631,7 @@ function AppLoaded(): JSX.Element {
     updateSettings,
     toggleSidebarCollapsed,
     createChat,
+    ensureActiveChatInDefaultSpace,
     ensureActiveChatInProject,
     initApp,
     setActiveRightPanel,
@@ -1840,6 +1841,7 @@ function AppLoaded(): JSX.Element {
       { id: 'bash', name: runtimeText.builtinTools.bash },
       { id: 'read_file', name: runtimeText.builtinTools.read_file },
       { id: 'rg_search', name: runtimeText.builtinTools.rg_search },
+      { id: 'coder', name: runtimeText.builtinTools.coder },
       { id: 'WebSearch', name: runtimeText.builtinTools.WebSearch },
       { id: 'WebFetch', name: runtimeText.builtinTools.WebFetch },
       { id: 'list_dir', name: runtimeText.builtinTools.list_dir }
@@ -2730,9 +2732,8 @@ function AppLoaded(): JSX.Element {
     if (existingChatId && stateNow.chats.some((c: any) => String(c?.id || '').trim() === existingChatId)) {
       return existingChatId
     }
-    await createChat({ expandSidebar: false })
-    return String(useStore.getState().activeChatId || '').trim()
-  }, [createChat, ensureActiveChatInProject])
+    return String(await ensureActiveChatInDefaultSpace()).trim()
+  }, [ensureActiveChatInDefaultSpace, ensureActiveChatInProject])
 
   const handleSend = async (
     rawText: string,
@@ -3623,10 +3624,7 @@ function AppLoaded(): JSX.Element {
     return [
       { id: 'builtin:new', name: 'new', title: '/new', description: slashText.newDesc, source: 'builtin', kind: 'action' },
       { id: 'builtin:status', name: 'status', title: '/status', description: slashText.statusDesc, source: 'builtin', kind: 'action' },
-      { id: 'builtin:mcp', name: 'mcp', title: '/mcp', description: slashText.mcpDesc, source: 'builtin', kind: 'action' },
-      { id: 'builtin:coder-status', name: 'coder-status', title: '/coder-status', description: slashText.coderStatusDesc, source: 'builtin', kind: 'action' },
-      { id: 'builtin:coder-start', name: 'coder-start', title: '/coder-start', description: slashText.coderStartDesc, source: 'builtin', kind: 'action' },
-      { id: 'builtin:coder-stop', name: 'coder-stop', title: '/coder-stop', description: slashText.coderStopDesc, source: 'builtin', kind: 'action' }
+      { id: 'builtin:mcp', name: 'mcp', title: '/mcp', description: slashText.mcpDesc, source: 'builtin', kind: 'action' }
     ]
   }, [slashText])
 
@@ -3755,40 +3753,6 @@ function AppLoaded(): JSX.Element {
         `- ${slashText.mcpDisabled}: ${disabled.length ? disabled.join(', ') : '-'}`
       ].join('\n')
       const ok = await appendSlashAssistantMessage(message)
-      return { handled: true as const, clearValue: ok as boolean }
-    }
-
-    if (command.name === 'coder-status') {
-      const res = await window.anima?.coder?.status?.()
-      const status = res?.ok ? res : { ok: false, error: 'Unavailable' }
-      const message = [
-        slashText.coderTitle,
-        `- ${slashText.coderName}: ${String(status.settings?.name || '-').trim() || '-'}`,
-        `- ${slashText.coderRunning}: ${status.running ? 'true' : 'false'}`,
-        `- ${slashText.coderPid}: ${status.pid ?? '-'}`,
-        `- ${slashText.coderTransport}: ${String(status.settings?.transport || '-').trim() || '-'}`,
-        `- ${slashText.coderEndpoint}: ${String(status.settings?.endpointType || '-').trim() || '-'}`,
-        `- ${slashText.coderDebugPort}: ${status.debugPortReady ? 'true' : 'false'}`,
-        `- ${slashText.coderError}: ${String(status.lastError || status.error || '-').trim() || '-'}`
-      ].join('\n')
-      const ok = await appendSlashAssistantMessage(message)
-      return { handled: true as const, clearValue: ok as boolean }
-    }
-
-    if (command.name === 'coder-start') {
-      const currentCoder = (useStore.getState().settings as any)?.coder
-      const res = await window.anima?.coder?.start?.({ settings: currentCoder })
-      const ok = await appendSlashAssistantMessage(
-        res?.ok ? slashText.coderStarted : slashText.coderStartFailed(String(res?.error || 'unknown error'))
-      )
-      return { handled: true as const, clearValue: ok as boolean }
-    }
-
-    if (command.name === 'coder-stop') {
-      const res = await window.anima?.coder?.stop?.()
-      const ok = await appendSlashAssistantMessage(
-        res?.ok ? slashText.coderStopped : slashText.coderStopFailed(String(res?.error || 'unknown error'))
-      )
       return { handled: true as const, clearValue: ok as boolean }
     }
 
@@ -4759,6 +4723,7 @@ function AppLoaded(): JSX.Element {
                                       return null
                                     }
                                     const resultText = typeof tr.resultPreview?.text === 'string' ? tr.resultPreview.text : ''
+                                    const resultFullText = typeof (tr as any)?.resultPreview?.fullText === 'string' ? String((tr as any).resultPreview.fullText) : ''
                                     const argsObj = (() => {
                                       const parsed = parseMaybeJson(tr.argsPreview?.text || '')
                                       return parsed && typeof parsed === 'object' ? parsed : {}
@@ -5012,6 +4977,13 @@ function AppLoaded(): JSX.Element {
                                     } else if (resultObj?.ok === false) {
                                       const errMsg = String(resultObj?.error || traceI18n.failed).trim()
                                       detailMarkdown = errMsg ? `- ${traceI18n.failed}: ${errMsg}` : ''
+                                    } else if (resultObj && typeof resultObj === 'object' && resultObj?._preview?.truncated === true) {
+                                      const fullText = String(resultFullText || '').trim()
+                                      if (fullText) {
+                                        detailMarkdown = `\`\`\`json\n${fullText}\n\`\`\``
+                                      } else {
+                                        detailMarkdown = `- ${traceI18n.truncated}\n- \`${String(resultText || '').trim()}\``
+                                      }
                                     }
 
                                     const hasDetail =

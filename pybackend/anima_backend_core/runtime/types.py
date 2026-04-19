@@ -23,6 +23,7 @@ class Artifact(TypedDict, total=False):
 class ToolPreview(TypedDict, total=False):
     text: str
     truncated: bool
+    fullText: str
 
 
 class ToolDiff(TypedDict):

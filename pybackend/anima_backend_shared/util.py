@@ -100,12 +100,12 @@ def preview_tool_result(raw: str, max_chars: int) -> Dict[str, Any]:
         if isinstance(redacted, dict):
             if isinstance(redacted.get("results"), list):
                 fitted = _fit_results_list(redacted, "results")
-                return {"text": _dump(fitted), "truncated": True}
+                return {"text": _dump(fitted), "truncated": True, "fullText": txt}
             if isinstance(redacted.get("items"), list):
                 fitted = _fit_results_list(redacted, "items")
-                return {"text": _dump(fitted), "truncated": True}
+                return {"text": _dump(fitted), "truncated": True, "fullText": txt}
             candidate = {"_preview": {"truncated": True}}
-            return {"text": _dump(candidate), "truncated": True}
+            return {"text": _dump(candidate), "truncated": True, "fullText": txt}
 
         if isinstance(redacted, list):
             total = len(redacted)
@@ -113,10 +113,10 @@ def preview_tool_result(raw: str, max_chars: int) -> Dict[str, Any]:
             while n > 1 and len(_dump({"items": redacted[:n], "_preview": {"total": total, "truncated": True}})) > max_chars:
                 n = max(1, n // 2)
             candidate = {"items": redacted[:n], "_preview": {"total": total, "truncated": True}}
-            return {"text": _dump(candidate), "truncated": True}
+            return {"text": _dump(candidate), "truncated": True, "fullText": txt}
 
         candidate = {"value": redacted, "_preview": {"truncated": True}}
-        return {"text": _dump(candidate), "truncated": True}
+        return {"text": _dump(candidate), "truncated": True, "fullText": txt}
     except Exception:
         preview, truncated = truncate_text(s, max_chars=max_chars)
         return {"text": preview, "truncated": truncated}

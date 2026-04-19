@@ -211,6 +211,11 @@ def execute_tool(
             mode = normalize_permission_mode(normalized_composer.get("permissionMode"))
             tool_args = dict(args or {})
             tool_args["_animaPermissionMode"] = mode
+            workspace_roots = normalized_composer.get("workspaceRoots")
+            normalized_workspace_roots = [str(x).strip() for x in workspace_roots] if isinstance(workspace_roots, list) else []
+            normalized_workspace_roots = [x for x in normalized_workspace_roots if x]
+            if normalized_workspace_roots:
+                tool_args["_animaWorkspaceRoots"] = normalized_workspace_roots
             approvals = normalized_composer.get("dangerousCommandApprovals")
             approvals_count = 0
             if isinstance(approvals, list):
@@ -229,6 +234,7 @@ def execute_tool(
             trace["sandbox"] = {
                 "permissionMode": mode,
                 "workspaceDir": sandbox_workspace_dir,
+                "workspaceRoots": normalized_workspace_roots,
                 "dangerousCommandApprovalsCount": approvals_count,
                 "dangerousCommandAllowForThread": allow_for_thread,
             }

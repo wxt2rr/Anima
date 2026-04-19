@@ -65,13 +65,6 @@ const animaAPI = {
       return () => ipcRenderer.removeListener(channel, subscription)
     }
   },
-  coder: {
-    configure: (params?: any) => ipcRenderer.invoke('coder:configure', params),
-    autoStart: () => ipcRenderer.invoke('coder:autoStart'),
-    start: (params?: any) => ipcRenderer.invoke('coder:start', params),
-    stop: () => ipcRenderer.invoke('coder:stop'),
-    status: () => ipcRenderer.invoke('coder:status')
-  },
   statusCenter: {
     getState: () => ipcRenderer.invoke('anima:statusCenter:getState'),
     applySettings: (params: { settings?: any }) => ipcRenderer.invoke('anima:statusCenter:applySettings', params),

@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from anima_backend_shared.http import json_response, read_body_json
 from anima_backend_shared.qwen_tts_local import ensure_qwen_tts_local_service
 from anima_backend_shared.codex_models import build_openai_codex_models
+from anima_backend_shared.providers import detect_proxy_from_env
 from anima_backend_shared.settings import get_skills_content, list_commands, list_skills, load_settings, open_folder, skills_dir
 from anima_backend_shared.tools import builtin_tools
 
@@ -143,6 +144,23 @@ def handle_patch_settings(handler: Any) -> None:
             except Exception:
                 merged = {**merged, "embeddingModelsInstalled": []}
         json_response(handler, HTTPStatus.OK, merged)
+    except Exception as e:
+        json_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(e)})
+
+
+def handle_get_network_proxy_detect(handler: Any) -> None:
+    try:
+        proxy_url, source = detect_proxy_from_env()
+        json_response(
+            handler,
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "enabled": bool(proxy_url),
+                "proxyUrl": proxy_url,
+                "source": source,
+            },
+        )
     except Exception as e:
         json_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(e)})
 

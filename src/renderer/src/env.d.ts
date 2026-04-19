@@ -82,13 +82,6 @@ declare global {
           callback: (evt: { type: string; [k: string]: any }) => void
         ) => () => void
       }
-      coder: {
-        configure: (params?: { settings?: any }) => Promise<{ ok: boolean; [k: string]: any }>
-        autoStart: () => Promise<{ ok: boolean; [k: string]: any }>
-        start: (params?: { settings?: any }) => Promise<{ ok: boolean; [k: string]: any }>
-        stop: () => Promise<{ ok: boolean; error?: string }>
-        status: () => Promise<{ ok: boolean; running?: boolean; pid?: number | null; startedAt?: number | null; uptimeMs?: number; lastError?: string; settings?: any; debugPortReady?: boolean; error?: string }>
-      }
       statusCenter: {
         getState: () => Promise<{ ok: boolean; settings?: any; runState?: any; error?: string }>
         applySettings: (params: { settings?: any }) => Promise<{ ok: boolean; error?: string }>

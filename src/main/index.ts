@@ -10,7 +10,6 @@ import { registerFileService } from './services/fileService'
 import { registerGitService } from './services/gitService'
 import { registerTerminalService } from './services/terminalService'
 import { registerAcpService } from './services/acpService'
-import { registerCoderService } from './services/coderService'
 import { createStatusCenterService } from './services/statusCenterService'
 
 let mainWindow: BrowserWindow | null = null
@@ -434,7 +433,6 @@ function registerIpcHandlers(): void {
   registerGitService()
   registerTerminalService()
   registerAcpService()
-  registerCoderService()
 
   ipcMain.handle('anima:app:getInfo', async () => {
     return {

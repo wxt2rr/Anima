@@ -51,14 +51,17 @@ def _base_settings(workspace_dir: str) -> dict:
                 "name": "Codex",
                 "backendKind": "codex",
                 "backendLabel": "",
-                "endpointType": "desktop",
-                "transport": "cdpbridge",
-                "autoStart": False,
-                "command": "/usr/bin/open",
-                "args": ["-a", "Codex", "--args", "--remote-debugging-port=9222"],
+                "command": "codex",
+                "args": ["exec", "{prompt}"],
                 "cwd": "",
                 "env": {},
-                "remoteDebuggingPort": 9222,
+                "timeoutMs": 1200000,
+                "maxOutputChars": 120000,
+                "resultPolicy": {
+                    "messageMode": "summary",
+                    "artifactMode": "final",
+                    "includeDecisionRequests": True,
+                },
             },
         },
         "providers": [],
@@ -133,13 +136,13 @@ class TestAnimaCli(unittest.TestCase):
         self.assertEqual(code2, 0)
         self.assertEqual(out2.get("value"), "Codex Agent")
 
-    def test_coder_set_get_command_template(self) -> None:
-        code1, out1 = self._run(["coder", "set", "cmd_ask", 'codex exec "{prompt}"', "--json"])
+    def test_coder_set_get_message_mode(self) -> None:
+        code1, out1 = self._run(["coder", "set", "message_mode", "last", "--json"])
         self.assertEqual(code1, 0)
         self.assertTrue(out1.get("ok"))
-        code2, out2 = self._run(["coder", "get", "cmd_ask", "--json"])
+        code2, out2 = self._run(["coder", "get", "message_mode", "--json"])
         self.assertEqual(code2, 0)
-        self.assertEqual(out2.get("value"), 'codex exec "{prompt}"')
+        self.assertEqual(out2.get("value"), "last")
 
     def test_coder_high_risk_command_requires_yes(self) -> None:
         code, out = self._run(["coder", "set", "command", "codex", "--json"])

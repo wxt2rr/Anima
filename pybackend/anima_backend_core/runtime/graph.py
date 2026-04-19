@@ -49,6 +49,7 @@ Remember: Skills make you more capable and consistent. When in doubt, check if a
 _DEFAULT_TELEGRAM_TOOL_GUIDANCE = (
     "工具使用规则：当需要在本机执行命令、读写工作区文件、搜索内容或联网获取信息时，必须通过工具完成。"
     "不要只输出命令/脚本代码块并声称已执行；应先调用工具获得结果，再基于结果回复。"
+    "Telegram 输出格式规则：必须使用纯文本回复，禁止使用 Markdown 语法；请像写文档一样按语义分段换行。"
 )
 _DEFAULT_HARD_RULES = [
     "结论必须有可检查依据；无法确认时明确不确定性。",
@@ -882,37 +883,28 @@ def build_system_prompt_text(settings_obj: Dict[str, Any], composer: Dict[str, A
         coder_name = str(coder.get("name") or "Coder").strip() or "Coder"
         backend_kind = str(coder.get("backendKind") or "").strip().lower()
         backend_label = str(coder.get("backendLabel") or "").strip()
-        if backend_kind == "cursor":
-            backend_name = "Cursor"
+        if backend_kind == "claude":
+            backend_name = "Claude Code"
         elif backend_kind == "custom":
             backend_name = backend_label or "Custom"
         else:
             backend_name = "Codex"
-        endpoint_type = str(coder.get("endpointType") or "").strip() or "terminal"
-        transport = str(coder.get("transport") or "").strip() or "acp"
-        templates = coder.get("commandTemplates")
-        cmd_lines: List[str] = []
-        if isinstance(templates, dict):
-            for k in ["status", "send", "ask", "read", "new", "screenshot"]:
-                v = str(templates.get(k) or "").strip()
-                if v:
-                    cmd_lines.append(f"  - {k}: {v}")
+        command = str(coder.get("command") or "").strip()
+        args = coder.get("args") if isinstance(coder.get("args"), list) else []
         cmd_block = ""
-        if cmd_lines:
-            cmd_block = "Coder命令模板:\n" + "\n".join(cmd_lines)
+        if command:
+            cmd_block = f"Coder CLI:\n  - command: {command}\n  - args: {' '.join([str(x) for x in args])}"
         coder_block_parts = [
             "Coder委托规则:\n"
             f"- 当前已启用 coder: {coder_name}",
             f"- 底层: {backend_name}",
-            f"- 端类型: {endpoint_type}",
-            f"- 通信方式: {transport}",
         ]
         if cmd_block:
             coder_block_parts.append(cmd_block)
         coder_block_parts.extend(
             [
-                "- 当用户明确要求“使用codex/cursor/coder进行代码开发、实现、改代码”时，优先使用coder执行。",
-                "- 当用户要求使用status/send/ask/read/new/screenshot这些coder命令时，优先参考上面的命令模板执行；不要猜测不存在的命令。",
+                "- 当用户明确要求“使用codex/claude/coder进行代码开发、实现、改代码”时，优先调用 coder 工具执行。",
+                "- coder 是同步工具调用：一次调用返回本次 CLI 执行结果；不要尝试使用 start/stop/status 旧命令。",
                 "- 当用户是代码开发诉求但未明确要求使用coder时，先提醒“当前已启用coder（底层见上）”，并询问是否使用coder执行。",
                 "- Anima负责需求澄清、验收标准、完成度检查；实现执行优先交给coder。",
             ]

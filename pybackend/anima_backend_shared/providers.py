@@ -1,5 +1,6 @@
 import json
 import os
+import platform
 import re
 import shutil
 import select
@@ -62,6 +63,94 @@ def normalize_proxy_url(proxy_url: str) -> str:
     if ":" in s:
         return "http://" + s
     return s
+
+
+def _detect_proxy_from_macos_scutil() -> tuple[str, str]:
+    if platform.system() != "Darwin":
+        return "", ""
+    try:
+        cp = subprocess.run(
+            ["scutil", "--proxy"],
+            capture_output=True,
+            text=True,
+            timeout=1.5,
+            check=False,
+        )
+    except Exception:
+        return "", ""
+    try:
+        rc = int(getattr(cp, "returncode", 1))
+    except Exception:
+        rc = 1
+    if rc != 0:
+        return "", ""
+    text = str(getattr(cp, "stdout", "") or "")
+    if not text.strip():
+        return "", ""
+
+    kv: Dict[str, str] = {}
+    for line in text.splitlines():
+        if ":" not in line:
+            continue
+        k, v = line.split(":", 1)
+        key = str(k or "").strip()
+        val = str(v or "").strip()
+        if key and val:
+            kv[key] = val
+
+    for prefix in ("HTTPS", "HTTP", "SOCKS"):
+        enabled = str(kv.get(f"{prefix}Enable") or "").strip().lower()
+        if enabled not in ("1", "true", "yes"):
+            continue
+        host = str(kv.get(f"{prefix}Proxy") or "").strip()
+        port_raw = str(kv.get(f"{prefix}Port") or "").strip()
+        if not host or not port_raw:
+            continue
+        try:
+            port = int(float(port_raw))
+        except Exception:
+            continue
+        if port <= 0:
+            continue
+        return normalize_proxy_url(f"{host}:{port}"), f"macos_scutil_{prefix.lower()}"
+
+    return "", ""
+
+
+def detect_proxy_from_env(env: Optional[Dict[str, str]] = None) -> tuple[str, str]:
+    src = env if isinstance(env, dict) else os.environ
+    keys = (
+        "ANIMA_PROXY_URL",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+    )
+    for key in keys:
+        v = str(src.get(key) or "").strip()
+        if v:
+            return normalize_proxy_url(v), key
+    via_os, source_os = _detect_proxy_from_macos_scutil()
+    if via_os:
+        return via_os, source_os
+    return "", ""
+
+
+def resolve_proxy_url_from_settings(settings_obj: Dict[str, Any], env: Optional[Dict[str, str]] = None) -> str:
+    settings = settings_obj.get("settings") if isinstance(settings_obj, dict) else {}
+    settings = settings if isinstance(settings, dict) else {}
+    configured = normalize_proxy_url(str(settings.get("proxyUrl") or "").strip())
+    mode_raw = str(settings.get("proxyMode") or "").strip().lower()
+    if mode_raw not in ("auto", "manual"):
+        mode = "manual" if configured else "auto"
+    else:
+        mode = mode_raw
+    if mode == "manual":
+        return configured
+    detected, _source = detect_proxy_from_env(env)
+    return detected
 
 
 def _auth_header_value(api_key: str) -> str:
@@ -1367,7 +1456,7 @@ def _provider_spec_from_obj(settings_obj: Dict[str, Any], provider_obj: Dict[str
         models = cfg.get("models") or []
         if isinstance(models, list) and models:
             model = str(models[0] or "").strip()
-    proxy_url = str((settings_obj.get("settings") or {}).get("proxyUrl") or "").strip()
+    proxy_url = resolve_proxy_url_from_settings(settings_obj)
     thinking_enabled = bool(cfg.get("thinkingEnabled") is True)
     api_format = str(cfg.get("apiFormat") or "chat_completions").strip()
     use_max_completion_tokens = bool(cfg.get("useMaxCompletionTokens") is True)

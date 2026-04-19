@@ -1,4 +1,4 @@
-import { Search, Trash2, MessageCircle, PanelLeftClose, MoreHorizontal, Settings, Folder, FolderOpen, FolderPlus, ChevronDown, ChevronRight, Star, Pencil, Clock3, Sparkles } from 'lucide-react'
+import { Search, Trash2, MessageCircle, PanelLeftClose, MoreHorizontal, Settings, Folder, FolderOpen, FolderPlus, ChevronDown, ChevronRight, Star, Pencil, Clock3, Sparkles, Send, Monitor } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, memo, type MouseEvent } from 'react'
 import { useStore } from '../store/useStore'
 import { useUpdateStore } from '../store/useUpdateStore'
@@ -144,6 +144,11 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
     return by
   }, [visibleChats])
   const unassignedChats = chatsByProjectId['__unassigned__'] || []
+  const clampTitle = (raw: string, maxChars = 18): string => {
+    const chars = Array.from(String(raw || ''))
+    if (chars.length <= maxChars) return chars.join('')
+    return `${chars.slice(0, maxChars).join('')}...`
+  }
 
   const renderChatRows = (list: typeof visibleChats) => (
     <div className="mt-1 space-y-0.5">
@@ -151,6 +156,9 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
         {list.map((chat) => {
           const active = chat.id === activeChatId
           const title = (chat.title || '').trim() || t.untitled
+          const displayTitle = clampTitle(title)
+          const source = String((chat as any)?.meta?.source || '').trim().toLowerCase()
+          const isTelegram = source === 'telegram'
           const isPendingDelete = pendingDeleteChatId === chat.id
           return (
             <motion.div
@@ -175,8 +183,12 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
                   active ? 'rounded-xl bg-black/5 text-foreground' : 'rounded-md text-muted-foreground hover:bg-black/5 hover:text-foreground'
                 }`}
               >
-                <span className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                <span className="truncate text-[13px] flex-1 min-w-0 leading-5 text-foreground">{title}</span>
+                <span className="w-3.5 h-3.5 shrink-0 flex items-center justify-center text-foreground/70" aria-hidden="true">
+                  {isTelegram ? <Send className="w-3.5 h-3.5" /> : <Monitor className="w-3.5 h-3.5" />}
+                </span>
+                <span className="block truncate text-[13px] flex-1 min-w-0 leading-5 text-foreground" title={title}>
+                  {displayTitle}
+                </span>
                 <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center justify-end">
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -335,7 +347,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
               </div>
             </div>
             {unassignedChats.length > 0 ? renderChatRows(unassignedChats) : null}
-            {chats.length === 0 ? <div className="mt-1 px-2.5 text-xs text-muted-foreground">{t.emptyChats}</div> : null}
+            {unassignedChats.length === 0 ? <div className="mt-1 px-2.5 text-xs text-muted-foreground text-center">{t.emptyChats}</div> : null}
           </div>
 
           <div>
@@ -352,6 +364,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
                 </button>
               </div>
             </div>
+            {projects.length === 0 ? <div className="mt-1 px-2.5 text-xs text-muted-foreground text-center">{t.emptyChats}</div> : null}
           </div>
 
           {projects.map((p) => {

@@ -163,12 +163,15 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         prompt = build_system_prompt_text(settings_obj, {"channel": "telegram"}, "hi")
         self.assertIn("你是Anima", prompt)
         self.assertIn("工具使用规则", prompt)
+        self.assertIn("Telegram 输出格式规则", prompt)
+        self.assertIn("禁止使用 Markdown 语法", prompt)
         self.assertIn("编辑前必须先读取目标文件的当前完整内容", prompt)
         self.assertIn("遇到 apply_patch 返回 CONFLICT", prompt)
 
         prompt2 = build_system_prompt_text(settings_obj, {}, "hi")
         self.assertIn("你是Anima", prompt2)
         self.assertNotIn("工具使用规则", prompt2)
+        self.assertNotIn("Telegram 输出格式规则", prompt2)
 
     def test_system_prompt_includes_coder_delegation_block_when_enabled(self) -> None:
         from anima_backend_core.runtime.graph import build_system_prompt_text
@@ -179,12 +182,8 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                     "enabled": True,
                     "name": "Codex Desktop",
                     "backendKind": "codex",
-                    "endpointType": "desktop",
-                    "transport": "cdpbridge",
-                    "commandTemplates": {
-                        "status": "codex status",
-                        "ask": "codex exec \"{prompt}\"",
-                    },
+                    "command": "codex",
+                    "args": ["exec", "{prompt}"],
                 }
             }
         }
@@ -192,9 +191,9 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         self.assertIn("Coder委托规则:", prompt)
         self.assertIn("Codex Desktop", prompt)
         self.assertIn("底层: Codex", prompt)
-        self.assertIn("cdpbridge", prompt)
-        self.assertIn("Coder命令模板:", prompt)
-        self.assertIn("status: codex status", prompt)
+        self.assertIn("Coder CLI:", prompt)
+        self.assertIn("command: codex", prompt)
+        self.assertIn("同步工具调用", prompt)
 
     def test_system_prompt_control_plane_layer_priority(self) -> None:
         from anima_backend_core.runtime.graph import build_system_prompt_text
@@ -396,6 +395,127 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         composer = _default_composer_for_telegram(settings_obj)
         self.assertEqual(str(composer.get("providerOverrideId") or ""), "p1")
         self.assertEqual(str(composer.get("modelOverride") or ""), "m1")
+
+    def test_default_composer_for_telegram_permission_scope_current_computer(self) -> None:
+        from anima_backend_core.telegram_integration import _default_composer_for_telegram
+
+        settings_obj = {
+            "settings": {
+                "workspaceDir": "/tmp/ws",
+                "im": {"provider": "telegram", "telegram": {"enabled": True, "permissionScope": "current_computer"}},
+            }
+        }
+        composer = _default_composer_for_telegram(settings_obj)
+        self.assertEqual(str(composer.get("permissionMode") or ""), "full_access")
+        self.assertEqual(str(composer.get("workspaceDir") or ""), "/tmp/ws")
+
+    def test_default_composer_for_telegram_permission_scope_all_projects(self) -> None:
+        from anima_backend_core.telegram_integration import _default_composer_for_telegram
+
+        settings_obj = {
+            "settings": {
+                "projects": [
+                    {"id": "p1", "dir": "/tmp/p1"},
+                    {"id": "p2", "dir": "/tmp/p2"},
+                ],
+                "im": {"provider": "telegram", "telegram": {"enabled": True, "permissionScope": "all_projects"}},
+            }
+        }
+        composer = _default_composer_for_telegram(settings_obj)
+        roots = composer.get("workspaceRoots") if isinstance(composer.get("workspaceRoots"), list) else []
+        self.assertEqual(str(composer.get("permissionMode") or ""), "workspace_whitelist")
+        self.assertTrue("/tmp/p1" in roots and "/tmp/p2" in roots)
+        self.assertEqual(str(composer.get("workspaceDir") or ""), "/tmp/p1")
+
+    def test_default_composer_for_telegram_permission_scope_specific_projects_multi(self) -> None:
+        from anima_backend_core.telegram_integration import _default_composer_for_telegram
+
+        settings_obj = {
+            "settings": {
+                "projects": [
+                    {"id": "p1", "dir": "/tmp/p1"},
+                    {"id": "p2", "dir": "/tmp/p2"},
+                    {"id": "p3", "dir": "/tmp/p3"},
+                ],
+                "im": {
+                    "provider": "telegram",
+                    "telegram": {"enabled": True, "permissionScope": "specific_projects", "projectIds": ["p2", "p3"]},
+                },
+            }
+        }
+        composer = _default_composer_for_telegram(settings_obj)
+        roots = composer.get("workspaceRoots") if isinstance(composer.get("workspaceRoots"), list) else []
+        self.assertEqual(str(composer.get("permissionMode") or ""), "workspace_whitelist")
+        self.assertEqual(roots, ["/tmp/p2", "/tmp/p3"])
+        self.assertEqual(str(composer.get("workspaceDir") or ""), "/tmp/p2")
+
+    def test_telegram_parse_command_supports_resuce(self) -> None:
+        from anima_backend_core import telegram_integration as tg
+
+        cmd, arg = tg._parse_telegram_command("/resuce abcd-1234")
+        self.assertEqual(cmd, "resuce")
+        self.assertEqual(arg, "abcd-1234")
+
+    def test_telegram_chat_list_contains_id(self) -> None:
+        from anima_backend_core import telegram_integration as tg
+
+        text = tg._format_telegram_chat_list(
+            [
+                {"id": "c1", "title": "会话A", "updatedAt": 20},
+                {"id": "c2", "title": "会话B", "updatedAt": 10},
+            ]
+        )
+        self.assertIn("id: c1", text)
+        self.assertIn("id: c2", text)
+
+    def test_telegram_resume_select_supports_id_prefix(self) -> None:
+        from anima_backend_core import telegram_integration as tg
+
+        chats = [
+            {"id": "a1234567-aaaa", "title": "A"},
+            {"id": "b7654321-bbbb", "title": "B"},
+        ]
+        picked, reason = tg._select_telegram_chat_by_resume_arg(chats, "a123")
+        self.assertEqual(reason, "")
+        self.assertTrue(isinstance(picked, dict))
+        self.assertEqual(str((picked or {}).get("id") or ""), "a1234567-aaaa")
+
+    def test_telegram_parse_numeric_approval_decision(self) -> None:
+        from anima_backend_core import telegram_integration as tg
+
+        self.assertEqual(tg._parse_telegram_approval_numeric_decision("1"), "approve_once")
+        self.assertEqual(tg._parse_telegram_approval_numeric_decision("2"), "approve_thread")
+        self.assertEqual(tg._parse_telegram_approval_numeric_decision("3"), "reject")
+        self.assertEqual(tg._parse_telegram_approval_numeric_decision("9"), "")
+
+    def test_telegram_format_approval_prompt_contains_options(self) -> None:
+        from anima_backend_core import telegram_integration as tg
+
+        out = tg._format_telegram_approval_prompt({"id": "ap1", "command": "rm -rf ."})
+        self.assertIn("审批ID: ap1", out)
+        self.assertIn("1 通过一次", out)
+        self.assertIn("2 当前对话都通过", out)
+        self.assertIn("3 拒绝", out)
+
+    def test_telegram_resume_run_via_http_handler_parses_payload(self) -> None:
+        from anima_backend_core import telegram_integration as tg
+
+        def _fake_resume(handler, run_id: str) -> None:
+            handler.send_response(200)
+            handler.send_header("Content-Type", "application/json")
+            handler.end_headers()
+            handler.wfile.write(json.dumps({"ok": True, "runId": run_id, "content": "done"}, ensure_ascii=False).encode("utf-8"))
+
+        with patch("anima_backend_core.api.runs.handle_post_run_resume", side_effect=_fake_resume):
+            status, payload = tg._resume_run_via_http_handler(
+                run_id="r1",
+                decision="approve_once",
+                approval_id="ap1",
+                composer={"channel": "telegram"},
+            )
+        self.assertEqual(status, 200)
+        self.assertEqual(bool(payload.get("ok")), True)
+        self.assertEqual(str(payload.get("runId") or ""), "r1")
 
     def test_telegram_extract_file_from_artifacts(self) -> None:
         from anima_backend_core import telegram_integration as tg
@@ -3791,6 +3911,102 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                         self.assertTrue(spec is not None)
                         self.assertEqual(str(spec.base_url), "https://api.openai.com")
 
+    def test_provider_spec_proxy_mode_manual_uses_settings_proxy(self) -> None:
+        from anima_backend_shared import providers as shared_providers
+
+        settings_obj = {
+            "settings": {"proxyMode": "manual", "proxyUrl": "127.0.0.1:7890"},
+            "providers": [
+                {
+                    "id": "p1",
+                    "name": "OpenAI",
+                    "type": "openai",
+                    "isEnabled": True,
+                    "config": {"baseUrl": "https://api.openai.com", "apiKey": "x", "selectedModel": "m"},
+                }
+            ],
+        }
+        spec = shared_providers.get_provider_spec(settings_obj, "p1")
+        self.assertTrue(spec is not None)
+        self.assertEqual(str((spec or object()).proxy_url), "http://127.0.0.1:7890")
+
+    def test_provider_spec_proxy_mode_auto_uses_env_proxy(self) -> None:
+        from anima_backend_shared import providers as shared_providers
+
+        settings_obj = {
+            "settings": {"proxyMode": "auto", "proxyUrl": "127.0.0.1:7890"},
+            "providers": [
+                {
+                    "id": "p1",
+                    "name": "OpenAI",
+                    "type": "openai",
+                    "isEnabled": True,
+                    "config": {"baseUrl": "https://api.openai.com", "apiKey": "x", "selectedModel": "m"},
+                }
+            ],
+        }
+        with patch.dict(os.environ, {"HTTPS_PROXY": "127.0.0.1:8888"}, clear=True):
+            spec = shared_providers.get_provider_spec(settings_obj, "p1")
+        self.assertTrue(spec is not None)
+        self.assertEqual(str((spec or object()).proxy_url), "http://127.0.0.1:8888")
+
+    def test_provider_spec_proxy_mode_legacy_fallback_manual(self) -> None:
+        from anima_backend_shared import providers as shared_providers
+
+        settings_obj = {
+            "settings": {"proxyUrl": "127.0.0.1:9000"},
+            "providers": [
+                {
+                    "id": "p1",
+                    "name": "OpenAI",
+                    "type": "openai",
+                    "isEnabled": True,
+                    "config": {"baseUrl": "https://api.openai.com", "apiKey": "x", "selectedModel": "m"},
+                }
+            ],
+        }
+        with patch.dict(os.environ, {"HTTPS_PROXY": "127.0.0.1:9999"}, clear=True):
+            spec = shared_providers.get_provider_spec(settings_obj, "p1")
+        self.assertTrue(spec is not None)
+        self.assertEqual(str((spec or object()).proxy_url), "http://127.0.0.1:9000")
+
+    def test_network_proxy_detect_endpoint_reads_env(self) -> None:
+        from anima_backend_core.api import settings_tools
+
+        with patch.dict(os.environ, {"HTTP_PROXY": "127.0.0.1:18888"}, clear=True):
+            h = self._make_handler()
+            settings_tools.handle_get_network_proxy_detect(h)
+            out = self._json_out(h)
+        self.assertEqual(int(getattr(h, "_code", 0)), 200)
+        self.assertEqual(bool(out.get("ok")), True)
+        self.assertEqual(bool(out.get("enabled")), True)
+        self.assertEqual(str(out.get("proxyUrl") or ""), "http://127.0.0.1:18888")
+        self.assertEqual(str(out.get("source") or ""), "HTTP_PROXY")
+
+    def test_detect_proxy_from_env_fallback_to_macos_scutil(self) -> None:
+        from anima_backend_shared import providers as shared_providers
+
+        fake_scutil = "\n".join(
+            [
+                "HTTPEnable : 1",
+                "HTTPProxy : 127.0.0.1",
+                "HTTPPort : 7899",
+            ]
+        )
+
+        class _CP:
+            def __init__(self) -> None:
+                self.returncode = 0
+                self.stdout = fake_scutil
+
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("anima_backend_shared.providers.platform.system", return_value="Darwin"):
+                with patch("anima_backend_shared.providers.subprocess.run", return_value=_CP()):
+                    proxy, source = shared_providers.detect_proxy_from_env()
+
+        self.assertEqual(proxy, "http://127.0.0.1:7899")
+        self.assertEqual(source, "macos_scutil_http")
+
     def test_openai_codex_chat_completion_aggregates_stream(self) -> None:
         from anima_backend_shared.providers import OpenAICodexChatProvider, ProviderSpec
 
@@ -5364,6 +5580,49 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                 self.assertEqual(str(payload.get("command") or ""), cmd)
                 self.assertEqual(str(payload.get("matchedPattern") or ""), "rm")
 
+    def test_coder_tool_payload_success_keeps_minimum_fields(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        out = shared_tools._build_coder_tool_payload(
+            {
+                "ok": True,
+                "exitCode": 0,
+                "provider": "codex",
+                "profileId": "coder-default",
+                "summary": "done",
+                "artifacts": [{"kind": "file", "path": "/tmp/a.txt"}],
+                "needsDecision": False,
+                "decisionRequests": [],
+                "raw": {"stdout": "hello\n", "stderr": ""},
+            }
+        )
+        self.assertEqual(bool(out.get("ok")), True)
+        self.assertEqual(int(out.get("exitCode")) if out.get("exitCode") is not None else -1, 0)
+        self.assertEqual(str(out.get("stdout") or ""), "hello\n")
+        self.assertTrue(isinstance(out.get("artifacts"), list))
+        self.assertNotIn("stderr", out)
+        self.assertNotIn("provider", out)
+        self.assertNotIn("profileId", out)
+        self.assertNotIn("summary", out)
+
+    def test_coder_tool_payload_failure_includes_stderr_and_decision(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        out = shared_tools._build_coder_tool_payload(
+            {
+                "ok": False,
+                "exitCode": 2,
+                "needsDecision": True,
+                "decisionRequests": [{"type": "approval", "command": "rm -rf ."}],
+                "raw": {"stdout": "", "stderr": "failed\n"},
+            }
+        )
+        self.assertEqual(bool(out.get("ok")), False)
+        self.assertEqual(int(out.get("exitCode")) if out.get("exitCode") is not None else -1, 2)
+        self.assertEqual(str(out.get("stderr") or ""), "failed\n")
+        self.assertEqual(bool(out.get("needsDecision")), True)
+        self.assertTrue(isinstance(out.get("decisionRequests"), list))
+
     def test_read_file_workspace_whitelist_blocks_symlink_escape(self) -> None:
         import anima_backend_shared.tools as shared_tools
 
@@ -5432,6 +5691,59 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                     workspace_dir=workspace,
                 )
             self.assertEqual(str(ex.exception), "cwd outside allowed directory")
+
+    def test_read_file_workspace_whitelist_allows_additional_workspace_roots(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        with tempfile.TemporaryDirectory() as td:
+            workspace_main = os.path.join(td, "workspace-main")
+            workspace_extra = os.path.join(td, "workspace-extra")
+            os.makedirs(workspace_main, exist_ok=True)
+            os.makedirs(workspace_extra, exist_ok=True)
+            target = os.path.join(workspace_extra, "hello.txt")
+            with open(target, "w", encoding="utf-8") as f:
+                f.write("hello")
+
+            out = shared_tools.execute_builtin_tool(
+                "read_file",
+                {
+                    "path": target,
+                    "_animaPermissionMode": "workspace_whitelist",
+                    "_animaWorkspaceRoots": [workspace_extra],
+                },
+                workspace_dir=workspace_main,
+            )
+            obj = json.loads(out)
+            self.assertEqual(str((obj.get("text") or "").strip()), "hello")
+
+    def test_bash_workspace_whitelist_passes_additional_workspace_roots_to_sandbox(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        with tempfile.TemporaryDirectory() as td:
+            workspace_main = os.path.join(td, "workspace-main")
+            workspace_extra = os.path.join(td, "workspace-extra")
+            os.makedirs(workspace_main, exist_ok=True)
+            os.makedirs(workspace_extra, exist_ok=True)
+
+            with patch(
+                "anima_backend_shared.tools.run_bash_with_os_sandbox",
+                return_value={"ok": True, "exitCode": 0, "stdout": "", "stderr": "", "truncated": {}, "cwd": workspace_extra, "sandbox": {}},
+            ) as run_mock:
+                shared_tools.execute_builtin_tool(
+                    "bash",
+                    {
+                        "command": "pwd",
+                        "cwd": workspace_extra,
+                        "_animaPermissionMode": "workspace_whitelist",
+                        "_animaWorkspaceRoots": [workspace_extra],
+                    },
+                    workspace_dir=workspace_main,
+                )
+
+            kwargs = run_mock.call_args.kwargs if run_mock.call_args else {}
+            allowed_roots = kwargs.get("allowed_roots") if isinstance(kwargs.get("allowed_roots"), list) else []
+            norm_allowed = {os.path.realpath(str(x)) for x in allowed_roots}
+            self.assertIn(os.path.realpath(workspace_extra), norm_allowed)
 
 if __name__ == "__main__":
     unittest.main()

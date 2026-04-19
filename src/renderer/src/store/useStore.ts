@@ -94,6 +94,7 @@ export type ToolTraceStatus = 'running' | 'succeeded' | 'failed'
 export type ToolPreview = {
   text: string
   truncated?: boolean
+  fullText?: string
 }
 
 export interface ToolDiff {
@@ -272,6 +273,7 @@ export interface Project {
 
 export interface Settings {
   proxyUrl?: string
+  proxyMode?: 'auto' | 'manual'
   language: string
   theme: 'light' | 'dark' | 'system'
   themeColor: ThemeColor
@@ -380,46 +382,36 @@ export interface Settings {
   coder?: {
     enabled?: boolean
     name?: string
-    backendKind?: 'codex' | 'cursor' | 'custom'
+    backendKind?: 'codex' | 'claude' | 'custom'
     backendLabel?: string
-    endpointType?: 'terminal' | 'desktop'
-    transport?: 'acp' | 'cdpbridge'
-    autoStart?: boolean
     command?: string
     args?: string[]
     cwd?: string
     env?: Record<string, string>
-    remoteDebuggingPort?: number
-    commandTemplates?: {
-      status?: string
-      send?: string
-      ask?: string
-      read?: string
-      new?: string
-      screenshot?: string
+    timeoutMs?: number
+    maxOutputChars?: number
+    resultPolicy?: {
+      messageMode?: 'all' | 'last' | 'summary'
+      artifactMode?: 'none' | 'final' | 'all'
+      includeDecisionRequests?: boolean
     }
   }
   coderProfiles?: Array<{
     id: string
     enabled?: boolean
     name?: string
-    backendKind?: 'codex' | 'cursor' | 'custom'
+    backendKind?: 'codex' | 'claude' | 'custom'
     backendLabel?: string
-    endpointType?: 'terminal' | 'desktop'
-    transport?: 'acp' | 'cdpbridge'
-    autoStart?: boolean
     command?: string
     args?: string[]
     cwd?: string
     env?: Record<string, string>
-    remoteDebuggingPort?: number
-    commandTemplates?: {
-      status?: string
-      send?: string
-      ask?: string
-      read?: string
-      new?: string
-      screenshot?: string
+    timeoutMs?: number
+    maxOutputChars?: number
+    resultPolicy?: {
+      messageMode?: 'all' | 'last' | 'summary'
+      artifactMode?: 'none' | 'final' | 'all'
+      includeDecisionRequests?: boolean
     }
   }>
   activeCoderProfileId?: string
@@ -448,6 +440,10 @@ export interface Settings {
       allowedUserIds?: string[]
       allowGroups?: boolean
       pollingIntervalMs?: number
+      permissionScope?: 'current_computer' | 'all_projects' | 'specific_projects'
+      projectIds?: string[]
+      providerOverrideId?: string
+      modelOverride?: string
       projectId?: string
     }
   }
@@ -522,6 +518,7 @@ interface AppState {
   clearMessages: () => void
   createChat: (options?: { expandSidebar?: boolean }) => Promise<void>
   createChatInProject: (projectId: string, options?: { expandSidebar?: boolean }) => Promise<void>
+  ensureActiveChatInDefaultSpace: () => Promise<string>
   ensureActiveChatInProject: (projectId?: string) => Promise<string>
   updateChat: (chatId: string, updates: Partial<ChatThread>) => Promise<void>
   setActiveChat: (chatId: string) => Promise<void>
@@ -837,6 +834,13 @@ const mergeLegacyAcpProviders = (rawProviders: Provider[], rawSettings: any): Pr
 const normalizeSettingsPayload = (rawSettings: any): any => {
   if (!rawSettings || typeof rawSettings !== 'object') return rawSettings
 
+  rawSettings.proxyUrl = String(rawSettings.proxyUrl || '').trim()
+  const rawProxyMode = String(rawSettings.proxyMode || '').trim().toLowerCase()
+  rawSettings.proxyMode =
+    rawProxyMode === 'auto' || rawProxyMode === 'manual'
+      ? rawProxyMode
+      : (rawSettings.proxyUrl ? 'manual' : 'auto')
+
   if (!Array.isArray(rawSettings.projects)) rawSettings.projects = []
   if (!Array.isArray(rawSettings.toolsEnabledIds)) rawSettings.toolsEnabledIds = []
   if (!Array.isArray(rawSettings.mcpEnabledServerIds)) rawSettings.mcpEnabledServerIds = []
@@ -961,52 +965,23 @@ const normalizeSettingsPayload = (rawSettings: any): any => {
     const c = raw && typeof raw === 'object' ? raw : {}
     c.enabled = Boolean(c.enabled)
     c.name = String(c.name || '').trim() || 'Codex'
-    c.backendKind = c.backendKind === 'cursor' ? 'cursor' : c.backendKind === 'custom' ? 'custom' : 'codex'
+    c.backendKind = c.backendKind === 'claude' ? 'claude' : c.backendKind === 'custom' ? 'custom' : 'codex'
     c.backendLabel = String(c.backendLabel || '').trim()
-    c.endpointType = c.endpointType === 'terminal' ? 'terminal' : 'desktop'
-    c.transport = c.transport === 'acp' ? 'acp' : 'cdpbridge'
-    c.autoStart = Boolean(c.autoStart)
-    c.command = String(c.command || '').trim() || '/usr/bin/open'
-    c.args = Array.isArray(c.args) ? c.args.map((x: any) => String(x)) : (c.transport === 'acp' ? ['--acp'] : ['-a', 'Codex', '--args', '--remote-debugging-port=9222'])
+    const defaultCommand = c.backendKind === 'claude' ? 'claude' : 'codex'
+    const defaultArgs = c.backendKind === 'claude' ? ['-p', '{prompt}'] : ['exec', '{prompt}']
+    c.command = String(c.command || '').trim() || defaultCommand
+    c.args = Array.isArray(c.args) && c.args.length > 0 ? c.args.map((x: any) => String(x)) : defaultArgs
     c.cwd = String(c.cwd || '').trim()
     c.env = c.env && typeof c.env === 'object' ? c.env : {}
-    const rd = Number(c.remoteDebuggingPort || 9222)
-    c.remoteDebuggingPort = Number.isFinite(rd) && rd > 0 ? rd : 9222
-    if (!c.commandTemplates || typeof c.commandTemplates !== 'object') {
-      c.commandTemplates = {
-        status: '',
-        send: '',
-        ask: 'codex exec "{prompt}"',
-        read: '',
-        new: 'codex',
-        screenshot: ''
-      }
-    } else {
-      const ct = c.commandTemplates
-      ct.status = String(ct.status || '').trim()
-      ct.send = String(ct.send || '').trim()
-      ct.ask = String(ct.ask || '').trim() || 'codex exec "{prompt}"'
-      ct.read = String(ct.read || '').trim()
-      ct.new = String(ct.new || '').trim() || 'codex'
-      ct.screenshot = String(ct.screenshot || '').trim()
-    }
-    if (
-      c.transport === 'cdpbridge' &&
-      c.command === 'codex' &&
-      Array.isArray(c.args) &&
-      c.args.some((x: string) => String(x).includes('--remote-debugging-port'))
-    ) {
-      c.command = '/usr/bin/open'
-      c.args = ['-a', 'Codex', '--args', `--remote-debugging-port=${c.remoteDebuggingPort}`]
-    }
-    if (
-      c.transport === 'cdpbridge' &&
-      c.command === '/usr/bin/open' &&
-      Array.isArray(c.args) &&
-      c.args.length > 0 &&
-      c.args[0] === '-n'
-    ) {
-      c.args = c.args.slice(1)
+    const timeoutMs = Number(c.timeoutMs || 1_200_000)
+    c.timeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.trunc(timeoutMs) : 1_200_000
+    const maxOutputChars = Number(c.maxOutputChars || 120_000)
+    c.maxOutputChars = Number.isFinite(maxOutputChars) && maxOutputChars > 0 ? Math.trunc(maxOutputChars) : 120_000
+    const rp = c.resultPolicy && typeof c.resultPolicy === 'object' ? c.resultPolicy : {}
+    c.resultPolicy = {
+      messageMode: rp.messageMode === 'all' || rp.messageMode === 'last' ? rp.messageMode : 'summary',
+      artifactMode: rp.artifactMode === 'none' || rp.artifactMode === 'all' ? rp.artifactMode : 'final',
+      includeDecisionRequests: rp.includeDecisionRequests !== false
     }
     return c
   }
@@ -1017,21 +992,16 @@ const normalizeSettingsPayload = (rawSettings: any): any => {
       name: 'Codex',
       backendKind: 'codex',
       backendLabel: '',
-      endpointType: 'desktop',
-      transport: 'cdpbridge',
-      autoStart: false,
-      command: '/usr/bin/open',
-      args: ['-a', 'Codex', '--args', '--remote-debugging-port=9222'],
+      command: 'codex',
+      args: ['exec', '{prompt}'],
       cwd: '',
       env: {},
-      remoteDebuggingPort: 9222,
-      commandTemplates: {
-        status: '',
-        send: '',
-        ask: 'codex exec "{prompt}"',
-        read: '',
-        new: 'codex',
-        screenshot: ''
+      timeoutMs: 1_200_000,
+      maxOutputChars: 120_000,
+      resultPolicy: {
+        messageMode: 'summary',
+        artifactMode: 'final',
+        includeDecisionRequests: true
       }
     })
   } else {
@@ -1177,9 +1147,8 @@ export const useStore = create<AppState>()(
         const expandSidebar = options?.expandSidebar !== false
         const pid = String(get().ui.activeProjectId || '').trim()
         if (!pid) {
-          const newChat = await api.createChat('New Chat')
           set((state) => ({
-            activeChatId: String((newChat as any)?.id || ''),
+            activeChatId: '',
             messages: [],
             ui: {
               ...state.ui,
@@ -1188,8 +1157,7 @@ export const useStore = create<AppState>()(
               sidebarSearchOpen: false,
               sidebarSearchQuery: '',
               composer: createDefaultComposer()
-            },
-            chats: [{ ...(newChat as any), todoState: (newChat as any)?.meta?.todoState }, ...state.chats]
+            }
           }))
           return
         }
@@ -1250,6 +1218,34 @@ export const useStore = create<AppState>()(
         }))
 
         return withMeta.id
+      },
+
+      ensureActiveChatInDefaultSpace: async () => {
+        const st = get()
+        const existingChatId = String(st.activeChatId || '').trim()
+        if (existingChatId) {
+          const exists = st.chats.some((c) => String(c?.id || '').trim() === existingChatId)
+          if (exists) return existingChatId
+          set({ activeChatId: '', messages: [] })
+        }
+
+        const newChat = await api.createChat('New Chat')
+        const nextChatId = String((newChat as any)?.id || '').trim()
+        if (!nextChatId) return ''
+
+        set((state) => ({
+          activeChatId: nextChatId,
+          messages: [],
+          ui: {
+            ...state.ui,
+            activeProjectId: '',
+            sidebarSearchOpen: false,
+            sidebarSearchQuery: ''
+          },
+          chats: [{ ...(newChat as any), todoState: (newChat as any)?.meta?.todoState }, ...state.chats]
+        }))
+
+        return nextChatId
       },
 
       updateChat: async (chatId, updates) => {
@@ -1740,10 +1736,6 @@ export const useStore = create<AppState>()(
             configError: ''
           })
           try {
-            const coderSettings = (rawSettings as any)?.coder
-            if (coderSettings) {
-              void window.anima?.coder?.configure?.({ settings: coderSettings })
-            }
             const statusCenterSettings = (rawSettings as any)?.statusCenter
             if (statusCenterSettings) {
               void window.anima?.statusCenter?.applySettings?.({ settings: statusCenterSettings })
@@ -1981,10 +1973,6 @@ export const useStore = create<AppState>()(
                   : s.voiceModelsInstalled
               }))
               try {
-                const coderSettings = (rawSettings as any)?.coder
-                if (coderSettings) {
-                  void window.anima?.coder?.configure?.({ settings: coderSettings })
-                }
                 const statusCenterSettings = (rawSettings as any)?.statusCenter
                 if (statusCenterSettings) {
                   void window.anima?.statusCenter?.applySettings?.({ settings: statusCenterSettings })

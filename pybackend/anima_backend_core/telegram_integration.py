@@ -10,6 +10,7 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -888,6 +889,189 @@ def _thread_id_from_message(msg: Dict[str, Any]) -> str:
     return f"tg:dm:{chat_id}"
 
 
+def _telegram_chat_type_from_message(msg: Dict[str, Any]) -> str:
+    chat = msg.get("chat")
+    if not isinstance(chat, dict):
+        return ""
+    return str(chat.get("type") or "").strip()
+
+
+def _telegram_chat_meta(*, binding_key: str, chat_id: str, from_user_id: str, chat_type: str) -> Dict[str, Any]:
+    return {
+        "source": "telegram",
+        "telegram": {
+            "bindingKey": str(binding_key or "").strip(),
+            "chatId": str(chat_id or "").strip(),
+            "fromUserId": str(from_user_id or "").strip(),
+            "chatType": str(chat_type or "").strip(),
+        },
+    }
+
+
+def _is_telegram_chat_for_binding(chat: Any, binding_key: str) -> bool:
+    if not isinstance(chat, dict):
+        return False
+    bid = str(binding_key or "").strip()
+    if not bid:
+        return False
+    if str(chat.get("id") or "").strip() == bid:
+        return True
+    meta = chat.get("meta")
+    if not isinstance(meta, dict):
+        return False
+    if str(meta.get("source") or "").strip() != "telegram":
+        return False
+    tg = meta.get("telegram")
+    if not isinstance(tg, dict):
+        return False
+    return str(tg.get("bindingKey") or "").strip() == bid
+
+
+def _list_telegram_chats_for_binding(binding_key: str) -> List[Dict[str, Any]]:
+    from anima_backend_shared.database import get_chats
+
+    out: List[Dict[str, Any]] = []
+    for c in get_chats():
+        if _is_telegram_chat_for_binding(c, binding_key):
+            out.append(c)
+    out.sort(key=lambda x: int(x.get("updatedAt") or 0), reverse=True)
+    return out
+
+
+def _resolve_telegram_thread_id(binding_key: str) -> str:
+    chats = _list_telegram_chats_for_binding(binding_key)
+    if chats:
+        return str(chats[0].get("id") or "").strip() or str(binding_key or "").strip()
+    return str(binding_key or "").strip()
+
+
+def _parse_telegram_command(text: str) -> Tuple[str, str]:
+    s = str(text or "").strip()
+    if not s.startswith("/"):
+        return "", ""
+    head, _sep, tail = s.partition(" ")
+    cmd = str(head[1:] if len(head) > 1 else "").split("@", 1)[0].strip().lower()
+    return cmd, str(tail or "").strip()
+
+
+def _format_telegram_chat_list(chats: List[Dict[str, Any]]) -> str:
+    if not chats:
+        return "当前没有 Telegram 对话。先发送普通消息或使用 /new 创建一个。"
+    lines: List[str] = ["Telegram 对话列表："]
+    for idx, c in enumerate(chats, start=1):
+        cid = str(c.get("id") or "").strip()
+        title = str(c.get("title") or "").strip() or "New Chat"
+        lines.append(f"{idx}. {title}")
+        lines.append(f"   id: {cid}")
+    lines.append("使用 /resuce [对话id] 或 /resume [对话id] 切换。")
+    return "\n".join(lines).strip()
+
+
+def _select_telegram_chat_by_resume_arg(chats: List[Dict[str, Any]], arg: str) -> Tuple[Optional[Dict[str, Any]], str]:
+    q = str(arg or "").strip()
+    if not q:
+        return None, "missing"
+    if q.isdigit():
+        idx = int(q)
+        if 1 <= idx <= len(chats):
+            return chats[idx - 1], ""
+    exact = [c for c in chats if str(c.get("id") or "").strip() == q]
+    if len(exact) == 1:
+        return exact[0], ""
+    prefix = [c for c in chats if str(c.get("id") or "").strip().startswith(q)]
+    if len(prefix) == 1:
+        return prefix[0], ""
+    if len(prefix) > 1:
+        return None, "ambiguous"
+    return None, "not_found"
+
+
+def _parse_telegram_approval_numeric_decision(text: str) -> str:
+    s = str(text or "").strip()
+    if s in ("1", "１", "①"):
+        return "approve_once"
+    if s in ("2", "２", "②"):
+        return "approve_thread"
+    if s in ("3", "３", "③"):
+        return "reject"
+    return ""
+
+
+def _format_telegram_approval_prompt(approval: Dict[str, Any]) -> str:
+    command = str(approval.get("command") or "").strip() or "(empty)"
+    approval_id = str(approval.get("id") or "").strip() or "(empty)"
+    lines = [
+        "检测到危险命令需要审批：",
+        f"命令: {command}",
+        f"审批ID: {approval_id}",
+        "请直接回复数字：",
+        "1 通过一次",
+        "2 当前对话都通过",
+        "3 拒绝",
+    ]
+    return "\n".join(lines).strip()
+
+
+def _resume_run_via_http_handler(
+    *,
+    run_id: str,
+    decision: str,
+    approval_id: str,
+    composer: Dict[str, Any],
+) -> Tuple[int, Dict[str, Any]]:
+    from anima_backend_core.api.runs import handle_post_run_resume
+
+    req_body = {"decision": str(decision or "").strip(), "approvalId": str(approval_id or "").strip()}
+    if isinstance(composer, dict) and composer:
+        req_body["composer"] = dict(composer)
+    body_bytes = json.dumps(req_body, ensure_ascii=False).encode("utf-8")
+
+    class _WFile:
+        def __init__(self) -> None:
+            self.buf = b""
+
+        def write(self, b: bytes) -> None:
+            self.buf += b
+
+        def flush(self) -> None:
+            return
+
+    class _RFile:
+        def __init__(self, raw: bytes) -> None:
+            self._raw = raw
+
+        def read(self, _n: int = -1) -> bytes:
+            return self._raw
+
+    class _Handler:
+        def __init__(self, raw: bytes) -> None:
+            self.headers = {"Content-Length": str(len(raw))}
+            self.query = {}
+            self.wfile = _WFile()
+            self.rfile = _RFile(raw)
+            self._code = int(HTTPStatus.INTERNAL_SERVER_ERROR)
+
+        def send_response(self, code: int) -> None:
+            self._code = int(code)
+
+        def send_header(self, _k: str, _v: str) -> None:
+            return
+
+        def end_headers(self) -> None:
+            return
+
+    h = _Handler(body_bytes)
+    handle_post_run_resume(h, str(run_id or "").strip())
+    status = int(getattr(h, "_code", int(HTTPStatus.INTERNAL_SERVER_ERROR)) or int(HTTPStatus.INTERNAL_SERVER_ERROR))
+    try:
+        payload = json.loads(h.wfile.buf.decode("utf-8", errors="ignore") or "{}")
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {"ok": False, "error": "Invalid resume response"}
+    return status, payload
+
+
 def _chat_id_from_message(msg: Dict[str, Any]) -> str:
     chat = msg.get("chat")
     if not isinstance(chat, dict):
@@ -929,26 +1113,68 @@ def _default_composer_for_telegram(settings_obj: Dict[str, Any]) -> Dict[str, An
     if not isinstance(enabled_skill_ids, list):
         enabled_skill_ids = []
 
+    projects = s.get("projects")
+    projects = projects if isinstance(projects, list) else []
+
+    project_dir_by_id: Dict[str, str] = {}
+    all_project_dirs: List[str] = []
+    for p in projects:
+        if not isinstance(p, dict):
+            continue
+        pid = str(p.get("id") or "").strip()
+        pdir = str(p.get("dir") or "").strip()
+        if not pid or not pdir:
+            continue
+        if pid not in project_dir_by_id:
+            project_dir_by_id[pid] = pdir
+        if pdir not in all_project_dirs:
+            all_project_dirs.append(pdir)
+
+    raw_scope = str(tg.get("permissionScope") or "").strip()
+    legacy_project_ids: List[str] = []
+    raw_ids = tg.get("projectIds")
+    if isinstance(raw_ids, list):
+        for x in raw_ids:
+            sid = str(x or "").strip()
+            if sid:
+                legacy_project_ids.append(sid)
+    legacy_single = str(tg.get("projectId") or "").strip()
+    if legacy_single:
+        legacy_project_ids.append(legacy_single)
+    selected_project_ids = [x for x in legacy_project_ids if x in project_dir_by_id]
+    if raw_scope in ("current_computer", "all_projects", "specific_projects"):
+        permission_scope = raw_scope
+    else:
+        permission_scope = "specific_projects" if selected_project_ids else "all_projects"
+
+    workspace_roots: List[str] = []
+    permission_mode = "workspace_whitelist"
+    if permission_scope == "current_computer":
+        permission_mode = "full_access"
+    elif permission_scope == "all_projects":
+        workspace_roots = list(all_project_dirs)
+    else:
+        for pid in selected_project_ids:
+            pdir = project_dir_by_id.get(pid)
+            if pdir and pdir not in workspace_roots:
+                workspace_roots.append(pdir)
+
     workspace_dir = ""
-    project_id = str(tg.get("projectId") or "").strip()
-    if project_id:
-        projects = s.get("projects")
-        if isinstance(projects, list):
-            for p in projects:
-                if not isinstance(p, dict):
-                    continue
-                if str(p.get("id") or "").strip() != project_id:
-                    continue
-                d = str(p.get("dir") or "").strip()
-                if d:
-                    workspace_dir = d
-                break
+    if workspace_roots:
+        workspace_dir = workspace_roots[0]
+    elif permission_scope == "current_computer":
+        workspace_dir = str(s.get("workspaceDir") or "").strip()
+        if not workspace_dir:
+            workspace_dir = str(Path.home())
+
     provider_override_id = str(tg.get("providerOverrideId") or "").strip()
     model_override = str(tg.get("modelOverride") or "").strip()
 
     return {
         "channel": "telegram",
         "workspaceDir": workspace_dir,
+        "workspaceRoots": workspace_roots,
+        "permissionMode": permission_mode,
         "toolMode": "auto",
         "enabledToolIds": [str(x) for x in enabled_tool_ids if str(x).strip()],
         "enabledMcpServerIds": [str(x) for x in enabled_mcp_server_ids if str(x).strip()],
@@ -971,6 +1197,31 @@ class TelegramPoller:
         self._allow_groups = False
         self._composer: Dict[str, Any] = {"channel": "telegram", "toolMode": "auto"}
         self._poll_interval_ms = 1500
+        self._pending_approvals: Dict[str, Dict[str, Any]] = {}
+
+    def _set_pending_approval(self, binding_key: str, pending: Dict[str, Any]) -> None:
+        key = str(binding_key or "").strip()
+        if not key:
+            return
+        if not isinstance(pending, dict):
+            return
+        with self._lock:
+            self._pending_approvals[key] = dict(pending)
+
+    def _get_pending_approval(self, binding_key: str) -> Optional[Dict[str, Any]]:
+        key = str(binding_key or "").strip()
+        if not key:
+            return None
+        with self._lock:
+            out = self._pending_approvals.get(key)
+        return dict(out) if isinstance(out, dict) else None
+
+    def _clear_pending_approval(self, binding_key: str) -> None:
+        key = str(binding_key or "").strip()
+        if not key:
+            return
+        with self._lock:
+            self._pending_approvals.pop(key, None)
 
     def reconcile(self, settings_obj: Dict[str, Any]) -> None:
         provider = ""
@@ -1028,6 +1279,8 @@ class TelegramPoller:
             self._allow_groups = bool(allow_groups) if should_run else False
             self._composer = _default_composer_for_telegram(settings_obj) if should_run else {"channel": "telegram", "toolMode": "auto"}
             self._poll_interval_ms = poll_interval_ms if should_run else 1500
+            if not should_run:
+                self._pending_approvals = {}
 
             alive = self._thread is not None and self._thread.is_alive()
             if should_run and not alive:
@@ -1046,6 +1299,7 @@ class TelegramPoller:
             self._allow_groups = False
             self._poll_interval_ms = 1500
             self._composer = {"channel": "telegram", "toolMode": "auto"}
+            self._pending_approvals = {}
             if self._thread is None:
                 return
             self._stop.set()
@@ -1170,14 +1424,153 @@ class TelegramPoller:
                         last_group_filtered_ts = now
                     continue
 
-                thread_id = _thread_id_from_message(msg)
+                binding_key = _thread_id_from_message(msg)
                 chat_id = _chat_id_from_message(msg)
-                if not thread_id or not chat_id:
+                chat_type = _telegram_chat_type_from_message(msg)
+                if not binding_key or not chat_id:
                     continue
                 try:
                     reply_to_message_id = int(msg.get("message_id") or 0)
                 except Exception:
                     reply_to_message_id = 0
+                cmd, cmd_arg = _parse_telegram_command(text)
+                if cmd in ("new", "list", "resume", "resuce"):
+                    try:
+                        from anima_backend_shared.database import create_chat, update_chat
+
+                        if cmd == "new":
+                            title = str(cmd_arg or "").strip() or "New Chat"
+                            new_chat = create_chat(title)
+                            next_thread_id = str(new_chat.get("id") or "").strip()
+                            if next_thread_id:
+                                update_chat(
+                                    next_thread_id,
+                                    {
+                                        "meta": _telegram_chat_meta(
+                                            binding_key=binding_key,
+                                            chat_id=chat_id,
+                                            from_user_id=from_id,
+                                            chat_type=chat_type,
+                                        )
+                                    },
+                                )
+                            _tg_send_message(
+                                token,
+                                chat_id,
+                                "\n".join(
+                                    [
+                                        "已创建新对话。",
+                                        f"id: {next_thread_id or '(empty)'}",
+                                        f"标题: {title}",
+                                    ]
+                                ).strip(),
+                                reply_to_message_id=reply_to_message_id,
+                            )
+                            continue
+
+                        chats = _list_telegram_chats_for_binding(binding_key)
+                        if cmd == "list":
+                            _tg_send_message(
+                                token,
+                                chat_id,
+                                _format_telegram_chat_list(chats),
+                                reply_to_message_id=reply_to_message_id,
+                            )
+                            continue
+
+                        selected, reason = _select_telegram_chat_by_resume_arg(chats, cmd_arg)
+                        if not selected:
+                            if reason == "missing":
+                                out = "用法：/resuce [对话id]\n" + _format_telegram_chat_list(chats)
+                            elif reason == "ambiguous":
+                                out = "匹配到多个对话 id，请输入更完整的 id。\n" + _format_telegram_chat_list(chats)
+                            else:
+                                out = "未找到对应对话 id。\n" + _format_telegram_chat_list(chats)
+                            _tg_send_message(token, chat_id, out, reply_to_message_id=reply_to_message_id)
+                            continue
+                        selected_id = str(selected.get("id") or "").strip()
+                        if selected_id:
+                            update_chat(selected_id, {})
+                        selected_title = str(selected.get("title") or "").strip() or "New Chat"
+                        _tg_send_message(
+                            token,
+                            chat_id,
+                            "\n".join(
+                                [
+                                    f"已切换到对话：{selected_title}",
+                                    f"id: {selected_id}",
+                                ]
+                            ).strip(),
+                            reply_to_message_id=reply_to_message_id,
+                        )
+                    except Exception as e:
+                        try:
+                            _tg_send_message(token, chat_id, f"命令处理失败：{e}", reply_to_message_id=reply_to_message_id)
+                        except Exception:
+                            pass
+                    continue
+
+                pending = self._get_pending_approval(binding_key)
+                numeric_decision = _parse_telegram_approval_numeric_decision(text)
+                if pending and numeric_decision:
+                    run_id_pending = str(pending.get("runId") or "").strip()
+                    approval_pending = pending.get("approval") if isinstance(pending.get("approval"), dict) else {}
+                    approval_id_pending = str(approval_pending.get("id") or "").strip()
+                    try:
+                        status_resume, payload_resume = _resume_run_via_http_handler(
+                            run_id=run_id_pending,
+                            decision=numeric_decision,
+                            approval_id=approval_id_pending,
+                            composer=composer,
+                        )
+                    except Exception as e:
+                        status_resume, payload_resume = 500, {"ok": False, "error": str(e)}
+
+                    if (
+                        status_resume == int(HTTPStatus.CONFLICT)
+                        and isinstance(payload_resume, dict)
+                        and str(payload_resume.get("code") or "").strip() == "approval_required"
+                        and isinstance(payload_resume.get("approval"), dict)
+                    ):
+                        approval_next = payload_resume.get("approval") if isinstance(payload_resume.get("approval"), dict) else {}
+                        run_id_next = str(payload_resume.get("runId") or run_id_pending).strip()
+                        thread_id_next = str(payload_resume.get("threadId") or pending.get("threadId") or "").strip()
+                        self._set_pending_approval(
+                            binding_key,
+                            {"runId": run_id_next, "threadId": thread_id_next, "approval": approval_next},
+                        )
+                        _tg_send_message(
+                            token,
+                            chat_id,
+                            _format_telegram_approval_prompt(approval_next),
+                            reply_to_message_id=reply_to_message_id,
+                        )
+                        continue
+
+                    self._clear_pending_approval(binding_key)
+                    if status_resume == int(HTTPStatus.OK) and isinstance(payload_resume, dict) and payload_resume.get("ok") is True:
+                        reply_resume = str(payload_resume.get("content") or "").strip() or "(empty)"
+                        _tg_send_message(token, chat_id, reply_resume, reply_to_message_id=reply_to_message_id)
+                    else:
+                        err_resume = ""
+                        if isinstance(payload_resume, dict):
+                            err_resume = str(payload_resume.get("error") or "").strip()
+                        _tg_send_message(token, chat_id, err_resume or "审批续跑失败。", reply_to_message_id=reply_to_message_id)
+                    continue
+
+                if pending and not numeric_decision:
+                    approval_pending = pending.get("approval") if isinstance(pending.get("approval"), dict) else {}
+                    _tg_send_message(
+                        token,
+                        chat_id,
+                        _format_telegram_approval_prompt(approval_pending),
+                        reply_to_message_id=reply_to_message_id,
+                    )
+                    continue
+
+                thread_id = _resolve_telegram_thread_id(binding_key)
+                if not thread_id:
+                    thread_id = binding_key
 
                 workspace_dir = str(composer.get("workspaceDir") or "").strip()
                 saved_images: List[str] = []
@@ -1287,7 +1680,7 @@ class TelegramPoller:
                             _tg_send_message(
                                 token,
                                 chat_id,
-                                "未配置 workspaceDir，无法保存图片。请在设置中选择工作区目录。",
+                                "未配置可访问目录权限，无法保存图片。请在设置中调整 Telegram 权限范围。",
                                 reply_to_message_id=reply_to_message_id,
                             )
                         except Exception:
@@ -1316,7 +1709,7 @@ class TelegramPoller:
                 )
 
                 try:
-                    from anima_backend_shared.database import add_message
+                    from anima_backend_shared.database import add_message, merge_chat_meta
 
                     add_message(
                         thread_id,
@@ -1332,6 +1725,15 @@ class TelegramPoller:
                                 },
                             },
                         },
+                    )
+                    merge_chat_meta(
+                        thread_id,
+                        _telegram_chat_meta(
+                            binding_key=binding_key,
+                            chat_id=chat_id,
+                            from_user_id=from_id,
+                            chat_type=chat_type,
+                        ),
                     )
                 except Exception:
                     pass
@@ -1351,6 +1753,7 @@ class TelegramPoller:
                     status, payload = 500, {"ok": False, "error": "run failed"}
 
                 if status == 200 and isinstance(payload, dict) and payload.get("ok") is True:
+                    self._clear_pending_approval(binding_key)
                     reply = str(payload.get("content") or "").strip() or "(empty)"
                     run_id = str(payload.get("runId") or "").strip()
                     try:
@@ -1366,6 +1769,20 @@ class TelegramPoller:
                         )
                     except Exception:
                         pass
+                elif (
+                    status == int(HTTPStatus.CONFLICT)
+                    and isinstance(payload, dict)
+                    and str(payload.get("code") or "").strip() == "approval_required"
+                    and isinstance(payload.get("approval"), dict)
+                ):
+                    approval = payload.get("approval") if isinstance(payload.get("approval"), dict) else {}
+                    run_id_pending = str(payload.get("runId") or "").strip()
+                    thread_id_pending = str(payload.get("threadId") or thread_id).strip()
+                    self._set_pending_approval(
+                        binding_key,
+                        {"runId": run_id_pending, "threadId": thread_id_pending, "approval": approval},
+                    )
+                    reply = _format_telegram_approval_prompt(approval)
                 else:
                     err = ""
                     if isinstance(payload, dict):

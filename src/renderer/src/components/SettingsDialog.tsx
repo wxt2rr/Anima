@@ -1755,8 +1755,6 @@ export const SettingsWindow = memo(function SettingsWindow() {
 function CoderSettings() {
   const settings = useStore(s => s.settings)
   const updateSettings = useStore(s => s.updateSettings)
-  const [status, setStatus] = useState<{ running?: boolean; pid?: number | null; lastError?: string; debugPortReady?: boolean }>({})
-  const [busy, setBusy] = useState(false)
 
   const language = (settings?.language || 'en') as 'en' | 'zh' | 'ja'
   const t = useMemo(() => {
@@ -1769,60 +1767,44 @@ function CoderSettings() {
     name: 'Codex',
     backendKind: 'codex',
     backendLabel: '',
-    endpointType: 'desktop',
-    transport: 'cdpbridge',
-    autoStart: false,
-    command: '/usr/bin/open',
-    args: ['-a', 'Codex', '--args', '--remote-debugging-port=9222'],
+    command: 'codex',
+    args: ['exec', '{prompt}'],
     cwd: '',
     env: {},
-    remoteDebuggingPort: 9222,
-    commandTemplates: {
-      status: '',
-      send: '',
-      ask: 'codex exec "{prompt}"',
-      read: '',
-      new: 'codex',
-      screenshot: ''
+    timeoutMs: 1_200_000,
+    maxOutputChars: 120_000,
+    resultPolicy: {
+      messageMode: 'summary',
+      artifactMode: 'final',
+      includeDecisionRequests: true
     }
   } as any
 
   const normalizeCoder = useCallback((raw: any) => {
     const next = { ...defaultCoder, ...(raw && typeof raw === 'object' ? raw : {}) }
     next.name = String(next.name || '').trim() || 'Codex'
-    next.backendKind = next.backendKind === 'cursor' ? 'cursor' : next.backendKind === 'custom' ? 'custom' : 'codex'
+    next.backendKind = next.backendKind === 'claude' ? 'claude' : next.backendKind === 'custom' ? 'custom' : 'codex'
     next.backendLabel = String(next.backendLabel || '').trim()
-    next.endpointType = next.endpointType === 'terminal' ? 'terminal' : 'desktop'
-    next.transport = next.transport === 'acp' ? 'acp' : 'cdpbridge'
-    next.command = String(next.command || '').trim() || '/usr/bin/open'
+    const defaultCommand = next.backendKind === 'claude' ? 'claude' : 'codex'
+    const defaultArgs = next.backendKind === 'claude' ? ['-p', '{prompt}'] : ['exec', '{prompt}']
+    next.command = String(next.command || '').trim() || defaultCommand
     next.cwd = String(next.cwd || '').trim()
     next.env = next.env && typeof next.env === 'object' ? next.env : {}
-    const rd = Number(next.remoteDebuggingPort || 9222)
-    next.remoteDebuggingPort = Number.isFinite(rd) && rd > 0 ? rd : 9222
-    next.commandTemplates = {
-      status: String(next.commandTemplates?.status || '').trim(),
-      send: String(next.commandTemplates?.send || '').trim(),
-      ask: String(next.commandTemplates?.ask || '').trim() || 'codex exec "{prompt}"',
-      read: String(next.commandTemplates?.read || '').trim(),
-      new: String(next.commandTemplates?.new || '').trim() || 'codex',
-      screenshot: String(next.commandTemplates?.screenshot || '').trim()
-    }
-    next.args = Array.isArray(next.args)
-      ? next.args.map((x: any) => String(x))
-      : (next.transport === 'acp' ? ['--acp'] : ['-a', 'Codex', '--args', `--remote-debugging-port=${next.remoteDebuggingPort}`])
-    if (next.transport === 'acp' && (!Array.isArray(next.args) || next.args.length === 0)) {
-      next.args = ['--acp']
-    }
-    if (next.transport === 'cdpbridge' && (!Array.isArray(next.args) || next.args.length === 0)) {
-      next.args = ['-a', 'Codex', '--args', `--remote-debugging-port=${Number(next.remoteDebuggingPort || 9222)}`]
-    }
-    if (
-      next.transport === 'cdpbridge' &&
-      next.command === 'codex' &&
-      next.args.some((x: string) => String(x).includes('--remote-debugging-port'))
-    ) {
-      next.command = '/usr/bin/open'
-      next.args = ['-a', 'Codex', '--args', `--remote-debugging-port=${next.remoteDebuggingPort}`]
+    next.args = Array.isArray(next.args) && next.args.length > 0 ? next.args.map((x: any) => String(x)) : defaultArgs
+    const timeoutMs = Number(next.timeoutMs || 1_200_000)
+    next.timeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.trunc(timeoutMs) : 1_200_000
+    const maxOutputChars = Number(next.maxOutputChars || 120_000)
+    next.maxOutputChars = Number.isFinite(maxOutputChars) && maxOutputChars > 0 ? Math.trunc(maxOutputChars) : 120_000
+    next.resultPolicy = {
+      messageMode:
+        next.resultPolicy?.messageMode === 'all' || next.resultPolicy?.messageMode === 'last'
+          ? next.resultPolicy?.messageMode
+          : 'summary',
+      artifactMode:
+        next.resultPolicy?.artifactMode === 'none' || next.resultPolicy?.artifactMode === 'all'
+          ? next.resultPolicy?.artifactMode
+          : 'final',
+      includeDecisionRequests: next.resultPolicy?.includeDecisionRequests !== false
     }
     return next
   }, [])
@@ -1909,57 +1891,6 @@ function CoderSettings() {
     persistProfiles(nextProfiles, nextActive)
   }, [activeProfile, persistProfiles, profiles])
 
-  const refreshStatus = useCallback(async () => {
-    const api = window.anima?.coder
-    if (!api?.status) return
-    try {
-      const res = await api.status()
-      if (res?.ok) {
-        setStatus({
-          running: Boolean(res.running),
-          pid: res.pid ?? null,
-          lastError: String(res.lastError || '').trim(),
-          debugPortReady: Boolean(res.debugPortReady)
-        })
-      }
-    } catch {
-      //
-    }
-  }, [])
-
-  useEffect(() => {
-    void refreshStatus()
-    const timer = window.setInterval(() => {
-      void refreshStatus()
-    }, 2000)
-    return () => window.clearInterval(timer)
-  }, [refreshStatus])
-
-  const startCoder = async () => {
-    const api = window.anima?.coder
-    if (!api?.start) return
-    if (!activeProfile) return
-    setBusy(true)
-    try {
-      await api.start({ settings: normalizeCoder(activeProfile) })
-      await refreshStatus()
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const stopCoder = async () => {
-    const api = window.anima?.coder
-    if (!api?.stop) return
-    setBusy(true)
-    try {
-      await api.stop()
-      await refreshStatus()
-    } finally {
-      setBusy(false)
-    }
-  }
-
   const argsText = Array.isArray(activeProfile?.args) ? activeProfile.args.join(' ') : ''
 
   return (
@@ -1977,8 +1908,8 @@ function CoderSettings() {
           {profiles.map((profile: any) => {
             const selected = activeProfile?.id === profile.id
             const backendName =
-              profile.backendKind === 'cursor'
-                ? t.backendCursor
+              profile.backendKind === 'claude'
+                ? t.backendClaude
                 : profile.backendKind === 'custom'
                   ? (String(profile.backendLabel || '').trim() || t.backendCustom)
                   : t.backendCodex
@@ -2039,21 +1970,15 @@ function CoderSettings() {
                     <Label className="text-[13px]">{t.backend}</Label>
                     <Select
                       value={String(activeProfile.backendKind || 'codex')}
-                      onValueChange={(v) => updateActiveProfile({ backendKind: v === 'cursor' ? 'cursor' : v === 'custom' ? 'custom' : 'codex' })}
+                      onValueChange={(v) => updateActiveProfile({ backendKind: v === 'claude' ? 'claude' : v === 'custom' ? 'custom' : 'codex' })}
                     >
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="codex">{t.backendCodex}</SelectItem>
-                        <SelectItem value="cursor">{t.backendCursor}</SelectItem>
+                        <SelectItem value="claude">{t.backendClaude}</SelectItem>
                         <SelectItem value="custom">{t.backendCustom}</SelectItem>
                       </SelectContent>
                     </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-[13px]">{t.autoStart}</Label>
-                    <div className="h-10 rounded-md border px-3 flex items-center justify-end">
-                      <Switch checked={Boolean(activeProfile.autoStart)} onCheckedChange={(v) => updateActiveProfile({ autoStart: Boolean(v) })} />
-                    </div>
                   </div>
                   {String(activeProfile.backendKind || '') === 'custom' ? (
                     <div className="space-y-2">
@@ -2062,24 +1987,20 @@ function CoderSettings() {
                     </div>
                   ) : null}
                   <div className="space-y-2">
-                    <Label className="text-[13px]">{t.endpoint}</Label>
-                    <Select value={String(activeProfile.endpointType || 'desktop')} onValueChange={(v) => updateActiveProfile({ endpointType: v === 'terminal' ? 'terminal' : 'desktop' })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="terminal">{t.terminal}</SelectItem>
-                        <SelectItem value="desktop">{t.desktop}</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <Label className="text-[13px]">{t.timeoutMs}</Label>
+                    <Input
+                      type="number"
+                      value={String(activeProfile.timeoutMs || 1_200_000)}
+                      onChange={(e) => updateActiveProfile({ timeoutMs: Number(e.target.value || 1_200_000) || 1_200_000 })}
+                    />
                   </div>
                   <div className="space-y-2">
-                    <Label className="text-[13px]">{t.transport}</Label>
-                    <Select value={String(activeProfile.transport || 'cdpbridge')} onValueChange={(v) => updateActiveProfile({ transport: v === 'acp' ? 'acp' : 'cdpbridge' })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="acp">{t.acp}</SelectItem>
-                        <SelectItem value="cdpbridge">{t.cdpbridge}</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <Label className="text-[13px]">{t.maxOutputChars}</Label>
+                    <Input
+                      type="number"
+                      value={String(activeProfile.maxOutputChars || 120000)}
+                      onChange={(e) => updateActiveProfile({ maxOutputChars: Number(e.target.value || 120000) || 120000 })}
+                    />
                   </div>
                 </div>
                 <div className="grid grid-cols-1 gap-3">
@@ -2102,88 +2023,54 @@ function CoderSettings() {
                     <Label className="text-[13px]">{t.cwd}</Label>
                     <Input value={String(activeProfile.cwd || '')} onChange={(e) => updateActiveProfile({ cwd: e.target.value })} />
                   </div>
-                  {String(activeProfile.transport || '') === 'cdpbridge' ? (
-                    <div className="space-y-2">
-                      <Label className="text-[13px]">{t.remoteDebuggingPort}</Label>
-                      <Input
-                        type="number"
-                        value={String(activeProfile.remoteDebuggingPort || 9222)}
-                        onChange={(e) => updateActiveProfile({ remoteDebuggingPort: Number(e.target.value || 9222) || 9222 })}
+                  <p className="text-xs text-muted-foreground">{t.promptVarHint}</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="pt-6 space-y-4">
+                <h3 className="text-[13px] font-semibold">{t.returnPolicy}</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label className="text-[13px]">{t.messageMode}</Label>
+                    <Select
+                      value={String(activeProfile.resultPolicy?.messageMode || 'summary')}
+                      onValueChange={(v) => updateActiveProfile({ resultPolicy: { ...activeProfile.resultPolicy, messageMode: v } })}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">{t.messageModeAll}</SelectItem>
+                        <SelectItem value="last">{t.messageModeLast}</SelectItem>
+                        <SelectItem value="summary">{t.messageModeSummary}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[13px]">{t.artifactMode}</Label>
+                    <Select
+                      value={String(activeProfile.resultPolicy?.artifactMode || 'final')}
+                      onValueChange={(v) => updateActiveProfile({ resultPolicy: { ...activeProfile.resultPolicy, artifactMode: v } })}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">{t.artifactModeNone}</SelectItem>
+                        <SelectItem value="final">{t.artifactModeFinal}</SelectItem>
+                        <SelectItem value="all">{t.artifactModeAll}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[13px]">{t.includeDecisionRequests}</Label>
+                    <div className="h-10 rounded-md border px-3 flex items-center justify-end">
+                      <Switch
+                        checked={Boolean(activeProfile.resultPolicy?.includeDecisionRequests !== false)}
+                        onCheckedChange={(v) => updateActiveProfile({ resultPolicy: { ...activeProfile.resultPolicy, includeDecisionRequests: Boolean(v) } })}
                       />
                     </div>
-                  ) : null}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6 space-y-4">
-                <h3 className="text-[13px] font-semibold">{t.commandTemplates}</h3>
-                <div className="grid grid-cols-1 gap-3">
-                  <div className="space-y-2">
-                    <Label className="text-[13px]">{t.cmdStatus}</Label>
-                    <Input
-                      value={String(activeProfile.commandTemplates?.status || '')}
-                      onChange={(e) => updateActiveProfile({ commandTemplates: { ...activeProfile.commandTemplates, status: e.target.value } })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-[13px]">{t.cmdSend}</Label>
-                    <Input
-                      value={String(activeProfile.commandTemplates?.send || '')}
-                      onChange={(e) => updateActiveProfile({ commandTemplates: { ...activeProfile.commandTemplates, send: e.target.value } })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-[13px]">{t.cmdAsk}</Label>
-                    <Input
-                      value={String(activeProfile.commandTemplates?.ask || '')}
-                      onChange={(e) => updateActiveProfile({ commandTemplates: { ...activeProfile.commandTemplates, ask: e.target.value } })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-[13px]">{t.cmdRead}</Label>
-                    <Input
-                      value={String(activeProfile.commandTemplates?.read || '')}
-                      onChange={(e) => updateActiveProfile({ commandTemplates: { ...activeProfile.commandTemplates, read: e.target.value } })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-[13px]">{t.cmdNew}</Label>
-                    <Input
-                      value={String(activeProfile.commandTemplates?.new || '')}
-                      onChange={(e) => updateActiveProfile({ commandTemplates: { ...activeProfile.commandTemplates, new: e.target.value } })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-[13px]">{t.cmdScreenshot}</Label>
-                    <Input
-                      value={String(activeProfile.commandTemplates?.screenshot || '')}
-                      onChange={(e) => updateActiveProfile({ commandTemplates: { ...activeProfile.commandTemplates, screenshot: e.target.value } })}
-                    />
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6 space-y-4">
-                <div className="flex items-center gap-2">
-                  <Badge variant={status.running ? 'default' : 'secondary'}>{status.running ? t.running : t.stopped}</Badge>
-                  <Badge variant={status.debugPortReady ? 'default' : 'secondary'}>
-                    {status.debugPortReady ? t.debugReady : t.debugNotReady}
-                  </Badge>
-                  {status.pid ? <Badge variant="outline">PID {status.pid}</Badge> : null}
-                  {status.lastError ? <div className="text-[12px] text-destructive truncate">{status.lastError}</div> : null}
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button variant="outline" onClick={() => void refreshStatus()} disabled={busy} className="gap-2">
-                    <RefreshCw className={`w-4 h-4 ${busy ? 'animate-spin' : ''}`} />
-                    {t.refresh}
-                  </Button>
-                  <Button onClick={() => void startCoder()} disabled={busy}>{t.start}</Button>
-                  <Button variant="destructive" onClick={() => void stopCoder()} disabled={busy}>{t.stop}</Button>
-                </div>
+                <p className="text-xs text-muted-foreground">{t.returnPolicyHint}</p>
               </CardContent>
             </Card>
           </div>
@@ -3979,25 +3866,116 @@ function NetworkSettings() {
   const { settings: settings0, updateSettings } = useStore()
   const settings = settings0!
   const [status, setStatus] = useState<{ type: 'idle' | 'ok' | 'error'; text?: string }>({ type: 'idle' })
+  const [detectState, setDetectState] = useState<{
+    loading: boolean
+    enabled: boolean
+    proxyUrl: string
+    source: string
+    error: string
+  }>({
+    loading: false,
+    enabled: false,
+    proxyUrl: '',
+    source: '',
+    error: ''
+  })
   const t = (() => {
     const dict = SETTINGS_DIALOG_DICTIONARIES[8] as any
     return dict[settings.language as keyof typeof dict] || dict.en
   })()
 
+  const proxyModeRaw = String((settings as any).proxyMode || '').trim().toLowerCase()
+  const proxyMode: 'auto' | 'manual' =
+    proxyModeRaw === 'auto' || proxyModeRaw === 'manual'
+      ? (proxyModeRaw as 'auto' | 'manual')
+      : (String(settings.proxyUrl || '').trim() ? 'manual' : 'auto')
+
+  const detectProxy = useCallback(async () => {
+    setDetectState((prev) => ({ ...prev, loading: true, error: '' }))
+    try {
+      const res = await fetchBackendJson<{ ok: boolean; enabled?: boolean; proxyUrl?: string; source?: string }>(
+        '/api/network/proxy/detect',
+        { method: 'GET', cache: 'no-store' }
+      )
+      if (!res?.ok) throw new Error('detect failed')
+      const next = {
+        loading: false,
+        enabled: Boolean(res.enabled),
+        proxyUrl: String(res.proxyUrl || '').trim(),
+        source: String(res.source || '').trim(),
+        error: ''
+      }
+      setDetectState(next)
+      return next
+    } catch {
+      const next = { loading: false, enabled: false, proxyUrl: '', source: '', error: String(t.detectFailed || 'detect failed') }
+      setDetectState(next)
+      return next
+    }
+  }, [t.detectFailed])
+
+  useEffect(() => {
+    if (proxyMode !== 'auto') return
+    void detectProxy()
+  }, [proxyMode, detectProxy])
+
   const onApply = async () => {
+    if (proxyMode === 'auto') {
+      const detected = await detectProxy()
+      setStatus({ type: 'ok', text: detected.enabled ? t.proxyApplied : t.directApplied })
+      return
+    }
     setStatus({ type: 'ok', text: settings.proxyUrl?.trim() ? t.proxyApplied : t.directApplied })
   }
 
   return (
     <div className="p-6 space-y-6">
       <Card className="p-5 space-y-3">
-        <Label>{t.proxyUrl}</Label>
-        <Input 
-          type="text"
-          placeholder="http://127.0.0.1:7890"
-          value={settings.proxyUrl || ''}
-          onChange={(e) => updateSettings({ proxyUrl: e.target.value })}
-        />
+        <Label>{t.proxyMode}</Label>
+        <Select
+          value={proxyMode}
+          onValueChange={(val) =>
+            updateSettings({
+              proxyMode: val === 'manual' ? 'manual' : 'auto'
+            } as any)
+          }
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="auto">{t.proxyModeAuto}</SelectItem>
+            <SelectItem value="manual">{t.proxyModeManual}</SelectItem>
+          </SelectContent>
+        </Select>
+
+        {proxyMode === 'manual' ? (
+          <>
+            <Label>{t.proxyUrl}</Label>
+            <Input
+              type="text"
+              placeholder={String(t.manualPlaceholder || '127.0.0.1:7890')}
+              value={settings.proxyUrl || ''}
+              onChange={(e) => updateSettings({ proxyUrl: e.target.value })}
+            />
+          </>
+        ) : (
+          <div className="space-y-2 rounded-md border border-border/70 p-3">
+            <div className="text-xs text-muted-foreground">
+              {detectState.loading
+                ? t.detectChecking
+                : (detectState.error || (detectState.enabled ? t.detectEnabled(detectState.proxyUrl) : t.detectDisabled))}
+            </div>
+            {detectState.source ? (
+              <div className="text-xs text-muted-foreground">source: {detectState.source}</div>
+            ) : null}
+            <div>
+              <Button variant="outline" size="sm" onClick={() => void detectProxy()}>
+                {t.refreshDetect}
+              </Button>
+            </div>
+          </div>
+        )}
         <p className="text-xs text-muted-foreground">
           {t.hint}
         </p>
@@ -5718,10 +5696,21 @@ function ImSettings() {
   const allowedUserIds = Array.isArray(tg.allowedUserIds) ? tg.allowedUserIds.map(String) : []
   const allowGroups = Boolean(tg.allowGroups)
   const pollingIntervalMs = Number.isFinite(tg.pollingIntervalMs as any) ? Number(tg.pollingIntervalMs) : 1500
-  const telegramProjectId = String((tg as any).projectId || '').trim()
   const telegramProviderOverrideId = String((tg as any).providerOverrideId || '').trim()
   const telegramModelOverride = String((tg as any).modelOverride || '').trim()
   const projects = Array.isArray(settings.projects) ? settings.projects : []
+  const telegramProjectIds = useMemo(() => {
+    const legacy = String((tg as any).projectId || '').trim()
+    const raw = Array.isArray((tg as any).projectIds) ? (tg as any).projectIds : []
+    const arr = [...raw.map((x: any) => String(x || '').trim()).filter(Boolean)]
+    if (legacy && !arr.includes(legacy)) arr.push(legacy)
+    return Array.from(new Set(arr))
+  }, [tg])
+  const telegramPermissionScope = useMemo(() => {
+    const raw = String((tg as any).permissionScope || '').trim()
+    if (raw === 'current_computer' || raw === 'all_projects' || raw === 'specific_projects') return raw
+    return telegramProjectIds.length > 0 ? 'specific_projects' : 'all_projects'
+  }, [tg, telegramProjectIds])
 
   const availableProviders = useMemo(() => {
     const list = Array.isArray(providers) ? providers.filter((p) => p && p.isEnabled) : []
@@ -5844,25 +5833,65 @@ function ImSettings() {
         </div>
 
         <div className="space-y-2">
-          <Label>{t.telegramProject}</Label>
+          <Label>{t.telegramPermission}</Label>
           <Select
-            value={telegramProjectId ? telegramProjectId : ' '}
-            onValueChange={(val) => updateTelegram({ projectId: val.trim() ? val : '' } as any)}
+            value={telegramPermissionScope}
+            onValueChange={(val) => {
+              const scope =
+                val === 'current_computer' || val === 'all_projects' || val === 'specific_projects' ? val : 'all_projects'
+              updateTelegram({ permissionScope: scope } as any)
+            }}
           >
             <SelectTrigger>
-              <SelectValue placeholder={t.telegramProjectAll} />
+              <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value=" ">{t.telegramProjectAll}</SelectItem>
-              {projects.map((p: any) => (
-                <SelectItem key={String(p.id || '')} value={String(p.id || '')}>
-                  {String(p.name || p.id || '')}
-                </SelectItem>
-              ))}
+              <SelectItem value="current_computer">{t.telegramPermissionCurrentComputer}</SelectItem>
+              <SelectItem value="all_projects">{t.telegramPermissionAllProjects}</SelectItem>
+              <SelectItem value="specific_projects">{t.telegramPermissionSpecificProjects}</SelectItem>
             </SelectContent>
           </Select>
-          <div className="text-xs text-muted-foreground">{t.telegramProjectHint}</div>
+          <div className="text-xs text-muted-foreground">{t.telegramPermissionHint}</div>
         </div>
+
+        {telegramPermissionScope === 'specific_projects' ? (
+          <div className="space-y-2">
+            <Label>{t.telegramPermissionProjects}</Label>
+            {projects.length > 0 ? (
+              <div className="rounded-md border border-border/70 divide-y divide-border/60">
+                {projects.map((p: any) => {
+                  const pid = String(p?.id || '').trim()
+                  if (!pid) return null
+                  const checked = telegramProjectIds.includes(pid)
+                  return (
+                    <label key={pid} className="flex items-center gap-2 px-3 py-2 text-[13px] cursor-pointer">
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={(v) => {
+                          const on = Boolean(v)
+                          const next = on ? [...telegramProjectIds, pid] : telegramProjectIds.filter((id) => id !== pid)
+                          updateTelegram({
+                            permissionScope: 'specific_projects',
+                            projectIds: Array.from(new Set(next)),
+                            projectId: '',
+                          } as any)
+                        }}
+                      />
+                      <span>{String(p?.name || pid)}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground">{t.telegramPermissionNoProjects}</div>
+            )}
+            <div className="text-xs text-muted-foreground">{t.telegramPermissionSpecificHint}</div>
+          </div>
+        ) : null}
+
+        {telegramPermissionScope === 'specific_projects' && telegramProjectIds.length === 0 ? (
+          <div className="text-xs text-amber-600">{t.telegramPermissionSelectAtLeastOne}</div>
+        ) : null}
 
         <div className="space-y-2">
           <Label>{t.chatProvider}</Label>
