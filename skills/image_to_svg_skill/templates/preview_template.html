@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Image to SVG Preview</title>
+  <style>
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; background: #f8fafc; color: #0f172a; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px; }
+    .card { background: white; border: 1px solid #e2e8f0; border-radius: 16px; padding: 16px; box-shadow: 0 10px 28px rgba(15,23,42,.08); }
+    h1 { font-size: 22px; }
+    h2 { font-size: 16px; margin: 0 0 12px; }
+    img, object { max-width: 100%; border: 1px solid #e5e7eb; border-radius: 12px; background: white; }
+    code { background: #f1f5f9; padding: 2px 6px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h1>Image to SVG Preview</h1>
+  <p><code>exact.svg</code> embeds the original image. <code>editable.svg</code> is an editable approximation.</p>
+  <div class="grid">
+    <div class="card">
+      <h2>Original</h2>
+      <img src="source.png" alt="Original image" />
+    </div>
+    <div class="card">
+      <h2>Exact SVG</h2>
+      <object data="exact.svg" type="image/svg+xml"></object>
+    </div>
+    <div class="card">
+      <h2>Editable SVG</h2>
+      <object data="editable.svg" type="image/svg+xml"></object>
+    </div>
+  </div>
+</body>
+</html>

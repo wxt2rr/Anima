@@ -157,8 +157,23 @@ function applyTabCompletionSuggestion(base: string, result: TabCompleteResult): 
   if (!draft) return null
   if (!out) return null
   if (mode === 'complete') {
-    if (!/^[A-Za-z][A-Za-z'-]{0,23}$/.test(out)) return null
-    return `${draft}${out}`
+    const normalized = out.replace(/\s+/g, ' ').trim()
+    if (!normalized) return null
+    if (normalized === draft || normalized === draft.trim()) return null
+
+    if (normalized.startsWith(draft)) {
+      return normalized
+    }
+    const draftTrimEnd = draft.replace(/\s+$/, '')
+    if (draftTrimEnd && normalized.startsWith(draftTrimEnd)) {
+      return `${draft}${normalized.slice(draftTrimEnd.length)}`
+    }
+
+    const token = normalized.split(/\s+/, 1)[0]?.trim().replace(/[.,!?;:，。；：]+$/g, '')
+    if (token && /^[A-Za-z][A-Za-z'-]{0,39}$/.test(token)) {
+      return `${draft}${token}`
+    }
+    return `${draft}${normalized}`
   }
   if (mode !== 'translate') {
     return null
@@ -7005,17 +7020,16 @@ function ChatComposer({
                 }
                 if (
                   (e.key === 't' || e.key === 'T') &&
-                  !e.metaKey &&
+                  e.metaKey &&
                   !e.ctrlKey &&
                   !e.altKey &&
                   !e.shiftKey &&
-                  tabChordTimerRef.current != null
+                  !slashInput &&
+                  !slashMenuOpen &&
+                  onTabComplete
                 ) {
                   e.preventDefault()
-                  window.clearTimeout(tabChordTimerRef.current)
-                  tabChordTimerRef.current = null
-                  const current = String(tabChordBaseRef.current || value || '')
-                  tabChordBaseRef.current = ''
+                  const current = String(value || '')
                   if (!current.trim()) return
                   requestTabCompletion('translate', current)
                   return
