@@ -1,4 +1,4 @@
-import { Search, Trash2, MessageCircle, PanelLeftClose, MoreHorizontal, Settings, Folder, FolderOpen, FolderPlus, ChevronDown, ChevronRight, Star, Pencil, Clock3, Sparkles, Send, Monitor } from 'lucide-react'
+import { Search, Trash2, MessageCircle, PanelLeftClose, MoreHorizontal, Settings, Folder, FolderOpen, FolderPlus, ChevronRight, Star, Pencil, Clock3, Sparkles, Send, Monitor } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, memo, type MouseEvent } from 'react'
 import { useStore } from '../store/useStore'
 import { useUpdateStore } from '../store/useUpdateStore'
@@ -390,15 +390,8 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
                       toggleProjectCollapsed(pid)
                     }}
                   >
-                    <span className="relative w-3.5 h-3.5 shrink-0">
-                      {collapsed ? (
-                        <Folder className="w-3.5 h-3.5 text-foreground/70 transition-opacity group-hover:opacity-0" />
-                      ) : (
-                        <FolderOpen className="w-3.5 h-3.5 text-foreground/70 transition-opacity group-hover:opacity-0" />
-                      )}
-                      <span className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
-                        {collapsed ? <FolderOpen className="w-3.5 h-3.5 text-foreground/70" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                      </span>
+                    <span className="w-3.5 h-3.5 shrink-0">
+                      {collapsed ? <Folder className="w-3.5 h-3.5 text-foreground/70" /> : <FolderOpen className="w-3.5 h-3.5 text-foreground/70" />}
                     </span>
                     <span className="truncate text-[13px] flex-1 leading-5 font-medium text-left">{p.name}</span>
                   </button>

@@ -23,7 +23,8 @@
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:acp": "tsc -p tsconfig.acp-tests.json && node --test .tmp/acp-tests/tests/acpCore.test.js",
-    "verify:dist:mac": "node scripts/verify_dist_mac.mjs"
+    "verify:dist:mac": "node scripts/verify_dist_mac.mjs",
+    "test:chat-render": "tsc -p tsconfig.chat-render-tests.json && node --test .tmp/chat-render-tests/tests/*.js"
   },
   "build": {
     "appId": "com.anima.app",
@@ -88,6 +89,7 @@
     "@radix-ui/react-slot": "^1.0.2",
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@tanstack/react-virtual": "^3.13.24",
     "@wangxt0223/codex-switcher": "^0.8.1",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",

@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": ".tmp/chat-render-tests",
+    "rootDir": ".",
+    "types": [
+      "node"
+    ],
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "src/renderer/src/*"
+      ]
+    }
+  },
+  "include": [
+    "tests/chatMessageViewModel.test.ts",
+    "src/renderer/src/env.d.ts",
+    "src/renderer/src/features/chat/messageViewModel.ts",
+    "src/renderer/src/features/chat/types.ts",
+    "src/renderer/src/store/useStore.ts",
+    "tests/chatMarkdownCompiler.test.ts",
+    "src/renderer/src/features/chat/markdownCompilerCore.ts",
+    "tests/chatLinkTargets.test.ts",
+    "src/renderer/src/features/chat/chatLinks.ts",
+    "tests/chatNavigation.test.ts",
+    "src/renderer/src/features/chat/chatNavigation.ts"
+  ]
+}

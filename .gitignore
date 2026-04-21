@@ -41,6 +41,7 @@ env/
 *.log
 
 # Temporary
+.tmp/
 tmp/
 temp/
 .trae/*

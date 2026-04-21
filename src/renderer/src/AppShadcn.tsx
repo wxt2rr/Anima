@@ -1,21 +1,17 @@
-import { Fragment, useState, useRef, useEffect, useMemo, useCallback, type ReactNode, type DragEvent, type ClipboardEvent } from 'react'
-import { ArrowUp, Square, Paperclip, PanelLeftOpen, MessageCircle, Wrench, Sparkles, X, ChevronDown, Mic, Folder, Brain, Shield, Check, GitBranch, Copy, Settings, TerminalSquare, Globe } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import remarkMath from 'remark-math'
-import rehypeKatex from 'rehype-katex'
-import rehypeRaw from 'rehype-raw'
-import { CodeBlock } from './components/markdown/CodeBlock'
-import { MermaidBlock } from './components/markdown/MermaidBlock'
-import 'katex/dist/katex.min.css'
-import { DiffView } from './components/DiffView'
-import { createTwoFilesPatch } from 'diff'
+import { useState, useRef, useEffect, useMemo, useCallback, type ReactNode, type DragEvent, type ClipboardEvent } from 'react'
+import { ArrowUp, Square, Paperclip, PanelLeftOpen, MessageCircle, Wrench, Sparkles, X, ChevronDown, Mic, Folder, Brain, Shield, Check, GitBranch, Copy, Settings, TerminalSquare, Globe, Loader2 } from 'lucide-react'
 import { resolveBackendBaseUrl, useStore, type Message, type ToolTrace, type ProviderModel, type Artifact, type MemoryInjectionSummary } from './store/useStore'
 import { THEMES } from './lib/themes'
 import { SettingsDialog, SettingsWindow } from './components/SettingsDialog'
 import { ChatHistoryPanel } from './components/ChatHistoryPanel'
 import { InputAnimation } from './components/InputAnimation'
 import { UpdateDialog } from './components/UpdateDialog'
+import { ChatSurface } from './features/chat/ChatSurface'
+import { appendStreamDraft, setStreamDraft } from './features/chat/useStreamDraft'
+import { MarkdownContent } from './features/chat/MarkdownContent'
+import type { ChatUserNavItem } from './features/chat/chatNavigation'
+import { createChatPerfFixture } from './features/chat/perfFixture'
+import { readChatPerfCounters, resetChatPerfCounters } from './features/chat/perfCounters'
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -40,7 +36,6 @@ import {
   type SlashCommandEntry
 } from './lib/slashCommands'
 import animaLogo from '../../../images/logo.png'
-import loadingGif from '../../../images/loding.gif'
 
 type BackendUsage = {
   prompt_tokens?: number
@@ -253,37 +248,6 @@ function MaskedIcon({ url, className }: { url: string; className?: string }) {
   return <span className={className} style={style} aria-hidden="true" />
 }
 
-function normalizeChatMarkdown(input: string): string {
-  const s = String(input || '')
-  const hasUnescapedFence = /(^|\n)[ \t]{0,3}```/.test(s)
-  if (hasUnescapedFence) return s
-  return s
-    .replace(/(^|\n)([ \t]{0,3})\\```/g, '$1$2```')
-    .replace(/``\s*`([^`\n]+)`\s*``/g, '`$1`')
-}
-
-function stripWrappedBackticks(input: string): string {
-  let text = String(input || '').trim()
-  while (text.length >= 2 && text.startsWith('`') && text.endsWith('`')) {
-    text = text.slice(1, -1).trim()
-  }
-  return text
-}
-
-function linkifyQuotedFileNames(input: string): string {
-  const s = String(input || '')
-  if (!s) return s
-  const parts = s.split(/(```[\s\S]*?```)/g)
-  const fileExt = '(?:ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)'
-  const quoted = new RegExp(`(['"“”‘’])([^\\n\\r]{1,260}\\.${fileExt})\\1`, 'gi')
-  return parts
-    .map((part) => {
-      if (part.startsWith('```')) return part
-      return part.replace(quoted, (_m, _q, file) => `[\`${file}\`](${file})`)
-    })
-    .join('')
-}
-
 function toolTraceSignature(trace: any): string {
   const normalizeSigText = (v: unknown) => String(v || '').replace(/\s+/g, ' ').trim()
   const rawName = String(trace?.name || '')
@@ -455,10 +419,9 @@ function App(): JSX.Element {
             className="w-full max-w-[520px] text-center"
           >
             <div className="mb-4 flex items-center justify-center">
-              <img
-                src={loadingGif}
-                alt="Loading"
-                className="h-24 w-24 object-contain select-none pointer-events-none"
+              <Loader2
+                aria-label="Loading"
+                className={`h-12 w-12 text-foreground/70 ${reduceMotion ? '' : 'animate-spin'}`}
               />
             </div>
             <div className="flex items-center justify-center gap-2">
@@ -590,14 +553,14 @@ function AppLoaded(): JSX.Element {
   const lastScrollTopRef = useRef(0)
   const lastMessageKeyRef = useRef('')
   const lastSeenMessageKeyRef = useRef('')
-  const userMsgElMapRef = useRef<Map<string, HTMLElement>>(new Map())
   const turnSummaryBtnMapRef = useRef<Map<string, HTMLButtonElement>>(new Map())
   const turnStabilizeRafByIdRef = useRef<Map<string, number>>(new Map())
   const highlightUserMsgTimerRef = useRef<number | null>(null)
   const dangerousApprovalThreadsRef = useRef<Set<string>>(new Set())
   const copiedMessageTimerRef = useRef<number | null>(null)
   const [highlightUserMsgId, setHighlightUserMsgId] = useState('')
-  const [userNavItems, setUserNavItems] = useState<Array<{ id: string; topRatio: number; widthPx: number; content: string }>>([])
+  const [pendingUserScrollId, setPendingUserScrollId] = useState('')
+  const [userNavItems, setUserNavItems] = useState<ChatUserNavItem[]>([])
   const [navHover, setNavHover] = useState<{ id: string; topRatio: number; content: string } | null>(null)
   const [chatScrollbarVisible, setChatScrollbarVisible] = useState(false)
   const chatScrollbarHideTimerRef = useRef<number | null>(null)
@@ -614,6 +577,8 @@ function AppLoaded(): JSX.Element {
       return
     }
   }, [])
+
+
 
   useEffect(() => {
     return () => {
@@ -690,6 +655,47 @@ function AppLoaded(): JSX.Element {
     if (chatIsAtBottomRef.current === next) return
     chatIsAtBottomRef.current = next
     setChatIsAtBottom(next)
+  }, [])
+
+  useEffect(() => {
+    if (import.meta.env.PROD) return
+    const perfApi = {
+      loadFixture(turns = 160) {
+        const fixture = createChatPerfFixture(turns)
+        const now = Date.now()
+        const chatId = `chat-render-perf-${now}`
+        resetChatPerfCounters()
+        useStore.setState((state: any) => ({
+          chatInitDone: true,
+          activeChatId: chatId,
+          messages: fixture,
+          chats: [
+            { id: chatId, title: 'Chat Render Perf Fixture', createdAt: now, updatedAt: now, messages: fixture },
+            ...(Array.isArray(state.chats) ? state.chats.filter((chat: any) => String(chat?.id || '') !== chatId) : [])
+          ]
+        }))
+        return { messages: fixture.length }
+      },
+      reset: resetChatPerfCounters,
+      read() {
+        return {
+          ...readChatPerfCounters(),
+          messageRows: document.querySelectorAll('[data-message-id]').length,
+          codeLineRows: document.querySelectorAll('[data-code-line]').length,
+          oldMarkdownNodes: document.querySelectorAll('.react-markdown').length,
+          scrollHeight: document.querySelector('main')?.scrollHeight || document.scrollingElement?.scrollHeight || document.body.scrollHeight
+        }
+      },
+      async settle() {
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())))
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 120))
+        return perfApi.read()
+      }
+    }
+    ;(window as any).__ANIMA_CHAT_PERF__ = perfApi
+    return () => {
+      delete (window as any).__ANIMA_CHAT_PERF__
+    }
   }, [])
 
   useEffect(() => {
@@ -2473,13 +2479,9 @@ function AppLoaded(): JSX.Element {
 
   const scrollToUserMessage = useCallback(
     (id: string) => {
-      const el = chatScrollRef.current
-      if (!el) return
       userScrollLockedRef.current = true
       stopAutoScroll()
-      const target = userMsgElMapRef.current.get(id)
-      const top = Math.max(0, (target?.offsetTop ?? 0) - 24)
-      el.scrollTo({ top, behavior: 'smooth' })
+      setPendingUserScrollId(id)
       if (highlightUserMsgTimerRef.current != null) window.clearTimeout(highlightUserMsgTimerRef.current)
       setHighlightUserMsgId(id)
       highlightUserMsgTimerRef.current = window.setTimeout(() => {
@@ -2489,34 +2491,6 @@ function AppLoaded(): JSX.Element {
     },
     [stopAutoScroll]
   )
-
-  useEffect(() => {
-    const el = chatScrollRef.current
-    if (!el) return
-    const userMsgs = messages.filter((m) => m.role === 'user')
-    if (!userMsgs.length) {
-      setUserNavItems([])
-      return
-    }
-    const maxLen = Math.max(1, ...userMsgs.map((m) => (typeof m.content === 'string' ? m.content.length : 0)))
-    const denom = Math.log(1 + maxLen)
-    const next: Array<{ id: string; topRatio: number; widthPx: number; content: string }> = []
-    const sh = Math.max(1, el.scrollHeight)
-    for (const m of userMsgs) {
-      const id = String(m.id || '').trim()
-      if (!id) continue
-      const top = userMsgElMapRef.current.get(id)?.offsetTop
-      if (top == null) continue
-      const content = typeof m.content === 'string' ? m.content : ''
-      const len = content.length
-      const norm = denom > 0 ? Math.log(1 + Math.max(0, len)) / denom : 0
-      const widthPx = 4 + norm * (18 - 4)
-      const topRatio = Math.max(0, Math.min(1, top / sh))
-      next.push({ id, topRatio, widthPx, content })
-    }
-    next.sort((a, b) => a.topRatio - b.topRatio)
-    setUserNavItems(next)
-  }, [lastMessageKey, messages])
 
   useEffect(() => {
     isLoadingRef.current = Boolean(isLoading)
@@ -2935,7 +2909,7 @@ function AppLoaded(): JSX.Element {
             pendingContent = pendingContent.slice(charsPerTick)
             fullContent += part
             playStreamingTick()
-            updateLastMessage(fullContent)
+            appendStreamDraft(currentAssistantId, part, assistantMeta)
           }, 12)
         }
 
@@ -3467,8 +3441,10 @@ function AppLoaded(): JSX.Element {
           await Promise.race([waitTyping, timeout])
         }
         if (pendingContent) {
-          fullContent += pendingContent
+          const remainingContent = pendingContent
+          fullContent += remainingContent
           pendingContent = ''
+          appendStreamDraft(currentAssistantId, remainingContent, assistantMeta)
           updateLastMessage(fullContent, assistantMeta)
         }
         stopTyping()
@@ -3481,6 +3457,7 @@ function AppLoaded(): JSX.Element {
             totalTokens: usage.total_tokens ?? 0
           }
         }
+        setStreamDraft(null)
         updateLastMessage(fullContent, assistantMeta)
         await persistCurrentAssistantMessage(fullContent, assistantMeta)
         await speakAssistantIfNeeded(fullContent)
@@ -3634,6 +3611,60 @@ function AppLoaded(): JSX.Element {
     void runSend()
     return true
   }
+  const patchDangerousApproval = useCallback((messageId: string, patch: Record<string, unknown>) => {
+    const activeCid = String(activeChatId || '').trim()
+    if (!activeCid) return
+    const existing = messages.find((message) => String(message.id || '') === messageId)
+    if (!existing) return
+    const meta = (existing.meta && typeof existing.meta === 'object') ? existing.meta : {}
+    const approval = (meta as any).dangerousCommandApproval
+    if (!approval || typeof approval !== 'object') return
+    const nextMeta = { ...meta, dangerousCommandApproval: { ...approval, ...patch } }
+    updateMessageById(activeCid, messageId, { meta: nextMeta } as any)
+    void persistMessageById(activeCid, messageId, String(existing.content || ''), nextMeta as any)
+  }, [activeChatId, messages, persistMessageById, updateMessageById])
+
+  const submitDangerousApproval = useCallback((message: Message) => {
+    const approval = (message.meta as any)?.dangerousCommandApproval
+    if (!approval || typeof approval !== 'object') return
+    const command = String(approval.command || '').trim()
+    const selectedOption = String(approval.selectedOption || 'approve_once') as 'approve_once' | 'approve_thread' | 'approve_whitelist' | 'reject'
+    if (!command) return
+    const allowForThread = selectedOption === 'approve_thread' || selectedOption === 'approve_whitelist'
+    const patch: Record<string, unknown> = selectedOption === 'reject'
+      ? { status: 'rejected', dismissed: true }
+      : allowForThread
+        ? { status: 'approved_thread', dismissed: true }
+        : { status: 'approved_once', dismissed: true }
+    patchDangerousApproval(String(message.id || ''), patch)
+    const runId = String(approval.runId || '').trim()
+    const approvalId = String(approval.approvalId || '').trim()
+    const decision = selectedOption === 'reject' ? 'reject' : allowForThread ? 'approve_thread' : 'approve_once'
+    if (allowForThread) {
+      const activeCid = String(activeChatId || '').trim()
+      if (activeCid) dangerousApprovalThreadsRef.current.add(activeCid)
+    }
+    if (runId) {
+      void handleSend('', {
+        skipUserMessage: true,
+        dangerousCommandApprovals: selectedOption === 'reject' ? [] : [command],
+        dangerousCommandAllowForThread: allowForThread,
+        resumeRunId: runId,
+        resumeApprovalId: approvalId,
+        resumeDecision: decision,
+        turnIdOverride: String(message.turnId || '').trim() || undefined
+      })
+      return
+    }
+    void handleSend('', {
+      skipUserMessage: true,
+      dangerousCommandApprovals: selectedOption === 'reject' ? [] : [command],
+      dangerousCommandAllowForThread: allowForThread,
+      resumeFromThread: true,
+      turnIdOverride: String(message.turnId || '').trim() || undefined
+    })
+  }, [activeChatId, handleSend, messages, patchDangerousApproval])
+
 
   const builtinSlashCommands = useMemo<SlashCommandEntry[]>(() => {
     return [
@@ -3836,112 +3867,14 @@ function AppLoaded(): JSX.Element {
                   <div className="text-sm text-muted-foreground">{i18nText(appLang, 'app.summaryLoading')}</div>
                 ) : !summaryText ? (
                   <div className="text-sm text-muted-foreground">{i18nText(appLang, 'app.summaryEmpty')}</div>
-                ) : settings.enableMarkdown ? (
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkMath]}
-                    rehypePlugins={[rehypeKatex, rehypeRaw]}
-                    className="prose prose-sm dark:prose-invert max-w-none prose-p:text-[13px] prose-li:text-[13px] prose-table:text-[13px] prose-p:leading-relaxed prose-li:leading-relaxed prose-headings:font-semibold prose-h1:text-[21px] prose-h1:leading-[1.25] prose-h2:text-[18px] prose-h2:leading-[1.3] prose-h3:text-[16px] prose-h3:leading-[1.35] text-foreground/90"
-                    components={{
-                      pre: ({ children }) => <>{children}</>,
-                      code({ inline, className, children, ...props }: any) {
-                        const match = /language-(\w+)/.exec(className || '')
-                        const lang = match ? match[1] : 'text'
-                        const value = String(children).replace(/\n$/, '')
-                        const trimmed = value.trim()
-                        const displayText = inline ? stripWrappedBackticks(trimmed) : trimmed
-                        const isFileToken =
-                          !/^https?:\/\//i.test(displayText) &&
-                          (displayText.startsWith('file://') ||
-                            displayText.startsWith('/') ||
-                            displayText.startsWith('\\') ||
-                            displayText.startsWith('./') ||
-                            displayText.startsWith('../') ||
-                            displayText.startsWith('~/') ||
-                            /\.(ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)$/i.test(displayText))
-                        const isShortFence = !inline && !match && trimmed && !trimmed.includes('\n') && trimmed.length <= 80
-                        if (isShortFence) {
-                          return (
-                            <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[12px] text-foreground" {...props}>
-                              {trimmed}
-                            </code>
-                          )
-                        }
-                        if (lang === 'mermaid') {
-                          return <MermaidBlock chart={value} />
-                        }
-                        if (!inline) {
-                          return <CodeBlock language={lang} value={value} className={className} {...props} />
-                        }
-                        if (isFileToken) {
-                          return (
-                            <button
-                              type="button"
-                              className="rounded bg-muted px-1.5 py-0.5 font-mono text-[12px] text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 cursor-pointer"
-                              onClick={(e) => {
-                                e.preventDefault()
-                                e.stopPropagation()
-                                openLinkTarget(displayText)
-                              }}
-                              title={displayText}
-                            >
-                              {displayText}
-                            </button>
-                          )
-                        }
-                        return (
-                          <code className={className} {...props}>
-                            {displayText}
-                          </code>
-                        )
-                      },
-                      img({ src, alt, ...props }: any) {
-                        const raw = String(src || '').trim()
-                        if (!raw) return null
-                        const isLikelyUrl = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw)
-                        const isRelativePath = raw && !isLikelyUrl && !raw.startsWith('/') && !raw.startsWith('\\')
-                        if (isRelativePath) {
-                          const name = raw.split('/').pop() || raw
-                          return (
-                            <button
-                              type="button"
-                              className="text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-                              onClick={(e) => {
-                                e.preventDefault()
-                                e.stopPropagation()
-                                openLinkTarget(raw)
-                              }}
-                              title={raw}
-                            >
-                              {name}
-                            </button>
-                          )
-                        }
-                        return <img src={raw} alt={String(alt || '')} {...props} />
-                      },
-                      a({ href, children, className, ...props }: any) {
-                        const target = String(href || '').trim()
-                        const linkClass = 'text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300'
-                        return (
-                          <a
-                            {...props}
-                            href={target}
-                            className={[className, linkClass].filter(Boolean).join(' ')}
-                            onClick={(e) => {
-                              if (!target) return
-                              e.preventDefault()
-                              openLinkTarget(target)
-                            }}
-                          >
-                            {children}
-                          </a>
-                        )
-                      }
-                    }}
-                  >
-                    {linkifyQuotedFileNames(normalizeChatMarkdown(summaryText))}
-                  </ReactMarkdown>
                 ) : (
-                  <div className="whitespace-pre-wrap text-sm leading-relaxed">{summaryText}</div>
+                  <MarkdownContent
+                    messageId={`summary:${String(activeChatId || '')}`}
+                    content={summaryText}
+                    onOpenLinkTarget={openLinkTarget}
+                    backendBaseUrl={backendBaseUrl}
+                    workspaceDir={resolveWorkspaceDir()}
+                  />
                 )}
               </ScrollArea>
             </div>
@@ -4209,1403 +4142,27 @@ function AppLoaded(): JSX.Element {
                         )}
                       </div>
                     ) : (
-                      <div className="flex flex-col gap-1.5 pb-2 max-w-3xl mx-auto w-full">
-                  {displayMessages.map((msg: any, index) => {
-                    const ctx = { index, active: true }
-                    return (
-                    <Fragment key={String(msg?.id || index)}>
-                    {(() => {
-                      const msgIdForTurn = String(msg?.id || '').trim()
-                      const turnId = msgIdForTurn ? String(effectiveTurnIdByMessageId[msgIdForTurn] || '').trim() : ''
-                      const collapseHistoricalProcess = (settings as any).collapseHistoricalProcess !== false
-                      const isHistoricalTurn = Boolean(collapseHistoricalProcess && turnId && turnId !== latestTurnId)
-                      const turnExpanded = Boolean(turnId && collapsedTurnOpenById[turnId])
-                      const shouldHideProcess = Boolean(isHistoricalTurn && !turnExpanded)
-                      const turnStats = turnId ? turnProcessStatsById[turnId] : undefined
-                      const isFirstAssistantOfTurn =
-                        msg.role === 'assistant' &&
-                        Boolean(turnId) &&
-                        String(msg?.id || '').trim() === String(turnFirstAssistantMessageIdById[turnId] || '').trim()
-                      const isFinalAssistantOfTurn =
-                        msg.role === 'assistant' &&
-                        Boolean(turnStats?.finalAssistantMessageId) &&
-                        String(msg?.id || '').trim() === String(turnStats?.finalAssistantMessageId || '').trim()
-                      const isLatestTurn = Boolean(turnId && turnId === latestTurnId)
-                      const showTurnProcessSummary = Boolean(
-                        collapseHistoricalProcess && turnStats?.hasProcess && isFirstAssistantOfTurn && !isLatestTurn
-                      )
-                      const isLatestMessage = ctx.index === displayMessages.length - 1
-                      const isTypingAssistantMessage = Boolean(msg.role === 'assistant' && isLoading && isLatestMessage)
-                      const assistantMeta: any = msg.role === 'assistant' ? (msg.meta || {}) : null
-                      const assistantHasReasoning =
-                        Boolean(assistantMeta) &&
-                        typeof assistantMeta.reasoningText === 'string' &&
-                        assistantMeta.reasoningText.trim().length > 0
-                      const assistantHasTokens = Boolean(
-                        assistantMeta &&
-                        assistantMeta.totalTokens != null
-                      )
-                      const assistantHasContent = typeof msg.content === 'string' && msg.content.trim().length > 0
-                      const assistantHasCompression =
-                        Boolean(assistantMeta) &&
-                        (assistantMeta.compressionState === 'running' || assistantMeta.compressionState === 'done')
-                      const assistantHasDangerousApproval =
-                        Boolean(assistantMeta?.dangerousCommandApproval) &&
-                        typeof assistantMeta?.dangerousCommandApproval?.command === 'string' &&
-                        assistantMeta?.dangerousCommandApproval?.command.trim().length > 0
-                      const assistantHasMemoryInjection = isFirstAssistantOfTurn
-                      const assistantHasVisibleBody = Boolean(
-                        assistantHasContent ||
-                        assistantHasReasoning ||
-                        assistantHasTokens ||
-                        assistantHasCompression ||
-                        assistantHasDangerousApproval ||
-                        assistantHasMemoryInjection
-                      )
-                      if (msg.role !== 'user' && msg.role !== 'tool') {
-                        if (!assistantHasVisibleBody && !showTurnProcessSummary) return null
-                      }
-
-                      const isCollapsibleProcessRow =
-                        (msg.role === 'assistant' && !isFinalAssistantOfTurn) || msg.role === 'tool'
-                      const processRowVisible = !(isCollapsibleProcessRow && shouldHideProcess)
-                      const showOnlyFinalAssistantArtifacts = Boolean(shouldHideProcess && msg.role === 'assistant' && isFinalAssistantOfTurn)
-                      let prevVisibleMsg: any = null
-                      for (let j = index - 1; j >= 0; j -= 1) {
-                        const candidate = displayMessages[j]
-                        if (isStageOnlyAssistantMessage(candidate)) continue
-                        prevVisibleMsg = candidate
-                        break
-                      }
-                      const isToolGroupHead = msg.role === 'tool' && String(prevVisibleMsg?.role || '') !== 'tool'
-
-                      // 历史轮次折叠时，非标题行的过程消息应完全移除，避免空行继续占用 flex gap 间距。
-                      if (isCollapsibleProcessRow && !processRowVisible && !showTurnProcessSummary) return null
-                      if (msg.role === 'tool' && !isToolGroupHead) return null
-
-                      const turnDangerousApprovals = turnId ? dangerousApprovalsByTurn[turnId] || [] : []
-
-                      if (msg.role === 'assistant') {
-                        const meta: any = msg.meta || {}
-                        const approval = meta?.dangerousCommandApproval
-                        if (approval && typeof approval.command === 'string' && approval.command.trim()) {
-                          const selectedOption = String(approval.selectedOption || 'approve_once') as
-                            | 'approve_once'
-                            | 'approve_thread'
-                            | 'approve_whitelist'
-                            | 'reject'
-                          const status = String(approval.status || 'pending')
-                          if (status !== 'pending' || approval.dismissed) return null
-                          const disabled = status !== 'pending'
-                          const options: Array<{ id: 'approve_once' | 'approve_thread' | 'reject'; label: string }> = [
-                            { id: 'approve_once', label: t.dangerousApprovalOptionOnce },
-                            { id: 'approve_thread', label: t.dangerousApprovalOptionAlways },
-                            { id: 'reject', label: t.dangerousApprovalOptionReject }
-                          ]
-                          const patchApproval = (patch: Record<string, any>) => {
-                            const nextMeta = {
-                              ...meta,
-                              dangerousCommandApproval: { ...approval, ...patch }
-                            }
-                            updateMessageById(activeChatId || '', String(msg.id || ''), { meta: nextMeta } as any)
-                            if (activeChatId) {
-                              void persistMessageById(activeChatId, String(msg.id || ''), String(msg.content || ''), nextMeta as any)
-                            }
-                          }
-                          const submitApproval = () => {
-                            if (disabled) return
-                            const command = String(approval.command || '').trim()
-                            if (!command) return
-                            const activeCid = String(activeChatId || '').trim()
-                            const allowForThread = selectedOption === 'approve_thread' || selectedOption === 'approve_whitelist'
-                            if (selectedOption === 'reject') {
-                              patchApproval({ status: 'rejected', dismissed: true })
-                            } else if (allowForThread) {
-                              if (activeCid) dangerousApprovalThreadsRef.current.add(activeCid)
-                              patchApproval({ status: 'approved_thread', dismissed: true })
-                            } else {
-                              patchApproval({ status: 'approved_once', dismissed: true })
-                            }
-                            const runId = String(approval.runId || '').trim()
-                            const approvalId = String(approval.approvalId || '').trim()
-                            const decision =
-                              selectedOption === 'reject'
-                                ? 'reject'
-                                : allowForThread
-                                  ? 'approve_thread'
-                                  : 'approve_once'
-                            if (runId) {
-                              void handleSend('', {
-                                skipUserMessage: true,
-                                dangerousCommandApprovals: selectedOption === 'reject' ? [] : [command],
-                                dangerousCommandAllowForThread: allowForThread,
-                                resumeRunId: runId,
-                                resumeApprovalId: approvalId,
-                                resumeDecision: decision,
-                                turnIdOverride: String(msg?.turnId || '').trim() || undefined
-                              })
-                              return
-                            }
-                            void handleSend('', {
-                              skipUserMessage: true,
-                              dangerousCommandApprovals: selectedOption === 'reject' ? [] : [command],
-                              dangerousCommandAllowForThread: allowForThread,
-                              resumeFromThread: true,
-                              turnIdOverride: String(msg?.turnId || '').trim() || undefined
-                            })
-                          }
-                          return (
-                            <div className="py-1.5">
-                              <div className="rounded-2xl border border-black/6 bg-white p-4 space-y-3">
-                                <div className="text-[14px] font-medium">{t.dangerousApprovalQuestion}</div>
-                                <pre className="rounded-md border bg-muted/50 px-3 py-2 text-[12px] font-mono whitespace-pre-wrap break-all">{approval.command}</pre>
-                                <div className="space-y-1">
-                                  {options.map((opt, idx) => {
-                                    const selected = selectedOption === opt.id
-                                    return (
-                                      <button
-                                        key={opt.id}
-                                        type="button"
-                                        disabled={disabled}
-                                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-[13px] ${
-                                          selected ? 'bg-muted' : 'hover:bg-muted/60'
-                                        } ${disabled ? 'opacity-70 cursor-default' : ''}`}
-                                        onClick={() => patchApproval({ selectedOption: opt.id })}
-                                      >
-                                        <span className="w-4 shrink-0 text-muted-foreground">{idx + 1}.</span>
-                                        <span className="flex-1">{opt.label}</span>
-                                        {selected ? <Check className="w-3.5 h-3.5 text-muted-foreground" /> : null}
-                                      </button>
-                                    )
-                                  })}
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <span className="text-[12px] text-muted-foreground">
-                                    {status === 'pending' ? t.dangerousApprovalPending : status === 'rejected' ? t.dangerousApprovalRejected : ''}
-                                  </span>
-                                  <Button size="sm" className="h-8 rounded-full px-4" disabled={disabled} onClick={submitApproval}>
-                                    {t.dangerousApprovalSubmit}
-                                  </Button>
-                                </div>
-                              </div>
-                            </div>
-                          )
-                        }
-                      }
-
-                      if (msg.role === 'assistant' && showTurnProcessSummary && !assistantHasVisibleBody) {
-                        return (
-                          <div className="w-full">
-                            <div className="py-0.5">
-                              <button
-                                type="button"
-                                className="group w-full flex items-center gap-2 min-w-0 py-0.5 rounded-md text-left hover:bg-muted/10 transition-colors motion-reduce:transition-none"
-                                ref={(el) => {
-                                  if (!turnId) return
-                                  const map = turnSummaryBtnMapRef.current
-                                  if (el) map.set(turnId, el)
-                                  else map.delete(turnId)
-                                }}
-                                onClick={(e) => {
-                                  e.preventDefault()
-                                  e.stopPropagation()
-                                  if (!turnId) return
-                                  const anchorTop = (e.currentTarget as HTMLButtonElement).getBoundingClientRect().top
-                                  const nextExpanded = !turnExpanded
-                                  userScrollLockedRef.current = true
-                                  setChatBottomIfChanged(false)
-                                  stopAutoScroll()
-                                  markUserScrollIntent(720)
-                                  suppressAutoScrollFor(620)
-                                  setCollapsedTurnOpenById((prev) => ({ ...prev, [turnId]: nextExpanded }))
-                                  if (nextExpanded) {
-                                    stabilizeTurnSummaryViewport(turnId, anchorTop, 620)
-                                  }
-                                }}
-                                aria-expanded={turnExpanded}
-                              >
-                                <span className="text-[12px] font-medium text-muted-foreground group-hover:text-foreground truncate">
-                                  {t.foldProcessSummary(turnStats!.memoryCount, turnStats!.reasoningCount, turnStats!.toolCount, turnStats!.skillCount)}
-                                </span>
-                                <span
-                                  aria-hidden="true"
-                                  className={`h-4 w-4 shrink-0 text-muted-foreground/70 transition-opacity motion-reduce:transition-none flex items-center justify-center ${
-                                    turnExpanded ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                                  }`}
-                                >
-                                  <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${turnExpanded ? 'rotate-0' : '-rotate-90'}`} />
-                                </span>
-                              </button>
-                            </div>
-                          </div>
-                        )
-                      }
-
-                      return (
-                      <div className="w-full">
-                      {showTurnProcessSummary ? (
-                        <div className="py-0.5">
-                          <button
-                            type="button"
-                            className="group w-full flex items-center gap-2 min-w-0 py-0.5 rounded-md text-left hover:bg-muted/10 transition-colors motion-reduce:transition-none"
-                            ref={(el) => {
-                              if (!turnId) return
-                              const map = turnSummaryBtnMapRef.current
-                              if (el) map.set(turnId, el)
-                              else map.delete(turnId)
-                            }}
-                            onClick={(e) => {
-                              e.preventDefault()
-                              e.stopPropagation()
-                              if (!turnId) return
-                              const anchorTop = (e.currentTarget as HTMLButtonElement).getBoundingClientRect().top
-                              const nextExpanded = !turnExpanded
-                              userScrollLockedRef.current = true
-                              setChatBottomIfChanged(false)
-                              stopAutoScroll()
-                              markUserScrollIntent(720)
-                              suppressAutoScrollFor(620)
-                              setCollapsedTurnOpenById((prev) => ({ ...prev, [turnId]: nextExpanded }))
-                              if (nextExpanded) {
-                                stabilizeTurnSummaryViewport(turnId, anchorTop, 620)
-                              }
-                            }}
-                            aria-expanded={turnExpanded}
-                          >
-                            <span className="text-[12px] font-medium text-muted-foreground group-hover:text-foreground truncate">
-                              {t.foldProcessSummary(turnStats!.memoryCount, turnStats!.reasoningCount, turnStats!.toolCount, turnStats!.skillCount)}
-                            </span>
-                            <span
-                              aria-hidden="true"
-                              className={`h-4 w-4 shrink-0 text-muted-foreground/70 transition-opacity motion-reduce:transition-none flex items-center justify-center ${
-                                turnExpanded ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                              }`}
-                            >
-                              <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${turnExpanded ? 'rotate-0' : '-rotate-90'}`} />
-                            </span>
-                          </button>
-                        </div>
-                      ) : null}
-                      {(() => {
-                        const body = msg.role === 'user' ? (
-                        <div className={`group py-3 flex justify-end ${msg.id === lastUserMessageId ? 'sticky top-2 z-20' : ''}`}>
-                           <div className="flex flex-col items-end gap-2">
-                              <div
-                                ref={(el) => {
-                                  const id = String(msg.id || '').trim()
-                                  if (!id) return
-                                  const map = userMsgElMapRef.current
-                                  if (el) map.set(id, el)
-                                  else map.delete(id)
-                                }}
-                                className={`w-fit max-w-[520px] rounded-2xl border border-border/60 bg-black/5 dark:bg-white/10 px-4 py-2 text-[13px] leading-relaxed whitespace-pre-wrap break-words text-foreground/90 transition-shadow ${msg.id === highlightUserMsgId ? 'ring-2 ring-primary/35 shadow-sm' : ''}`}
-                              >
-                                {msg.content}
-                              </div>
-                              {(() => {
-                                const meta: any = msg.meta || {}
-                                const atts = Array.isArray(meta.userAttachments) ? meta.userAttachments : []
-                                const ws = String(meta.userAttachmentsWorkspaceDir || '').trim()
-                                const imgs = atts
-                                  .map((a: any) => String(a?.path || '').trim())
-                                  .filter(Boolean)
-                                  .filter((p: string) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(p.split('/').pop()?.toLowerCase() || p.toLowerCase()))
-                                if (!imgs.length) return null
-                                if (!backendBaseUrl) return null
-                                return (
-                                  <div className="flex flex-wrap justify-end gap-2 max-w-[520px]">
-                                    {imgs.map((p: string, idx: number) => {
-                                      const url = `${backendBaseUrl}/api/attachments/file?path=${encodeURIComponent(p)}${ws ? `&workspaceDir=${encodeURIComponent(ws)}` : ''}`
-                                      return (
-                                        <img
-                                          key={`${p}:${idx}`}
-                                          src={url}
-                                          alt={p.split('/').pop() || 'image'}
-                                          className="h-20 w-20 rounded-2xl border border-border/60 object-cover bg-muted/10"
-                                          loading="lazy"
-                                        />
-                                      )
-                                    })}
-                                  </div>
-                                )
-                              })()}
-                              <button
-                                type="button"
-                                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/20 transition-all ${
-                                  copiedMessageId === String(msg.id || '') ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                                }`}
-                                onClick={() => void handleCopyMessage(String(msg.id || ''), String(msg.content || ''))}
-                                title={copiedMessageId === String(msg.id || '') ? appRuntimeText.copied : appRuntimeText.copy}
-                              >
-                                {copiedMessageId === String(msg.id || '') ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                              </button>
-                           </div>
-                        </div>
-                      ) : msg.role === 'tool' ? (
-                        <div className="py-0.5 group">
-                            <AnimatePresence initial={false}>
-                              {!shouldHideProcess ? (
-                                <motion.div
-                                  key={`tool-traces:${String(msg.id || '')}`}
-                                  initial={false}
-                                  animate={{ gridTemplateRows: '1fr' }}
-                                  exit={{ gridTemplateRows: '0fr' }}
-                                  transition={collapseAnimTransition}
-                                  className="overflow-hidden"
-                                  style={{ display: 'grid', willChange: 'grid-template-rows' }}
-                                >
-                                  <div className="min-h-0 overflow-hidden">
-                                  {(() => {
-                              const segmentToolMessages: any[] = []
-                              for (let i = index; i < displayMessages.length; i += 1) {
-                                const nextMsg = displayMessages[i]
-                                const nextMsgId = String(nextMsg?.id || '').trim()
-                                const nextTurnId = nextMsgId ? String(effectiveTurnIdByMessageId[nextMsgId] || '').trim() : ''
-                                if (turnId && nextTurnId && nextTurnId !== turnId) break
-                                if (String(nextMsg?.role || '') === 'tool') {
-                                  segmentToolMessages.push(nextMsg)
-                                  continue
-                                }
-                                if (isStageOnlyAssistantMessage(nextMsg)) continue
-                                break
-                              }
-                              const rawTraces = segmentToolMessages.flatMap((m: any) =>
-                                Array.isArray(m?.meta?.toolTraces) ? m.meta.toolTraces : []
-                              )
-                              const traces = rawTraces.filter((tr: any) => {
-                                if (String(tr?.status || '') !== 'running') return true
-                                const sig = toolTraceSignature(tr)
-                                if (turnId && completedToolTraceSignaturesByTurn[turnId]?.has(sig)) return false
-                                return !rawTraces.some((x: any) => {
-                                  if (x === tr) return false
-                                  const st = String(x?.status || '')
-                                  if (st === 'running') return false
-                                  return toolTraceSignature(x) === sig
-                                })
-                              })
-                              const toolMsgId = String(msg.id || '')
-                              const hasStoredGroupOpen = Object.prototype.hasOwnProperty.call(toolTraceGroupOpenByMsgId, toolMsgId)
-                              const groupOpen = hasStoredGroupOpen
-                                ? Boolean(toolTraceGroupOpenByMsgId[toolMsgId])
-                                : Boolean(isLoading && isLatestTurn)
-                              const summary = summarizeToolTraceCategories(traces)
-                              const summaryText = formatToolTraceSummary(summary)
-                              if (!traces.length) return null
-
-                              return (
-                                <div className="space-y-0.5">
-                                  <button
-                                    type="button"
-                                    className="group w-full flex items-center gap-2 min-w-0 py-0.5 rounded-md text-left hover:bg-muted/10 transition-colors motion-reduce:transition-none"
-                                    onClick={(e) => {
-                                      e.preventDefault()
-                                      e.stopPropagation()
-                                      setToolTraceGroupOpenByMsgId((prev) => ({ ...prev, [toolMsgId]: !groupOpen }))
-                                    }}
-                                    aria-expanded={groupOpen}
-                                  >
-                                    <span className="min-w-0 truncate text-[12px] text-muted-foreground/80">
-                                      {summaryText}
-                                    </span>
-                                    <span
-                                      aria-hidden="true"
-                                      className={`h-4 w-4 shrink-0 text-muted-foreground/70 transition-opacity motion-reduce:transition-none flex items-center justify-center ${
-                                        groupOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                                      }`}
-                                    >
-                                      <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-300 motion-reduce:transition-none ${groupOpen ? 'rotate-0' : '-rotate-90'}`} />
-                                    </span>
-                                  </button>
-                                  <AnimatePresence initial={false}>
-                                    {groupOpen ? (
-                                      <motion.div
-                                        key={`tool-trace-group:${toolMsgId}`}
-                                        initial={{ gridTemplateRows: '0fr' }}
-                                        animate={{ gridTemplateRows: '1fr' }}
-                                        exit={{ gridTemplateRows: '0fr' }}
-                                        transition={collapseAnimTransition}
-                                        className="overflow-hidden"
-                                        style={{ display: 'grid', willChange: 'grid-template-rows' }}
-                                      >
-                                        <div className="min-h-0 overflow-hidden">
-                                          <motion.div
-                                            className="space-y-0.5"
-                                            initial={collapseContentAnim.initial}
-                                            animate={collapseContentAnim.animate}
-                                            exit={collapseContentAnim.exit}
-                                            transition={collapseContentAnim.transition}
-                                          >
-                                  {traces.map((tr: any) => {
-                                    const detailKey = `${msg.id}:${tr.id}`
-                                    const detailOpen = !!traceDetailOpenByKey[detailKey]
-                                    const isRunning = tr.status === 'running'
-                                    const isFailed = tr.status === 'failed'
-
-                                    const traceName = normalizeToolTraceName(tr.name)
-                                    const isParallelTrace = traceName === 'multi_tool_use_parallel' || traceName === 'multi_tool_use.parallel'
-                                    let entity = traceName
-                                    const normalizeValue = (val: any) => String(val ?? '').replace(/\\`/g, '`').replace(/`/g, '').trim()
-                                    const stripCodeFences = (raw: string) => {
-                                      const trimmed = String(raw || '').trim()
-                                      const m = trimmed.match(/^```[a-zA-Z0-9_-]*\s*\n([\s\S]*?)\n```$/)
-                                      return (m && m[1] ? m[1] : trimmed).trim()
-                                    }
-                                    const sanitizePotentialJson = (raw: string) => stripCodeFences(raw).replace(/\\`/g, '`').replace(/`/g, '').trim()
-                                    const extractJsonSubstring = (raw: string) => {
-                                      const text = String(raw || '')
-                                      let start = -1
-                                      const stack: Array<'{' | '['> = []
-                                      let inString = false
-                                      let escaped = false
-                                      for (let i = 0; i < text.length; i++) {
-                                        const ch = text[i]
-                                        if (inString) {
-                                          if (escaped) {
-                                            escaped = false
-                                            continue
-                                          }
-                                          if (ch === '\\') {
-                                            escaped = true
-                                            continue
-                                          }
-                                          if (ch === '"') {
-                                            inString = false
-                                            continue
-                                          }
-                                          continue
-                                        }
-
-                                        if (ch === '"') {
-                                          inString = true
-                                          continue
-                                        }
-
-                                        if (start === -1) {
-                                          if (ch === '{' || ch === '[') {
-                                            start = i
-                                            stack.push(ch)
-                                          }
-                                          continue
-                                        }
-
-                                        if (ch === '{' || ch === '[') {
-                                          stack.push(ch)
-                                          continue
-                                        }
-
-                                        if (ch === '}' || ch === ']') {
-                                          const last = stack[stack.length - 1]
-                                          const ok = (ch === '}' && last === '{') || (ch === ']' && last === '[')
-                                          if (!ok) continue
-                                          stack.pop()
-                                          if (stack.length === 0) return text.slice(start, i + 1)
-                                        }
-                                      }
-                                      return null
-                                    }
-                                    const parseMaybeJson = (text: string) => {
-                                      if (!text) return null
-                                      const tryParse = (raw: string) => {
-                                        try {
-                                          return JSON.parse(raw)
-                                        } catch {
-                                          return null
-                                        }
-                                      }
-
-                                      const cleaned = sanitizePotentialJson(text)
-                                      const first = tryParse(cleaned)
-                                      if (first != null) {
-                                        if (typeof first === 'string') {
-                                          const nested = tryParse(sanitizePotentialJson(first))
-                                          return nested != null ? nested : first
-                                        }
-                                        return first
-                                      }
-
-                                      const extracted = extractJsonSubstring(cleaned)
-                                      if (extracted) {
-                                        const recovered = tryParse(extracted)
-                                        if (recovered != null) {
-                                          if (typeof recovered === 'string') {
-                                            const nested = tryParse(sanitizePotentialJson(recovered))
-                                            return nested != null ? nested : recovered
-                                          }
-                                          return recovered
-                                        }
-                                      }
-
-                                      return null
-                                    }
-                                    const resultText = typeof tr.resultPreview?.text === 'string' ? tr.resultPreview.text : ''
-                                    const resultFullText = typeof (tr as any)?.resultPreview?.fullText === 'string' ? String((tr as any).resultPreview.fullText) : ''
-                                    const argsObj = (() => {
-                                      const parsed = parseMaybeJson(tr.argsPreview?.text || '')
-                                      return parsed && typeof parsed === 'object' ? parsed : {}
-                                    })()
-                                    const resultObj: any = parseMaybeJson(resultText)
-                                    const resultItems = Array.isArray(resultObj)
-                                      ? resultObj
-                                      : Array.isArray(resultObj?.results)
-                                        ? resultObj.results
-                                        : Array.isArray(resultObj?.items)
-                                          ? resultObj.items
-                                          : null
-                                    const traceLang =
-                                      settings.language === 'zh' ? 'zh' : settings.language === 'ja' ? 'ja' : 'en'
-                                    const runtimeByLang = APP_RUNTIME_STRINGS[traceLang as 'en' | 'zh' | 'ja'] || APP_RUNTIME_STRINGS.en
-                                    const traceI18n = {
-                                      searchResultSummary: (n: number) =>
-                                        runtimeByLang.trace.searchResultSummary.replace('{count}', String(n)),
-                                      linkFallback: runtimeByLang.trace.linkFallback,
-                                      webpageLink: runtimeByLang.trace.webpageLink,
-                                      status: runtimeByLang.trace.status,
-                                      truncated: runtimeByLang.trace.truncated,
-                                      dir: runtimeByLang.trace.dir,
-                                      file: runtimeByLang.trace.file,
-                                      lineLabel: (n: number | string) => runtimeByLang.trace.lineLabel.replace('{line}', String(n)),
-                                      matchedContent: runtimeByLang.trace.matchedContent,
-                                      readDone: runtimeByLang.trace.readDone,
-                                      failed: runtimeByLang.trace.failed
-                                    }
-                                    let resultSummary = ''
-                                    let detailMarkdown = ''
-                                    const parallelChildLabels = (() => {
-                                      if (!isParallelTrace) return [] as string[]
-                                      const rawUses = Array.isArray((argsObj as any)?.tool_uses) ? (argsObj as any).tool_uses : []
-                                      return rawUses
-                                        .map((item: any) => {
-                                          if (!item || typeof item !== 'object') return ''
-                                          const recipient = normalizeValue(item?.recipient_name || item?.name)
-                                          const params = item?.parameters && typeof item.parameters === 'object' ? item.parameters : {}
-                                          if (recipient === 'functions.exec_command') {
-                                            return normalizeValue((params as any)?.cmd || (params as any)?.command)
-                                          }
-                                          if (recipient.startsWith('functions.')) return recipient.slice('functions.'.length)
-                                          return recipient
-                                        })
-                                        .filter(Boolean)
-                                    })()
-                                    const traceKind: 'execute' | 'search' | 'browse' | 'read' | 'edit' =
-                                      traceName === 'rg_search' || traceName === 'glob_files' || traceName === 'WebSearch'
-                                        ? 'search'
-                                        : traceName === 'read_file'
-                                          ? 'read'
-                                          : traceName === 'apply_patch'
-                                            ? 'edit'
-                                            : traceName === 'WebFetch'
-                                              ? 'browse'
-                                              : 'execute'
-                                    const traceStatusText = (() => {
-                                      const key = isFailed ? 'failed' : isRunning ? 'running' : 'done'
-                                      return runtimeByLang.trace.statusText[traceKind][key]
-                                    })()
-
-                                    if (traceName === 'bash') {
-                                      entity = normalizeValue(argsObj.command)
-                                    } else if (traceName === 'rg_search' || traceName === 'glob_files') {
-                                      entity = normalizeValue(argsObj.pattern)
-                                      if (argsObj.path) entity += ` in ${normalizeValue(argsObj.path)}`
-                                    } else if (traceName === 'read_file') {
-                                      entity = normalizeValue(argsObj.path)
-                                    } else if (traceName === 'apply_patch') {
-                                      entity = normalizeValue(argsObj.path)
-                                    } else if (traceName === 'WebSearch') {
-                                      entity = normalizeValue(argsObj.query)
-                                      const count = Array.isArray(resultItems) ? resultItems.length : undefined
-                                      resultSummary = typeof count === 'number' ? traceI18n.searchResultSummary(count) : ''
-                                    } else if (traceName === 'WebFetch') {
-                                      entity = normalizeValue(argsObj.url)
-                                    } else if (traceName === 'load_skill') {
-                                      entity = normalizeValue(argsObj.id) || 'load_skill'
-                                    } else if (isParallelTrace) {
-                                      if (parallelChildLabels.length > 0) {
-                                        const showCount = 3
-                                        const shown = parallelChildLabels.slice(0, showCount)
-                                        const extra = parallelChildLabels.length - shown.length
-                                        entity = shown.join(' · ')
-                                        if (extra > 0) entity = `${entity} +${extra}`
-                                      } else {
-                                        entity = ''
-                                      }
-                                    } else {
-                                      entity = normalizeValue(entity)
-                                    }
-
-                                    const canOpenEntityInFiles =
-                                      (traceName === 'read_file' || traceName === 'apply_patch') &&
-                                      Boolean(entity)
-                                    const normalizeCommand = (raw: unknown) => String(raw || '').replace(/\s+/g, ' ').trim()
-                                    const bashCommandNormalized = traceName === 'bash' ? normalizeCommand(argsObj.command) : ''
-                                    const matchedApproval =
-                                      traceName === 'bash'
-                                        ? turnDangerousApprovals.find((a) => normalizeCommand(a.command) === bashCommandNormalized)
-                                        : undefined
-                                    const toolApprovalText =
-                                      matchedApproval?.status === 'approved_once'
-                                        ? t.dangerousApprovalStatusApprovedOnce
-                                        : matchedApproval?.status === 'approved_thread'
-                                          ? t.dangerousApprovalStatusApprovedThread
-                                          : matchedApproval?.status === 'rejected'
-                                            ? t.dangerousApprovalStatusRejected
-                                            : ''
-                                    const rejectedByUserHint =
-                                      String((tr as any)?.resultPreview?.text || '').toLowerCase().includes('user rejected dangerous command approval') ||
-                                      String((tr as any)?.error?.message || '').toLowerCase().includes('user rejected dangerous command approval')
-                                    const isRejectedByUser = traceName === 'bash' && (matchedApproval?.status === 'rejected' || rejectedByUserHint)
-                                    const notExecutedText = runtimeByLang.notExecuted
-                                    const isEditTrace = traceName === 'apply_patch'
-                                    const runningStatusText =
-                                      isRejectedByUser
-                                        ? notExecutedText
-                                        : traceName === 'load_skill' && !isRunning && !isFailed
-                                        ? runtimeByLang.loadSkillDone
-                                        : isParallelTrace && isRunning
-                                          ? runtimeByLang.parallelRunning
-                                        : isEditTrace && !isRunning && !isFailed
-                                          ? runtimeByLang.editedFiles
-                                          : traceStatusText
-                                    const displayEntity = (() => {
-                                      const text = String(entity || '').trim()
-                                      if (traceName !== 'bash') return text
-                                      const max = 80
-                                      if (text.length <= max) return text
-                                      return `${text.slice(0, max - 3)}...`
-                                    })()
-                                    const shouldHideRejectedGhostRow =
-                                      isRejectedByUser &&
-                                      !String(displayEntity || '').trim()
-                                    const countDiffLines = (oldContent: unknown, newContent: unknown) => {
-                                      try {
-                                        const patch = createTwoFilesPatch('a', 'b', String(oldContent ?? ''), String(newContent ?? ''))
-                                        let added = 0
-                                        let removed = 0
-                                        for (const line of patch.split('\n')) {
-                                          if (
-                                            line.startsWith('---') ||
-                                            line.startsWith('+++') ||
-                                            line.startsWith('@@') ||
-                                            line.startsWith('Index:') ||
-                                            line.startsWith('diff ')
-                                          ) {
-                                            continue
-                                          }
-                                          if (line.startsWith('+')) added += 1
-                                          else if (line.startsWith('-')) removed += 1
-                                        }
-                                        return { added, removed }
-                                      } catch {
-                                        return { added: 0, removed: 0 }
-                                      }
-                                    }
-                                    const editDiffSummaries = Array.isArray(tr.diffs)
-                                      ? tr.diffs.map((d: any) => {
-                                          const path = String(d?.path || '').trim()
-                                          const fileName = (path.split('/').pop() || path || 'unknown').trim()
-                                          const stats = countDiffLines(d?.oldContent, d?.newContent)
-                                          return { path, fileName, ...stats }
-                                        })
-                                      : []
-                                    const totalAdded = editDiffSummaries.reduce((n: number, x: any) => n + (x.added || 0), 0)
-                                    const totalRemoved = editDiffSummaries.reduce((n: number, x: any) => n + (x.removed || 0), 0)
-                                    const approvalBadgeClass =
-                                      matchedApproval?.status === 'rejected'
-                                        ? 'border-red-200 bg-red-50 text-red-700'
-                                        : 'border-emerald-200 bg-emerald-50 text-emerald-700'
-
-                                    if (isParallelTrace && Array.isArray(resultObj?.results)) {
-                                      const lines = (resultObj.results as any[])
-                                        .map((r: any, idx: number) => {
-                                          const ok = Boolean(r?.ok)
-                                          const icon = ok ? '✅' : '❌'
-                                          const label = normalizeValue(parallelChildLabels[idx] || r?.recipientName || r?.toolName || `#${idx + 1}`)
-                                          const duration = Number(r?.durationMs)
-                                          const durationText = Number.isFinite(duration) && duration >= 0 ? ` (${Math.floor(duration)}ms)` : ''
-                                          const err = !ok ? normalizeValue(r?.error || r?.result?.error || '') : ''
-                                          return `- ${idx + 1}. ${icon} ${label}${durationText}${err ? ` — ${err}` : ''}`
-                                        })
-                                        .filter(Boolean)
-                                      detailMarkdown = lines.join('\n')
-                                    } else if (traceName === 'WebSearch' && Array.isArray(resultItems)) {
-                                      const circled = [
-                                        '',
-                                        '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩',
-                                        '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳'
-                                      ]
-                                      const marker = (n: number) => circled[n] || `(${n})`
-
-                                      const lines = resultItems
-                                        .map((r: any, idx: number) => {
-                                          const title = String(r?.title || r?.url || traceI18n.linkFallback).trim()
-                                          const url = String(r?.url || '').trim()
-                                          const snippet = String(r?.snippet || '').trim()
-                                          const m = marker(idx + 1)
-                                          if (url && snippet) return `${m} [${title}](${url}) — ${snippet}`
-                                          if (url) return `${m} [${title}](${url})`
-                                          if (snippet) return `${m} ${title} — ${snippet}`
-                                          return `${m} ${title}`
-                                        })
-                                        .filter(Boolean)
-                                      detailMarkdown = lines.join('  \n')
-                                    } else if (traceName === 'WebFetch' && resultObj) {
-                                      const lines: string[] = []
-                                      const url = String(resultObj.finalUrl || resultObj.url || '').trim()
-                                      if (url) lines.push(`- [${traceI18n.webpageLink}](${url})`)
-                                      const statusParts: string[] = []
-                                      if (resultObj.status) statusParts.push(`HTTP ${resultObj.status}`)
-                                      if (resultObj.contentType) statusParts.push(String(resultObj.contentType))
-                                      if (resultObj.truncated) statusParts.push(traceI18n.truncated)
-                                      if (statusParts.length) lines.push(`- ${traceI18n.status}: ${statusParts.join(' · ')}`)
-                                      detailMarkdown = lines.join('\n')
-                                    } else if (Array.isArray(resultObj?.paths)) {
-                                      detailMarkdown = resultObj.paths.map((p: any) => `- ${String(p)}`).join('\n')
-                                    } else if (Array.isArray(resultObj?.entries)) {
-                                      detailMarkdown = resultObj.entries
-                                        .map((e: any) => {
-                                          const name = String(e?.name || '')
-                                          const type = e?.type === 'dir' ? traceI18n.dir : e?.type === 'file' ? traceI18n.file : ''
-                                          return name ? `- ${name}${type ? `（${type}）` : ''}` : ''
-                                        })
-                                        .filter(Boolean)
-                                        .join('\n')
-                                    } else if (Array.isArray(resultObj?.matches)) {
-                                      detailMarkdown = resultObj.matches
-                                        .map((m: any) => {
-                                          const path = String(m?.path || '')
-                                          const line = m?.line
-                                          const text = String(m?.text || '').trim()
-                                          if (!path && !text) return ''
-                                          if (path && line) return `- ${path} ${traceI18n.lineLabel(line)}: ${text || traceI18n.matchedContent}`
-                                          if (path) return `- ${path}: ${text || traceI18n.matchedContent}`
-                                          return `- ${text}`
-                                        })
-                                        .filter(Boolean)
-                                        .join('\n')
-                                    } else if (Array.isArray(resultObj?.diffs) && traceName !== 'apply_patch') {
-                                      detailMarkdown = resultObj.diffs
-                                        .map((d: any) => String(d?.path || ''))
-                                        .filter(Boolean)
-                                        .map((p: string) => `- [${p}](${p})`)
-                                        .join('\n')
-                                    } else if (resultObj?.meta?.path) {
-                                      detailMarkdown = `- ${traceI18n.readDone}: ${String(resultObj.meta.path)}`
-                                    } else if (resultObj?.ok === false) {
-                                      const errMsg = String(resultObj?.error || traceI18n.failed).trim()
-                                      detailMarkdown = errMsg ? `- ${traceI18n.failed}: ${errMsg}` : ''
-                                    } else if (resultObj && typeof resultObj === 'object' && resultObj?._preview?.truncated === true) {
-                                      const fullText = String(resultFullText || '').trim()
-                                      if (fullText) {
-                                        detailMarkdown = `\`\`\`json\n${fullText}\n\`\`\``
-                                      } else {
-                                        detailMarkdown = `- ${traceI18n.truncated}\n- \`${String(resultText || '').trim()}\``
-                                      }
-                                    }
-
-                                    const hasDetail =
-                                      Boolean(detailMarkdown) ||
-                                      (Array.isArray((tr as any).artifacts) && (tr as any).artifacts.length > 0) ||
-                                      (Array.isArray(tr.diffs) && tr.diffs.length > 0) ||
-                                      (tr.status === 'failed' && Boolean(tr.error?.message))
-                                    if (shouldHideRejectedGhostRow) return null
-
-                                    return (
-                                      <div key={tr.id} className="group rounded-lg hover:bg-muted/40 transition-colors py-0.5">
-                                        <div
-                                          className={`flex items-center gap-2 ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
-                                          onClick={() => {
-                                            if (!hasDetail) return
-                                            setTraceDetailOpenByKey((s) => ({ ...s, [detailKey]: !s[detailKey] }))
-                                          }}
-                                        >
-                                          <span
-                                            className={`shrink-0 text-[12px] font-medium ${
-                                              isRunning && !isRejectedByUser ? 'anima-flow-text' : 'text-muted-foreground group-hover:text-foreground'
-                                            }`}
-                                          >
-                                            {runningStatusText}
-                                          </span>
-                                          
-                                          <div className="min-w-0 flex-1 flex items-center gap-2">
-                                            {traceName === 'bash' && toolApprovalText ? (
-                                              <span className={`shrink-0 inline-flex items-center whitespace-nowrap rounded-md border px-2 py-0.5 text-[11px] leading-none font-medium ${approvalBadgeClass}`}>
-                                                {toolApprovalText}
-                                              </span>
-                                            ) : null}
-                                            {isEditTrace && editDiffSummaries.length > 0 && !isRunning && !detailOpen ? (
-                                              <span className="inline-flex items-center gap-1.5 min-w-0">
-                                                <button
-                                                  type="button"
-                                                  className="max-w-[220px] truncate text-[12px] text-blue-600 hover:underline"
-                                                  title={editDiffSummaries[0]?.path || editDiffSummaries[0]?.fileName}
-                                                  onMouseDown={(e) => e.stopPropagation()}
-                                                  onClick={(e) => {
-                                                    e.stopPropagation()
-                                                    const p = String(editDiffSummaries[0]?.path || '').trim()
-                                                    if (p) openFileInExplorer(p)
-                                                  }}
-                                                >
-                                                  {editDiffSummaries[0]?.fileName}
-                                                </button>
-                                                <span className="text-[12px] text-emerald-600 font-medium">+{totalAdded}</span>
-                                                <span className="text-[12px] text-red-500 font-medium">-{totalRemoved}</span>
-                                              </span>
-                                            ) : isEditTrace && detailOpen ? null : canOpenEntityInFiles ? (
-                                              <button
-                                                type="button"
-                                                className="inline-block max-w-full text-[12px] font-mono text-muted-foreground bg-muted/30 px-1.5 py-0.5 rounded-md truncate align-middle border border-transparent hover:border-border/50 transition-colors hover:underline cursor-pointer"
-                                                onMouseDown={(e) => e.stopPropagation()}
-                                                onClick={(e) => {
-                                                  e.stopPropagation()
-                                                  openFileInExplorer(entity)
-                                                }}
-                                                title={entity}
-                                              >
-                                                {displayEntity}
-                                              </button>
-                                            ) : (
-                                              <span className="inline-block max-w-full text-[12px] font-mono text-muted-foreground bg-muted/30 px-1.5 py-0.5 rounded-md truncate align-middle border border-transparent hover:border-border/50 transition-colors">
-                                                {displayEntity}
-                                              </span>
-                                            )}
-                                            {resultSummary && (
-                                              <span className="inline-block max-w-full text-[12px] font-mono text-muted-foreground bg-muted/10 px-1.5 py-0.5 rounded-md truncate align-middle border border-border/30">
-                                                {resultSummary}
-                                              </span>
-                                            )}
-                                            <span className="text-[11px] text-muted-foreground/40 whitespace-nowrap tabular-nums">
-                                              {isRejectedByUser ? '' : typeof tr.durationMs === 'number' ? `${tr.durationMs}ms` : ''}
-                                            </span>
-                                            {hasDetail ? (
-                                              <span
-                                                aria-hidden="true"
-                                                className={`h-4 w-4 shrink-0 text-muted-foreground/70 transition-opacity motion-reduce:transition-none flex items-center justify-center ${
-                                                  detailOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                                                }`}
-                                              >
-                                                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-300 ${detailOpen ? 'rotate-0' : '-rotate-90'}`} />
-                                              </span>
-                                            ) : null}
-                                          </div>
-                                        </div>
-
-                                        <AnimatePresence initial={false}>
-                                          {detailOpen && hasDetail ? (
-                                            <motion.div
-                                              key="trace-detail"
-                                              initial={{ gridTemplateRows: '0fr' }}
-                                              animate={{ gridTemplateRows: '1fr' }}
-                                              exit={{ gridTemplateRows: '0fr' }}
-                                              transition={collapseAnimTransition}
-                                              className="overflow-hidden"
-                                              style={{ display: 'grid', willChange: 'grid-template-rows' }}
-                                            >
-                                              <div className="min-h-0 overflow-hidden">
-                                              <motion.div
-                                                className="mt-2 space-y-2 pb-1"
-                                                initial={collapseContentAnim.initial}
-                                                animate={collapseContentAnim.animate}
-                                                exit={collapseContentAnim.exit}
-                                                transition={collapseContentAnim.transition}
-                                              >
-                                                {Array.isArray((tr as any).artifacts) && (tr as any).artifacts.length > 0 && (
-                                                  <div className="space-y-1">
-                                                    <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{i18nText(appLang, 'app.artifacts')}</div>
-                                                    {renderArtifacts((tr as any).artifacts as Artifact[], 'sm')}
-                                                  </div>
-                                                )}
-                                                {detailMarkdown ? (
-                                                  <ReactMarkdown
-                                                    remarkPlugins={[remarkGfm, remarkMath]}
-                                                    rehypePlugins={[rehypeKatex, rehypeRaw]}
-                                                    className="prose prose-sm dark:prose-invert max-w-none text-[11px] text-foreground/80 prose-ul:pl-3 prose-ol:pl-3"
-                                                    components={{
-                                                      pre: ({ children }) => <>{children}</>,
-                                                      code({ inline, className, children, ...props }: any) {
-                                                        const value = String(children).replace(/\n$/, '')
-                                                        const trimmed = value.trim()
-                                                        const displayText = inline ? stripWrappedBackticks(trimmed) : trimmed
-                                                        const isFileToken =
-                                                          Boolean(inline) &&
-                                                          !/^https?:\/\//i.test(displayText) &&
-                                                          (displayText.startsWith('file://') ||
-                                                            displayText.startsWith('/') ||
-                                                            displayText.startsWith('\\') ||
-                                                            displayText.startsWith('./') ||
-                                                            displayText.startsWith('../') ||
-                                                            displayText.startsWith('~/') ||
-                                                            /\.(ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)$/i.test(displayText))
-                                                        if (isFileToken) {
-                                                          return (
-                                                            <button
-                                                              type="button"
-                                                              className="rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground hover:underline cursor-pointer"
-                                                              onClick={(e) => {
-                                                                e.preventDefault()
-                                                                e.stopPropagation()
-                                                                openLinkTarget(displayText)
-                                                              }}
-                                                              title={displayText}
-                                                            >
-                                                              {displayText}
-                                                            </button>
-                                                          )
-                                                        }
-                                                        return <code className={className} {...props}>{displayText}</code>
-                                                      },
-                                                      a({ href, children, ...props }: any) {
-                                                        const target = String(href || '').trim()
-                                                        return (
-                                                          <a
-                                                            {...props}
-                                                            href={target}
-                                                            className="text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-                                                            onClick={(e) => {
-                                                              if (!target) return
-                                                              e.preventDefault()
-                                                              openLinkTarget(target)
-                                                            }}
-                                                          >
-                                                            {children}
-                                                          </a>
-                                                        )
-                                                      }
-                                                    }}
-                                                  >
-                                                    {linkifyQuotedFileNames(detailMarkdown)}
-                                                  </ReactMarkdown>
-                                                ) : null}
-
-                                                {tr.diffs && tr.diffs.length > 0 && (
-                                                  <div className="space-y-1">
-                                                    <div className="space-y-2">
-                                                      {tr.diffs.map((d: any, i: number) => (
-                                                        <DiffView key={i} oldContent={d.oldContent} newContent={d.newContent} fileName={d.path} />
-                                                      ))}
-                                                    </div>
-                                                  </div>
-                                                )}
-
-                                                {tr.status === 'failed' && tr.error?.message && (
-                                                  <div className="space-y-1">
-                                                    <div className="text-[10px] font-medium text-red-500 uppercase tracking-wider">{t.trace.error}</div>
-                                                    <div className="text-[10px] text-red-600 dark:text-red-400 whitespace-pre-wrap break-words bg-red-500/10 rounded p-2">
-                                                      {tr.error.message}
-                                                    </div>
-                                                  </div>
-                                                )}
-                                              </motion.div>
-                                              </div>
-                                            </motion.div>
-                                          ) : null}
-                                        </AnimatePresence>
-                                      </div>
-                                    )
-                                  })}
-                                          </motion.div>
-                                        </div>
-                                      </motion.div>
-                                    ) : null}
-                                  </AnimatePresence>
-                                </div>
-                              )
-                                  })()}
-                                  </div>
-                                </motion.div>
-                              ) : null}
-                            </AnimatePresence>
-                        </div>
-                      ) : (
-                        <div className="py-0.5 group">
-                          <div className="space-y-0.5">
-                            {(() => {
-                              if (shouldHideProcess) return null
-                              if (!isFirstAssistantOfTurn) return null
-                              const meta = msg.meta || {}
-                              const injection = parseMemoryInjection(meta.memoryInjection)
-                              const memoryCount = Math.max(0, Number(injection?.count || 0))
-                              const hasItems = Boolean(memoryCount > 0 && injection?.items?.length)
-                              const msgId = String(msg.id || '')
-                              const open = Boolean(memoryInjectionOpenByMsgId[msgId])
-                              const toggle = () => {
-                                if (!hasItems) return
-                                setMemoryInjectionOpenByMsgId((prev) => ({ ...prev, [msgId]: !open }))
-                              }
-                              return (
-                                <div key={`memory-injection-block:${msgId}`} className="overflow-hidden">
-                                  <button
-                                    type="button"
-                                    className="group w-full flex items-center gap-2 min-w-0 py-0.5 rounded-md text-left hover:bg-muted/10 transition-colors motion-reduce:transition-none"
-                                    onClick={(e) => {
-                                      e.preventDefault()
-                                      e.stopPropagation()
-                                      toggle()
-                                    }}
-                                    aria-expanded={hasItems ? open : false}
-                                  >
-                                    <span className="text-[12px] font-medium text-muted-foreground group-hover:text-foreground">
-                                      {appRuntimeText.injectedMemories.replace('{count}', String(memoryCount))}
-                                    </span>
-                                    <span className="text-[11px] text-muted-foreground/40 whitespace-nowrap tabular-nums">
-                                      {typeof injection?.durationMs === 'number' ? `${injection.durationMs}ms` : ''}
-                                    </span>
-                                    {hasItems ? (
-                                      <span
-                                        aria-hidden="true"
-                                        className={`h-4 w-4 shrink-0 text-muted-foreground/70 transition-opacity motion-reduce:transition-none flex items-center justify-center ${
-                                          open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                                        }`}
-                                      >
-                                        <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-300 motion-reduce:transition-none ${open ? 'rotate-0' : '-rotate-90'}`} />
-                                      </span>
-                                    ) : null}
-                                  </button>
-
-                                  <AnimatePresence initial={false}>
-                                    {open && hasItems ? (
-                                      <motion.div
-                                        key={`memory-injection-content:${msgId}`}
-                                        initial={{ gridTemplateRows: '0fr' }}
-                                        animate={{ gridTemplateRows: '1fr' }}
-                                        exit={{ gridTemplateRows: '0fr' }}
-                                        transition={collapseAnimTransition}
-                                        className="overflow-hidden"
-                                        style={{ display: 'grid', willChange: 'grid-template-rows' }}
-                                      >
-                                        <div className="min-h-0 overflow-hidden">
-                                          <motion.div
-                                            className="mt-1 space-y-1"
-                                            initial={collapseContentAnim.initial}
-                                            animate={collapseContentAnim.animate}
-                                            exit={collapseContentAnim.exit}
-                                            transition={collapseContentAnim.transition}
-                                          >
-                                            {(injection?.items || []).map((item, idx) => {
-                                              const type = String(item.type || 'semantic').trim()
-                                              const content = String(item.content || '').trim()
-                                              if (!content) return null
-                                              return (
-                                                <div key={`${String(item.id || '')}:${idx}`} className="flex items-start gap-2">
-                                                  <span className="mt-[6px] h-1 w-1 rounded-full bg-muted-foreground/50 shrink-0" />
-                                                  <span className="text-[12px] leading-relaxed text-foreground/85 break-words">
-                                                    <span className="inline-block text-muted-foreground mr-1">[{type}]</span>
-                                                    {content}
-                                                  </span>
-                                                </div>
-                                              )
-                                            })}
-                                          </motion.div>
-                                        </div>
-                                      </motion.div>
-                                    ) : null}
-                                  </AnimatePresence>
-                                </div>
-                              )
-                            })()}
-                            {(() => {
-                              if (shouldHideProcess) return null
-                              const meta = msg.meta || {}
-                              const status = meta.reasoningStatus
-                              const text = typeof meta.reasoningText === 'string' ? meta.reasoningText.trim() : ''
-                              if (!text) return null
-                              const isThinkingRaw = status === 'pending' || status === 'streaming'
-                              const isLatest = ctx.index === displayMessages.length - 1
-                              const isThinking = Boolean(isThinkingRaw && isLoading && isLatest)
-                              const msgId = String(msg.id || '')
-                              const open = reasoningOpenByMsgId[msgId] ?? isThinking
-                              const headerText = isThinking ? appRuntimeText.thinkingRunning : appRuntimeText.thinkingDone
-                              const toggle = () => {
-                                setReasoningOpenByMsgId((prev) => {
-                                  const curr = prev[msgId] ?? isThinking
-                                  return { ...prev, [msgId]: !curr }
-                                })
-                              }
-                              return (
-                                <div key={`reasoning-block:${msgId}`} className="overflow-hidden">
-                                  <button
-                                    type="button"
-                                    className="group w-full flex items-center gap-2 min-w-0 py-0.5 rounded-md text-left hover:bg-muted/10 transition-colors motion-reduce:transition-none"
-                                    onClick={(e) => {
-                                      e.preventDefault()
-                                      e.stopPropagation()
-                                      toggle()
-                                    }}
-                                    aria-expanded={open}
-                                  >
-                                    <span
-                                      className={`text-[12px] font-medium shrink-0 ${
-                                        isThinking ? 'anima-flow-text' : 'text-muted-foreground group-hover:text-foreground'
-                                      }`}
-                                    >
-                                      {headerText}
-                                    </span>
-                                    <span
-                                      aria-hidden="true"
-                                      className={`h-4 w-4 shrink-0 text-muted-foreground/70 transition-opacity motion-reduce:transition-none flex items-center justify-center ${
-                                        open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                                      }`}
-                                    >
-                                      <ChevronDown
-                                        className={`w-3.5 h-3.5 transition-transform duration-300 motion-reduce:transition-none ${
-                                          open ? 'rotate-0' : '-rotate-90'
-                                        }`}
-                                      />
-                                    </span>
-                                  </button>
-
-                                  <AnimatePresence initial={false}>
-                                    {open ? (
-                                      <motion.div
-                                        key={`reasoning-content:${msgId}`}
-                                        initial={{ gridTemplateRows: '0fr' }}
-                                        animate={{ gridTemplateRows: '1fr' }}
-                                        exit={{ gridTemplateRows: '0fr' }}
-                                        transition={collapseAnimTransition}
-                                        className="overflow-hidden"
-                                        style={{ display: 'grid', willChange: 'grid-template-rows' }}
-                                      >
-                                        <div className="min-h-0 overflow-hidden">
-                                          <motion.div
-                                            className="mt-1 text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words"
-                                            initial={collapseContentAnim.initial}
-                                            animate={collapseContentAnim.animate}
-                                            exit={collapseContentAnim.exit}
-                                            transition={collapseContentAnim.transition}
-                                          >
-                                            {text}
-                                          </motion.div>
-                                        </div>
-                                      </motion.div>
-                                    ) : null}
-                                  </AnimatePresence>
-                                </div>
-                              )
-                            })()}
-
-                            {(() => {
-                              const cs = (msg.meta as any)?.compressionState
-                              if (cs !== 'running' && cs !== 'done') return null
-                              return (
-                                <CompressionCard
-                                  state={cs}
-                                  content={typeof msg.content === 'string' ? msg.content : String(msg.content || '')}
-                                />
-                              )
-                            })()}
-
-                            {(() => {
-                              const cs = (msg.meta as any)?.compressionState
-                              return cs === 'running' || cs === 'done'
-                            })() ? null : settings.enableMarkdown ? (
-                              <div>
-                                <ReactMarkdown
-                                  remarkPlugins={[remarkGfm, remarkMath]}
-                                  rehypePlugins={[rehypeKatex, rehypeRaw]}
-                                  className={`prose prose-sm dark:prose-invert max-w-none prose-p:text-[13px] prose-li:text-[13px] prose-table:text-[13px] prose-p:leading-relaxed prose-li:leading-relaxed prose-p:font-medium prose-li:font-medium prose-headings:font-semibold prose-h1:text-[21px] prose-h1:leading-[1.25] prose-h2:text-[18px] prose-h2:leading-[1.3] prose-h3:text-[16px] prose-h3:leading-[1.35] text-foreground/90 ${
-                                    isTypingAssistantMessage ? 'anima-typing-fade' : ''
-                                  }`}
-                                  components={{
-                                    pre: ({ children }) => <>{children}</>,
-                                    code({ inline, className, children, ...props }: any) {
-                                      const match = /language-(\w+)/.exec(className || '')
-                                      const lang = match ? match[1] : 'text'
-                                      const value = String(children).replace(/\n$/, '')
-                                      const trimmed = value.trim()
-                                      const displayText = inline ? stripWrappedBackticks(trimmed) : trimmed
-                                      const isFileToken =
-                                        !/^https?:\/\//i.test(displayText) &&
-                                        (displayText.startsWith('file://') ||
-                                          displayText.startsWith('/') ||
-                                          displayText.startsWith('\\') ||
-                                          displayText.startsWith('./') ||
-                                          displayText.startsWith('../') ||
-                                          displayText.startsWith('~/') ||
-                                          /\.(ts|tsx|js|jsx|py|md|json|yml|yaml|txt|log|html|css|png|jpe?g|gif|svg|webp|pdf|zip|tar|gz)$/i.test(displayText))
-                                      const isShortFence = !inline && !match && trimmed && !trimmed.includes('\n') && trimmed.length <= 80
-                                      if (isShortFence) {
-                                        return (
-                                          <code
-                                            className="rounded bg-muted px-1.5 py-0.5 font-mono text-[12px] text-foreground"
-                                            {...props}
-                                          >
-                                            {trimmed}
-                                          </code>
-                                        )
-                                      }
-                                      if (lang === 'mermaid') {
-                                        return <MermaidBlock chart={value} />
-                                      }
-                                      if (!inline) {
-                                        return <CodeBlock language={lang} value={value} className={className} {...props} />
-                                      }
-                                      if (isFileToken) {
-                                        return (
-                                          <button
-                                            type="button"
-                                            className="rounded bg-muted px-1.5 py-0.5 font-mono text-[12px] text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 cursor-pointer"
-                                            onClick={(e) => {
-                                              e.preventDefault()
-                                              e.stopPropagation()
-                                              openLinkTarget(displayText)
-                                            }}
-                                            title={displayText}
-                                          >
-                                            {displayText}
-                                          </button>
-                                        )
-                                      }
-                                      return <code className={className} {...props}>{displayText}</code>
-                                    },
-                                    img({ src, alt, ...props }: any) {
-                                      const raw = String(src || '').trim()
-                                      const hasArtifacts = Array.isArray(msg.meta?.artifacts) && msg.meta.artifacts.length > 0
-                                      const isGeneratedPath =
-                                        raw.startsWith('sandbox:') ||
-                                        raw.startsWith('.anima/') ||
-                                        raw.startsWith('/.anima/') ||
-                                        raw.includes('/.anima/artifacts/')
-
-                                      if (hasArtifacts && isGeneratedPath) return null
-
-                                      if (raw.startsWith('sandbox:')) {
-                                        const ws = resolveWorkspaceDir()
-                                        const rel = raw.replace(/^sandbox:/, '')
-                                        if (backendBaseUrl && ws && rel.startsWith('/')) {
-                                          const abs = `${ws.replace(/\/$/, '')}${rel}`
-                                          const url = `${backendBaseUrl}/api/artifacts/file?path=${encodeURIComponent(abs)}&workspaceDir=${encodeURIComponent(ws)}`
-                                          return <img src={url} alt={String(alt || '')} {...props} />
-                                        }
-                                        return null
-                                      }
-
-                                      const isLikelyUrl = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw)
-                                      const isRelativePath = raw && !isLikelyUrl && !raw.startsWith('/') && !raw.startsWith('\\')
-                                      if (isRelativePath) {
-                                        const name = raw.split('/').pop() || raw
-                                        return (
-                                          <button
-                                            type="button"
-                                            className="text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-                                            onClick={(e) => {
-                                              e.preventDefault()
-                                              e.stopPropagation()
-                                              openLinkTarget(raw)
-                                            }}
-                                            title={raw}
-                                          >
-                                            {name}
-                                          </button>
-                                        )
-                                      }
-
-                                      return <img src={raw} alt={String(alt || '')} {...props} />
-                                    },
-                                    a({ href, children, className, ...props }: any) {
-                                      const target = String(href || '').trim()
-                                      const linkClass =
-                                        'text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300'
-                                      return (
-                                        <a
-                                          {...props}
-                                          href={target}
-                                          className={[className, linkClass].filter(Boolean).join(' ')}
-                                          onClick={(e) => {
-                                            if (!target) return
-                                            e.preventDefault()
-                                            openLinkTarget(target)
-                                          }}
-                                        >
-                                          {children}
-                                        </a>
-                                      )
-                                    }
-                                  }}
-                                >
-                                  {linkifyQuotedFileNames(normalizeChatMarkdown(msg.content || ''))}
-                                </ReactMarkdown>
-                              </div>
-                            ) : (
-                              <p
-                                className={`whitespace-pre-wrap text-[13px] leading-relaxed font-medium text-foreground/90 ${
-                                  isTypingAssistantMessage ? 'anima-typing-fade' : ''
-                                }`}
-                              >
-                                {msg.content || ''}
-                              </p>
-                            )}
-                            {(() => {
-                              const st = String((msg.meta as any)?.stage || '').trim()
-                              if (showOnlyFinalAssistantArtifacts) return null
-                              if (!st) return null
-                              if (st === 'verify') return null
-                              if (st === 'model' || st === 'tool' || st === 'model_call' || st === 'tool_call') return null
-                              if (st.startsWith('tool_start:') || st.startsWith('tool_done:') || st.startsWith('tool_end:')) return null
-                              return (
-                              <div className="text-[11px] text-muted-foreground pt-1">
-                                {st}
-                              </div>
-                              )
-                            })()}
-                            {Array.isArray(msg.meta?.artifacts) && msg.meta?.artifacts.length > 0 && (
-                              <div className="pt-1">
-                                {renderArtifacts(msg.meta.artifacts, 'md')}
-                              </div>
-                            )}
-                            {isFinalAssistantOfTurn && String(msg.content || '').trim() && !(isLoading && isLatestTurn) ? (
-                              <button
-                                type="button"
-                                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-all ${
-                                  copiedMessageId === String(msg.id || '')
-                                    ? 'opacity-100'
-                                    : 'opacity-0 group-hover:opacity-100'
-                                }`}
-                                onClick={() => void handleCopyMessage(String(msg.id || ''), String(msg.content || ''))}
-                                title={copiedMessageId === String(msg.id || '') ? appRuntimeText.copied : appRuntimeText.copy}
-                              >
-                                {copiedMessageId === String(msg.id || '') ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                              </button>
-                            ) : null}
-
-                          </div>
-                        </div>
-                      )
-
-                        if (!isCollapsibleProcessRow) return body
-
-                        return (
-                          <AnimatePresence initial={false}>
-                            {processRowVisible ? (
-                              <motion.div
-                                key={`turn-process-row:${String(msg.id || '')}`}
-                                initial={{ gridTemplateRows: '0fr', opacity: 0 }}
-                                animate={{ gridTemplateRows: '1fr', opacity: 1 }}
-                                exit={{ gridTemplateRows: '0fr', opacity: 0 }}
-                                transition={collapseAnimTransition}
-                                className="overflow-hidden"
-                                style={{ display: 'grid', willChange: 'grid-template-rows,opacity' }}
-                              >
-                                <div className="min-h-0 overflow-hidden">
-                                  <motion.div
-                                    initial={collapseContentAnim.initial}
-                                    animate={collapseContentAnim.animate}
-                                    exit={collapseContentAnim.exit}
-                                    transition={collapseContentAnim.transition}
-                                  >
-                                    {body}
-                                  </motion.div>
-                                </div>
-                              </motion.div>
-                            ) : null}
-                          </AnimatePresence>
-                        )
-                      })()}
-                    </div>
-                    )
-                    })()}
-                    </Fragment>
-                    )
-                  })}
-                        <div ref={chatBottomSentinelRef} aria-hidden="true" className="h-px w-full" />
-                      </div>
+                      <ChatSurface
+                        messages={displayMessages as Message[]}
+                        enableMarkdown={settings.enableMarkdown}
+                        collapseHistoricalProcess={(settings as any).collapseHistoricalProcess !== false}
+                        isLoading={isLoading}
+                        scrollRef={chatScrollRef as any}
+                        bottomSentinelRef={chatBottomSentinelRef}
+                        onOpenLinkTarget={openLinkTarget}
+                        backendBaseUrl={backendBaseUrl}
+                        workspaceDir={resolveWorkspaceDir()}
+                        copiedMessageId={copiedMessageId}
+                        highlightedMessageId={highlightUserMsgId}
+                        scrollToMessageId={pendingUserScrollId}
+                        onCopyMessage={handleCopyMessage}
+                        onPatchDangerousApproval={patchDangerousApproval}
+                        onSubmitDangerousApproval={submitDangerousApproval}
+                        onScrolledToMessage={(messageId) => {
+                          if (messageId === pendingUserScrollId) setPendingUserScrollId('')
+                        }}
+                        onUserNavItemsChange={setUserNavItems}
+                      />
                     )}
                   </motion.div>
                 )}

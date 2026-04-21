@@ -30,6 +30,11 @@ type WindowState = {
 
 const windowStore = new Store<{ mainWindow: WindowState }>({ name: 'window-state' })
 
+const remoteDebuggingPort = String(process.env.ANIMA_REMOTE_DEBUGGING_PORT || '').trim()
+if (remoteDebuggingPort) {
+  app.commandLine.appendSwitch('remote-debugging-port', remoteDebuggingPort)
+}
+
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n))
 }
