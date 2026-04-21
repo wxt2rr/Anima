@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Folder, GitBranch, TerminalSquare, Globe, X } from 'lucide-react';
+import { Folder, GitBranch, Terminal as TerminalSquare, Globe, X } from 'iconoir-react';
 import { Button } from '@/components/ui/button';
 import { FileExplorer } from './FileExplorer';
 import { GitPanel } from './GitPanel';

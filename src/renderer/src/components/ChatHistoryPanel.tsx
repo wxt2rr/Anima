@@ -1,4 +1,21 @@
-import { Search, Trash2, MessageCircle, PanelLeftClose, MoreHorizontal, Settings, Folder, FolderOpen, FolderPlus, ChevronRight, Star, Pencil, Clock3, Sparkles, Send, Monitor } from 'lucide-react'
+import {
+  InputSearch as Search,
+  Trash as Trash2,
+  MessageText as MessageCircle,
+  SidebarCollapse as PanelLeftClose,
+  MoreHoriz as MoreHorizontal,
+  Settings,
+  Folder,
+  Folder as FolderOpen,
+  FolderPlus,
+  NavArrowRight as ChevronRight,
+  Star,
+  EditPencil as Pencil,
+  Clock as Clock3,
+  MagicWand as Sparkles,
+  Send,
+  Laptop as Monitor
+} from 'iconoir-react'
 import { useEffect, useMemo, useRef, useState, memo, type MouseEvent } from 'react'
 import { useStore } from '../store/useStore'
 import { useUpdateStore } from '../store/useUpdateStore'

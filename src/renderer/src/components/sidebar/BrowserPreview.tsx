@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, ExternalLink, RotateCw, Bug, Play, ZoomIn, ZoomOut } from 'lucide-react'
+import { ArrowLeft, ArrowRight, OpenInWindow as ExternalLink, Refresh as RotateCw, Bug, Play, ZoomIn, ZoomOut } from 'iconoir-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { useStore } from '@/store/useStore'

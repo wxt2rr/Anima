@@ -4,19 +4,19 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { 
-  ChevronRight, 
-  ChevronDown, 
-  RefreshCw,
-  RotateCcw,
+  NavArrowRight as ChevronRight, 
+  NavArrowDown as ChevronDown, 
+  Refresh as RefreshCw,
+  Undo as RotateCcw,
   Search,
-  ArrowLeftRight,
+  DataTransferBoth as ArrowLeftRight,
   ZoomIn,
   ZoomOut,
-  PanelLeftClose,
-  PanelLeftOpen,
-  ExternalLink,
+  SidebarCollapse as PanelLeftClose,
+  SidebarExpand as PanelLeftOpen,
+  OpenInWindow as ExternalLink,
   X
-} from 'lucide-react';
+} from 'iconoir-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';

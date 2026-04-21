@@ -3,7 +3,7 @@ import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import 'xterm/css/xterm.css'
 import { Button } from '@/components/ui/button'
-import { Plus, X } from 'lucide-react'
+import { Plus, X } from 'iconoir-react'
 import { useStore } from '@/store/useStore'
 import { i18nText, resolveAppLang } from '@/i18n'
 

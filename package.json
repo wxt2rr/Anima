@@ -99,6 +99,7 @@
     "electron-updater": "^6.3.0",
     "framer-motion": "^11.0.8",
     "html-react-parser": "^5.2.11",
+    "iconoir-react": "^7.11.0",
     "lucide-react": "^0.344.0",
     "material-icon-theme": "^5.33.1",
     "mermaid": "^11.12.2",

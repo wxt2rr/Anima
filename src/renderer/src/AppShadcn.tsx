@@ -1,5 +1,26 @@
 import { useState, useRef, useEffect, useMemo, useCallback, type ReactNode, type DragEvent, type ClipboardEvent } from 'react'
-import { ArrowUp, Square, Paperclip, PanelLeftOpen, MessageCircle, Wrench, Sparkles, X, ChevronDown, Mic, Folder, Brain, Shield, Check, GitBranch, Copy, Settings, TerminalSquare, Globe, Loader2 } from 'lucide-react'
+import {
+  ArrowUp,
+  Square,
+  Attachment as Paperclip,
+  SidebarExpand as PanelLeftOpen,
+  MessageText as MessageCircle,
+  Wrench,
+  Sparks as Sparkles,
+  X,
+  NavArrowDown as ChevronDown,
+  Microphone as Mic,
+  Folder,
+  Brain,
+  Shield,
+  Check,
+  GitBranch,
+  Copy,
+  Settings,
+  Terminal as TerminalSquare,
+  Globe,
+  RefreshCircle as Loader2
+} from 'iconoir-react'
 import { resolveBackendBaseUrl, useStore, type Message, type ToolTrace, type ProviderModel, type Artifact, type MemoryInjectionSummary } from './store/useStore'
 import { THEMES } from './lib/themes'
 import { SettingsDialog, SettingsWindow } from './components/SettingsDialog'
