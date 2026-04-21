@@ -11,7 +11,6 @@ import {
   NavArrowRight as ChevronRight,
   Star,
   EditPencil as Pencil,
-  Clock as Clock3,
   MagicWand as Sparkles,
   Send,
   Laptop as Monitor
@@ -313,7 +312,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
           className="w-full h-8 px-2.5 rounded-md flex items-center gap-2 text-[13px] text-foreground/85 hover:bg-black/5 transition-colors text-left"
           onClick={toggleSidebarSearch}
         >
-          <Clock3 className="w-3.5 h-3.5 text-foreground/65" />
+          <Search className="w-3.5 h-3.5 text-foreground/65" />
           <span>{t.search}</span>
         </button>
         <button
