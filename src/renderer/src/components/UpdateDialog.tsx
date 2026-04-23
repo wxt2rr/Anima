@@ -112,8 +112,8 @@ export function UpdateDialog() {
             </div>
             <div className="mt-2 h-2 w-full rounded-full bg-emerald-500/15 overflow-hidden">
               <div
-                className="h-full bg-emerald-500 transition-all"
-                style={{ width: `${Math.max(0, Math.min(100, typeof percent === 'number' ? percent : 0))}%` }}
+                className="h-full origin-left bg-emerald-500 transition-transform duration-200 ease-linear"
+                style={{ transform: `scaleX(${Math.max(0, Math.min(100, typeof percent === 'number' ? percent : 0)) / 100})` }}
               />
             </div>
           </div>

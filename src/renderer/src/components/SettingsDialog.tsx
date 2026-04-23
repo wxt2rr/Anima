@@ -1591,7 +1591,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
                   key={tab.id}
                   variant="ghost"
                   onClick={() => setActiveTab(tab.id)}
-                  className={`w-full justify-start gap-3 px-3 py-2.5 h-auto text-[13px] font-medium transition-all duration-200 ${
+                  className={`w-full justify-start gap-3 px-3 py-2.5 h-auto text-[13px] font-medium transition-colors duration-200 ${
                     activeTab === tab.id
                       ? 'rounded-xl bg-black/5 text-foreground'
                       : 'rounded-md text-muted-foreground hover:bg-black/5 hover:text-foreground'
@@ -1774,7 +1774,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
                 key={tab.id}
                 variant="ghost"
                 onClick={() => setActiveTab(tab.id)}
-                className={`w-full justify-start gap-3 px-3 py-2.5 h-auto text-[13px] font-medium transition-all duration-200 ${
+                className={`w-full justify-start gap-3 px-3 py-2.5 h-auto text-[13px] font-medium transition-colors duration-200 ${
                   activeTab === tab.id
                     ? 'rounded-xl bg-black/5 text-foreground'
                     : 'rounded-md text-muted-foreground hover:bg-black/5 hover:text-foreground'
@@ -4021,7 +4021,7 @@ function GeneralSettings() {
                 <button
                   key={key}
                   onClick={() => updateSettings({ themeColor: key })}
-                  className={`w-8 h-8 rounded-full border-2 transition-all ${
+                  className={`w-8 h-8 rounded-full border-2 transition-[border-color,background-color] duration-200 ${
                     (settings.themeColor || 'zinc') === key 
                       ? 'border-primary ring-2 ring-primary/30 scale-110' 
                       : 'border-transparent hover:scale-110'
@@ -7044,7 +7044,7 @@ function KnowledgeBaseSettings() {
         {kbImportProgress > 0 ? (
           <div className="space-y-1">
             <div className="h-2 w-full overflow-hidden rounded bg-muted">
-              <div className="h-full bg-primary transition-all duration-300" style={{ width: `${Math.min(100, Math.max(0, kbImportProgress))}%` }} />
+              <div className="h-full origin-left bg-primary transition-transform duration-200 ease-linear" style={{ transform: `scaleX(${Math.min(100, Math.max(0, kbImportProgress)) / 100})` }} />
             </div>
             <div className="text-[12px] text-muted-foreground">{kbImportMessage || t.loading}</div>
           </div>

@@ -1421,7 +1421,8 @@ def builtin_tools() -> List[Dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "mode": {"type": "string", "enum": ["screen"], "description": "Screenshot mode"},
+                        "mode": {"type": "string", "enum": ["screen", "window"], "description": "Screenshot mode"},
+                        "windowId": {"type": "integer", "description": "Target window id for mode=window. If omitted, enter interactive window selection."},
                         "path": {"type": "string", "description": "Optional output path relative to workspace"},
                     },
                 },
@@ -2462,8 +2463,8 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
     if name == "screenshot":
         if not fs_workspace_dir:
             raise RuntimeError("No workspace directory selected")
-        mode = str(args.get("mode") or "screen").strip() or "screen"
-        if mode != "screen":
+        mode = str(args.get("mode") or "screen").strip().lower() or "screen"
+        if mode not in ("screen", "window"):
             raise RuntimeError("Unsupported screenshot mode")
 
         rel_path = str(args.get("path") or "").strip()
@@ -2479,13 +2480,30 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
             ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             target = norm_abs(str(out_dir / f"screenshot_{ts}.png"))
 
+        cmd = ["screencapture", "-x", "-t", "png"]
+        timeout_sec = 20
+        if mode == "window":
+            window_id_raw = args.get("windowId")
+            if window_id_raw is None or str(window_id_raw).strip() == "":
+                cmd.append("-w")
+                timeout_sec = 60
+            else:
+                try:
+                    window_id = int(window_id_raw)
+                except Exception as e:
+                    raise RuntimeError("windowId must be a positive integer") from e
+                if window_id <= 0:
+                    raise RuntimeError("windowId must be a positive integer")
+                cmd.append(f"-l{window_id}")
+        cmd.append(target)
+
         p = subprocess.run(
-            ["screencapture", "-x", "-t", "png", target],
+            cmd,
             cwd=fs_workspace_dir,
             capture_output=True,
             text=True,
             env=safe_env(),
-            timeout=20,
+            timeout=timeout_sec,
         )
         if int(p.returncode) != 0:
             raise RuntimeError((p.stderr or p.stdout or "screencapture failed").strip()[:4000])

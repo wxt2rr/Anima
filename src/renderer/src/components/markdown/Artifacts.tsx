@@ -34,7 +34,7 @@ export const Artifacts: React.FC<ArtifactsProps> = ({ content, title = 'Preview'
         </Button>
       </div>
       
-      <div className={cn("p-4 bg-white dark:bg-zinc-950 transition-all duration-200", isExpanded ? "h-auto" : "h-64 overflow-hidden relative")}>
+      <div className={cn("p-4 bg-white dark:bg-zinc-950 transition-[background-color] duration-200", isExpanded ? "h-auto" : "h-64 overflow-hidden relative")}>
         {!isExpanded && (
            <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-background to-transparent pointer-events-none" />
         )}

@@ -38,15 +38,47 @@ export const MarkdownContent = memo(function MarkdownContent({
   const lastAppliedSeqRef = useRef(0)
   const throttleTimerRef = useRef<number | null>(null)
   const lastMessageIdRef = useRef(messageId)
+  const [skeletonVisible, setSkeletonVisible] = useState(false)
+  const skeletonEnterRafRef = useRef<number | null>(null)
+  const skeletonExitTimerRef = useRef<number | null>(null)
+  const skeletonVisibleRef = useRef(false)
+  const compiledRef = useRef<MarkdownCompileResult | null>(compiled)
+
+  useEffect(() => {
+    skeletonVisibleRef.current = skeletonVisible
+  }, [skeletonVisible])
+
+  useEffect(() => {
+    compiledRef.current = compiled
+  }, [compiled])
 
   useEffect(() => {
     let alive = true
+    const startSkeleton = () => {
+      if (streaming) {
+        setSkeletonVisible(false)
+        return
+      }
+      setSkeletonVisible(false)
+      if (skeletonEnterRafRef.current != null) window.cancelAnimationFrame(skeletonEnterRafRef.current)
+      skeletonEnterRafRef.current = window.requestAnimationFrame(() => {
+        skeletonEnterRafRef.current = null
+        if (!alive) return
+        setSkeletonVisible(true)
+      })
+    }
     const messageIdChanged = lastMessageIdRef.current !== messageId
     if (messageIdChanged) {
       lastMessageIdRef.current = messageId
       setCompiled(cachedCompiled)
+      if (cachedCompiled) {
+        setSkeletonVisible(false)
+      } else {
+        startSkeleton()
+      }
     } else if (cachedCompiled) {
       setCompiled(cachedCompiled)
+      setSkeletonVisible(false)
     }
     const requestSeq = latestRequestSeqRef.current + 1
     latestRequestSeqRef.current = requestSeq
@@ -54,8 +86,21 @@ export const MarkdownContent = memo(function MarkdownContent({
       void compileMarkdown(messageId, content).then((next) => {
         if (!alive) return
         if (requestSeq < lastAppliedSeqRef.current) return
-        lastAppliedSeqRef.current = requestSeq
-        setCompiled(next)
+        const applyCompiled = () => {
+          if (!alive) return
+          lastAppliedSeqRef.current = requestSeq
+          setCompiled(next)
+        }
+        if (!streaming && !compiledRef.current && skeletonVisibleRef.current) {
+          setSkeletonVisible(false)
+          if (skeletonExitTimerRef.current != null) window.clearTimeout(skeletonExitTimerRef.current)
+          skeletonExitTimerRef.current = window.setTimeout(() => {
+            skeletonExitTimerRef.current = null
+            applyCompiled()
+          }, 140)
+          return
+        }
+        applyCompiled()
       }).catch(() => {
         // 编译失败时保留上一版渲染结果，避免流式阶段回退为纯文本导致闪烁。
       })
@@ -75,6 +120,14 @@ export const MarkdownContent = memo(function MarkdownContent({
         window.clearTimeout(throttleTimerRef.current)
         throttleTimerRef.current = null
       }
+      if (skeletonEnterRafRef.current != null) {
+        window.cancelAnimationFrame(skeletonEnterRafRef.current)
+        skeletonEnterRafRef.current = null
+      }
+      if (skeletonExitTimerRef.current != null) {
+        window.clearTimeout(skeletonExitTimerRef.current)
+        skeletonExitTimerRef.current = null
+      }
     }
   }, [cachedCompiled, messageId, content, streaming])
 
@@ -84,6 +137,22 @@ export const MarkdownContent = memo(function MarkdownContent({
   )
 
   if (!compiled) {
+    if (!streaming) {
+      const skeletonLineClass = compact ? 'h-[10px]' : 'h-[12px]'
+      return (
+        <div
+          aria-hidden="true"
+          className={`select-none pointer-events-none transition-[opacity,transform] duration-140 ease-out motion-reduce:transition-none ${
+            skeletonVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1'
+          } ${compact ? 'space-y-1.5 py-0.5' : 'space-y-2 py-1'}`}
+          style={{ fontFamily: CHAT_FONT_FAMILY }}
+        >
+          <div className={`${skeletonLineClass} w-[86%] rounded bg-foreground/10 motion-safe:animate-pulse`} />
+          <div className={`${skeletonLineClass} w-[72%] rounded bg-foreground/10 motion-safe:animate-pulse`} />
+          <div className={`${skeletonLineClass} w-[54%] rounded bg-foreground/10 motion-safe:animate-pulse`} />
+        </div>
+      )
+    }
     return (
       <p
         className={`whitespace-pre-wrap ${compact ? 'text-[12px] leading-[18px] font-normal text-foreground/85' : bodyClassName || CHAT_BODY_TEXT_CLASS}`}

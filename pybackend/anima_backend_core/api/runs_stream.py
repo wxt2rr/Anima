@@ -28,6 +28,36 @@ _DANGEROUS_APPROVAL_PREFIX = "ANIMA_DANGEROUS_COMMAND_APPROVAL:"
 _PATCH_FILE_LINE_RE = re.compile(r"^\*\*\* (?:Add|Delete|Update) File: (.+)$")
 
 
+def _artifact_merge_key(item: Dict[str, Any]) -> str:
+    kind = str(item.get("kind") or "").strip().lower()
+    path = str(item.get("path") or "").strip()
+    mime = str(item.get("mime") or "").strip().lower()
+    title = str(item.get("title") or "").strip()
+    caption = str(item.get("caption") or "").strip()
+    return f"{kind}|{path}|{mime}|{title}|{caption}"
+
+
+def _dedupe_artifacts(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        key = _artifact_merge_key(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
+def _merge_result_artifacts(primary: Any, fallback: Any) -> List[Dict[str, Any]]:
+    primary_list = [x for x in (primary or []) if isinstance(x, dict)]
+    fallback_list = [x for x in (fallback or []) if isinstance(x, dict)]
+    selected = primary_list if primary_list else fallback_list
+    return _dedupe_artifacts(selected)
+
+
 def _parse_dangerous_approval_error(message: Any) -> Optional[Dict[str, Any]]:
     text = str(message or "").strip()
     if not text.startswith(_DANGEROUS_APPROVAL_PREFIX):
@@ -1272,7 +1302,7 @@ def handle_post_runs_non_stream_via_stream_executor(body: Dict[str, Any]) -> Tup
         worker_artifacts = [x for x in (worker_ctx.get("artifacts") or []) if isinstance(x, dict)]
         orchestration = worker_ctx.get("orchestration") if isinstance(worker_ctx.get("orchestration"), dict) else {"workers": 0, "failedWorkers": 0, "totalRetries": 0, "failureReasons": {}}
         merged_traces = worker_traces + [x for x in (out.get("traces") or []) if isinstance(x, dict)]
-        merged_artifacts = worker_artifacts + [x for x in (out.get("artifacts") or []) if isinstance(x, dict)]
+        merged_artifacts = _merge_result_artifacts(out.get("artifacts"), worker_artifacts)
         worker_ver = worker_ctx.get("verification") if isinstance(worker_ctx.get("verification"), dict) else {"status": "passed", "evidence": []}
         final_ver = out.get("verification") if isinstance(out.get("verification"), dict) else {"status": "unverified", "evidence": []}
         final_ver_status = str(final_ver.get("status") or "").strip() or "unverified"
@@ -1557,7 +1587,7 @@ def handle_post_runs_stream(handler: Any, body: Dict[str, Any]) -> None:
         worker_artifacts = [x for x in (worker_ctx.get("artifacts") or []) if isinstance(x, dict)]
         orchestration = worker_ctx.get("orchestration") if isinstance(worker_ctx.get("orchestration"), dict) else {"workers": 0, "failedWorkers": 0, "totalRetries": 0, "failureReasons": {}}
         merged_traces = worker_traces + [x for x in (out.get("traces") or []) if isinstance(x, dict)]
-        merged_artifacts = worker_artifacts + [x for x in (out.get("artifacts") or []) if isinstance(x, dict)]
+        merged_artifacts = _merge_result_artifacts(out.get("artifacts"), worker_artifacts)
         worker_ver = worker_ctx.get("verification") if isinstance(worker_ctx.get("verification"), dict) else {"status": "passed", "evidence": []}
         final_ver = out.get("verification") if isinstance(out.get("verification"), dict) else {"status": "unverified", "evidence": []}
         final_ver_status = str(final_ver.get("status") or "").strip() or "unverified"

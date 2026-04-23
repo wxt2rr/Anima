@@ -17,7 +17,7 @@ from ..runtime.sandbox_policy import normalize_composer_sandbox_fields, resolve_
 from ..tools.executor import execute_tool, make_tool_message, select_tools
 from .runs_compression import apply_persistent_compression, apply_thinking_level, build_usage_state, normalize_or_estimate_usage
 from .runs_request import resolve_runtime_options
-from .runs_stream import _execute_tool_with_edit_guard, _build_edit_guard_state, _run_coordinator_workers, _run_tool_loop, handle_post_runs_non_stream_via_stream_executor
+from .runs_stream import _execute_tool_with_edit_guard, _build_edit_guard_state, _merge_result_artifacts, _run_coordinator_workers, _run_tool_loop, handle_post_runs_non_stream_via_stream_executor
 
 
 def _isolate_worker_messages(messages: List[Dict[str, Any]], composer: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -330,7 +330,7 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
                 worker_artifacts = [x for x in (worker_ctx.get("artifacts") or []) if isinstance(x, dict)]
                 orchestration = worker_ctx.get("orchestration") if isinstance(worker_ctx.get("orchestration"), dict) else {"workers": 0, "failedWorkers": 0, "totalRetries": 0, "failureReasons": {}}
                 traces_out = traces_out + worker_traces
-                artifacts_out = artifacts_out + worker_artifacts
+                artifacts_out = _merge_result_artifacts(artifacts_out, worker_artifacts)
                 worker_ver = worker_ctx.get("verification") if isinstance(worker_ctx.get("verification"), dict) else {"status": "passed", "evidence": []}
                 final_ver = out.get("verification") if isinstance(out.get("verification"), dict) else {"status": "unverified", "evidence": []}
                 final_ver_status = str(final_ver.get("status") or "").strip() or "unverified"
@@ -582,7 +582,7 @@ def handle_post_run_resume(handler: Any, run_id: str) -> None:
         worker_traces = [x for x in (worker_ctx.get("traces") or []) if isinstance(x, dict)]
         worker_artifacts = [x for x in (worker_ctx.get("artifacts") or []) if isinstance(x, dict)]
         traces = worker_traces + [x for x in (out.get("traces") or []) if isinstance(x, dict)]
-        artifacts = worker_artifacts + [x for x in (out.get("artifacts") or []) if isinstance(x, dict)]
+        artifacts = _merge_result_artifacts(out.get("artifacts"), worker_artifacts)
         orchestration = worker_ctx.get("orchestration") if isinstance(worker_ctx.get("orchestration"), dict) else {"workers": 0, "failedWorkers": 0, "totalRetries": 0, "failureReasons": {}}
         worker_ver = worker_ctx.get("verification") if isinstance(worker_ctx.get("verification"), dict) else {"status": "passed", "evidence": []}
         final_ver = out.get("verification") if isinstance(out.get("verification"), dict) else {"status": "unverified", "evidence": []}

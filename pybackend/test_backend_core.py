@@ -107,6 +107,38 @@ class MockProviderLegacyToolMarkup:
 
 
 class BackendCoreIntegrationTests(unittest.TestCase):
+    def test_merge_result_artifacts_prefers_primary_and_dedupes(self) -> None:
+        from anima_backend_core.api.runs_stream import _merge_result_artifacts
+
+        primary = [
+            {"kind": "image", "path": "/tmp/a.png", "mime": "image/png"},
+            {"kind": "image", "path": "/tmp/a.png", "mime": "image/png"},
+            {"kind": "image", "path": "/tmp/b.png", "mime": "image/png"},
+        ]
+        fallback = [
+            {"kind": "image", "path": "/tmp/worker-only.png", "mime": "image/png"},
+        ]
+
+        out = _merge_result_artifacts(primary, fallback)
+        self.assertEqual(len(out), 2)
+        self.assertEqual(str(out[0].get("path") or ""), "/tmp/a.png")
+        self.assertEqual(str(out[1].get("path") or ""), "/tmp/b.png")
+
+    def test_merge_result_artifacts_uses_fallback_when_primary_empty(self) -> None:
+        from anima_backend_core.api.runs_stream import _merge_result_artifacts
+
+        primary = []
+        fallback = [
+            {"kind": "image", "path": "/tmp/worker-a.png", "mime": "image/png"},
+            {"kind": "image", "path": "/tmp/worker-a.png", "mime": "image/png"},
+            {"kind": "image", "path": "/tmp/worker-b.png", "mime": "image/png"},
+        ]
+
+        out = _merge_result_artifacts(primary, fallback)
+        self.assertEqual(len(out), 2)
+        self.assertEqual(str(out[0].get("path") or ""), "/tmp/worker-a.png")
+        self.assertEqual(str(out[1].get("path") or ""), "/tmp/worker-b.png")
+
     def _make_handler(self, body_obj=None, *, query=None):
         body_bytes = b""
         if body_obj is not None:
@@ -5067,6 +5099,60 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         self.assertIn("memory_graph_query", names)
         self.assertNotIn("write_file", names)
         self.assertNotIn("edit_file", names)
+
+    def test_builtin_tools_screenshot_schema_supports_window_mode(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        tools = shared_tools.builtin_tools()
+        screenshot = next(
+            (t for t in tools if str(((t.get("function") or {}) if isinstance(t, dict) else {}).get("name") or "") == "screenshot"),
+            None,
+        )
+        self.assertTrue(isinstance(screenshot, dict))
+        params = ((screenshot or {}).get("function") or {}).get("parameters") or {}
+        props = params.get("properties") if isinstance(params, dict) else {}
+        mode_schema = (props or {}).get("mode") if isinstance(props, dict) else {}
+        self.assertEqual((mode_schema or {}).get("enum"), ["screen", "window"])
+        self.assertEqual(str((((props or {}).get("windowId") or {}).get("type") or "")), "integer")
+
+    def test_execute_builtin_tool_screenshot_window_mode_uses_window_flags(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        with tempfile.TemporaryDirectory() as td:
+            captured: Dict[str, Any] = {}
+            target = os.path.join(td, ".anima", "artifacts", "screenshot_foo.png")
+
+            class _Proc:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+
+            def _fake_run(cmd, **kwargs):
+                captured["cmd"] = cmd
+                captured["kwargs"] = kwargs
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with open(target, "wb") as f:
+                    f.write(b"x")
+                return _Proc()
+
+            with patch("anima_backend_shared.tools.datetime") as dt_mock:
+                dt_mock.now.return_value.strftime.return_value = "foo"
+                with patch("anima_backend_shared.tools.subprocess.run", side_effect=_fake_run):
+                    out = json.loads(
+                        shared_tools.execute_builtin_tool(
+                            "screenshot",
+                            {"mode": "window", "windowId": 12345},
+                            workspace_dir=td,
+                        )
+                    )
+
+            self.assertTrue(bool(out.get("ok")))
+            cmd = captured.get("cmd") if isinstance(captured.get("cmd"), list) else []
+            self.assertEqual(cmd[:4], ["screencapture", "-x", "-t", "png"])
+            self.assertIn("-l12345", cmd)
+            self.assertEqual(str(cmd[-1]), os.path.realpath(target))
+            kwargs = captured.get("kwargs") if isinstance(captured.get("kwargs"), dict) else {}
+            self.assertEqual(int(kwargs.get("timeout") or 0), 20)
 
     def test_multi_tool_parallel_runs_and_keeps_input_order(self) -> None:
         import anima_backend_shared.tools as shared_tools

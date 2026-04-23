@@ -15,6 +15,7 @@ import {
   Telegram,
   Laptop as Monitor
 } from 'iconoir-react'
+import { Users } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, memo, type MouseEvent } from 'react'
 import { useStore } from '../store/useStore'
 import { useUpdateStore } from '../store/useUpdateStore'
@@ -175,6 +176,8 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
           const displayTitle = clampTitle(title)
           const source = String((chat as any)?.meta?.source || '').trim().toLowerCase()
           const isTelegram = source === 'telegram'
+          const telegramChatType = String((chat as any)?.meta?.telegram?.chatType || '').trim().toLowerCase()
+          const isTelegramGroup = isTelegram && (telegramChatType === 'group' || telegramChatType === 'supergroup')
           const isPendingDelete = pendingDeleteChatId === chat.id
           return (
             <motion.div
@@ -195,15 +198,22 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
             >
               <div
                 onClick={() => void setActiveChat(chat.id)}
-                className={`group relative flex items-center gap-2 pl-2.5 pr-0 py-1 cursor-pointer transition-all duration-200 ${
+                className={`group relative flex items-center gap-2 pl-2.5 pr-0 py-1 cursor-pointer transition-colors duration-200 ${
                   active ? 'rounded-xl bg-black/5 text-foreground' : 'rounded-md text-muted-foreground hover:bg-black/5 hover:text-foreground'
                 }`}
               >
                 <span className="w-3.5 h-3.5 shrink-0 flex items-center justify-center text-foreground/70" aria-hidden="true">
                   {isTelegram ? <Telegram className="w-3.5 h-3.5" /> : <Monitor className="w-3.5 h-3.5" />}
                 </span>
-                <span className="block truncate text-[13px] flex-1 min-w-0 leading-5 text-foreground" title={title}>
-                  {displayTitle}
+                <span className="flex items-center gap-1.5 min-w-0 flex-1">
+                  {isTelegramGroup ? (
+                    <span className="w-3.5 h-3.5 shrink-0 flex items-center justify-center text-foreground/65" aria-hidden="true">
+                      <Users className="w-3 h-3" />
+                    </span>
+                  ) : null}
+                  <span className="block truncate text-[13px] min-w-0 leading-5 text-foreground" title={title}>
+                    {displayTitle}
+                  </span>
                 </span>
                 <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center justify-end">
                   <Tooltip>
@@ -213,7 +223,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
                           e.stopPropagation()
                           setDeleteId(chat.id)
                         }}
-                        className="h-6 w-6 rounded-lg transition-all text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center"
+                        className="h-6 w-6 rounded-lg transition-[opacity,color,background-color] duration-200 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -241,6 +251,8 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
           const title = (chat.title || '').trim() || t.untitled
           const source = String((chat as any)?.meta?.source || '').trim().toLowerCase()
           const isTelegram = source === 'telegram'
+          const telegramChatType = String((chat as any)?.meta?.telegram?.chatType || '').trim().toLowerCase()
+          const isTelegramGroup = isTelegram && (telegramChatType === 'group' || telegramChatType === 'supergroup')
 
           return (
             <button
@@ -250,7 +262,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
                 void setActiveChat(chat.id)
                 if (ui.sidebarSearchOpen) toggleSidebarSearch()
               }}
-              className={`w-full flex items-center gap-2 pl-2.5 pr-2.5 py-1.5 text-left transition-all ${
+              className={`w-full flex items-center gap-2 pl-2.5 pr-2.5 py-1.5 text-left transition-colors duration-200 ${
                 active
                   ? 'rounded-xl bg-black/5 text-foreground'
                   : 'rounded-md text-muted-foreground hover:bg-black/5 hover:text-foreground'
@@ -259,7 +271,14 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
               <span className="w-3.5 h-3.5 shrink-0 flex items-center justify-center text-foreground/70" aria-hidden="true">
                 {isTelegram ? <Telegram className="w-3.5 h-3.5" /> : <Monitor className="w-3.5 h-3.5" />}
               </span>
-              <span className="block truncate text-[13px] leading-5 text-foreground">{title}</span>
+              <span className="flex items-center gap-1.5 min-w-0 flex-1">
+                {isTelegramGroup ? (
+                  <span className="w-3.5 h-3.5 shrink-0 flex items-center justify-center text-foreground/65" aria-hidden="true">
+                    <Users className="w-3 h-3" />
+                  </span>
+                ) : null}
+                <span className="block truncate text-[13px] min-w-0 leading-5 text-foreground">{title}</span>
+              </span>
             </button>
           )
         })}
@@ -418,7 +437,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
             return (
               <div key={pid}>
                 <div
-                  className={`group flex items-center gap-2 pl-2.5 pr-0 py-1 rounded-md transition-all ${
+                  className={`group flex items-center gap-2 pl-2.5 pr-0 py-1 rounded-md transition-colors duration-200 ${
                     activeProject ? 'text-foreground' : 'text-muted-foreground hover:bg-black/5 hover:text-foreground'
                   }`}
                 >
@@ -442,7 +461,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
                       <TooltipTrigger asChild>
                         <button
                           type="button"
-                          className={`h-6 w-6 rounded-lg transition-all hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center ${
+                          className={`h-6 w-6 rounded-lg transition-[opacity,color,background-color] duration-200 hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center ${
                             p.pinned ? 'text-primary' : 'text-muted-foreground'
                           } ${projectMenuOpenId === pid ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                           onClick={(e) => {
@@ -460,7 +479,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
                       <TooltipTrigger asChild>
                         <button
                           type="button"
-                          className={`h-6 w-6 rounded-lg transition-all text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10 hover:text-foreground flex items-center justify-center ${
+                          className={`h-6 w-6 rounded-lg transition-[opacity,color,background-color] duration-200 text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10 hover:text-foreground flex items-center justify-center ${
                             projectMenuOpenId === pid ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                           }`}
                           onClick={(e) => {
@@ -476,7 +495,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
 
                     <Popover open={projectMenuOpenId === pid} onOpenChange={(open) => setProjectMenuOpenId(open ? pid : null)}>
                       <PopoverTrigger
-                        className={`h-6 w-6 rounded-lg transition-all text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10 hover:text-foreground flex items-center justify-center ${
+                        className={`h-6 w-6 rounded-lg transition-[opacity,color,background-color] duration-200 text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10 hover:text-foreground flex items-center justify-center ${
                           projectMenuOpenId === pid ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                         }`}
                         onClick={(e) => e.stopPropagation()}
@@ -641,7 +660,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
                 value={ui.sidebarSearchQuery}
                 onChange={(e) => setSidebarSearchQuery(e.target.value)}
                 placeholder={t.search}
-                className="w-full h-9 pl-8 pr-3 text-sm bg-black/5 dark:bg-white/5 border-transparent focus-visible:bg-background focus-visible:ring-1 focus-visible:ring-ring transition-all placeholder:text-muted-foreground/50 shadow-none"
+                className="w-full h-9 pl-8 pr-3 text-sm bg-black/5 dark:bg-white/5 border-transparent focus-visible:bg-background focus-visible:ring-1 focus-visible:ring-ring transition-[background-color,border-color,color,box-shadow] duration-200 placeholder:text-muted-foreground/50 shadow-none"
               />
             </div>
             <div className="max-h-[44vh] overflow-y-auto overflow-x-hidden pr-1 scrollbar-none">{renderSearchResultRows(visibleChats)}</div>

@@ -176,6 +176,16 @@
   }
 }
 
+@keyframes anima-loading-dot-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.75;
+  }
+}
+
 @layer utilities {
   .chat-scrollbar-auto-hide {
     /* 保留滚动条槽位，避免显示/隐藏时内容区宽度变化导致整体横向抖动。 */
@@ -232,5 +242,9 @@
 
   .anima-typing-fade {
     animation: anima-typing-fade 0.3s ease-out;
+  }
+
+  .anima-loading-dot {
+    animation: anima-loading-dot-pulse 1.1s ease-in-out infinite;
   }
 }

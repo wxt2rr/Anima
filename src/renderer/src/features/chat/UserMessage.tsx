@@ -54,7 +54,7 @@ export const UserMessage = memo(function UserMessage({
         ) : null}
         <button
           type="button"
-          className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/20 transition-all ${copied ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+          className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/20 transition-[opacity,color,background-color] duration-150 ${copied ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
           onClick={() => onCopyMessage?.(String(message.id || ''), String(message.content || ''))}
           title={copied ? 'Copied' : 'Copy'}
         >

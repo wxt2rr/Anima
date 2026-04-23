@@ -29,6 +29,7 @@ import { UpdateDialog } from './components/UpdateDialog'
 import { ChatSurface } from './features/chat/ChatSurface'
 import { appendStreamDraft, setStreamDraft } from './features/chat/useStreamDraft'
 import { MarkdownContent } from './features/chat/MarkdownContent'
+import { compileMarkdown } from './features/chat/markdownCompiler'
 import type { ChatUserNavItem } from './features/chat/chatNavigation'
 import { createChatPerfFixture } from './features/chat/perfFixture'
 import { readChatPerfCounters, resetChatPerfCounters } from './features/chat/perfCounters'
@@ -241,7 +242,7 @@ function CircularProgress({ value }: { value: number }) {
           strokeDasharray={circumference}
           strokeDashoffset={offset}
           strokeLinecap="round"
-          className="text-primary transition-all duration-300 ease-out"
+          className="text-primary transition-colors duration-300 ease-out"
         />
       </svg>
       <div className="absolute inset-0 flex items-center justify-center text-[7px] leading-none text-muted-foreground">
@@ -439,11 +440,9 @@ function App(): JSX.Element {
             className="w-full max-w-[520px] text-center"
           >
             <div className="flex items-center justify-center gap-2">
-              <motion.span
+              <span
                 aria-hidden="true"
-                className="inline-block h-2 w-2 rounded-full bg-foreground/50"
-                animate={reduceMotion ? undefined : { opacity: [0.25, 0.75, 0.25] }}
-                transition={reduceMotion ? undefined : { repeat: Infinity, duration: 1.1, ease: 'easeInOut' }}
+                className={`inline-block h-2 w-2 rounded-full bg-foreground/50 ${reduceMotion ? "" : "anima-loading-dot"}`}
               />
               <div className="text-sm font-semibold tracking-tight">
                 {configError ? tLoading.failedTitle : tLoading.loadingTitle}
@@ -579,7 +578,10 @@ function AppLoaded(): JSX.Element {
   const [userNavItems, setUserNavItems] = useState<ChatUserNavItem[]>([])
   const [navHover, setNavHover] = useState<{ id: string; topRatio: number; content: string } | null>(null)
   const [chatScrollbarVisible, setChatScrollbarVisible] = useState(false)
+  const [chatSwitchReady, setChatSwitchReady] = useState(true)
   const chatScrollbarHideTimerRef = useRef<number | null>(null)
+  const chatSwitchSeqRef = useRef(0)
+  const chatSwitchReadyTimerRef = useRef<number | null>(null)
 
   const handleCopyMessage = useCallback(async (messageId: string, text: string) => {
     const content = String(text || '')
@@ -775,6 +777,54 @@ function AppLoaded(): JSX.Element {
     next.splice(idx + 1, 0, synthetic)
     return next
   }, [messages, hasRuntimeCompression, persistedCompressionSummary, persistedCompressionUntilId, activeChatId])
+
+  useEffect(() => {
+    const activeId = String(activeChatId || '').trim()
+    if (!activeId || !settings.enableMarkdown) {
+      setChatSwitchReady(true)
+      return
+    }
+    const queue = new Map<string, { id: string; content: string }>()
+    for (const message of displayMessages as any[]) {
+      if (message?.role !== 'assistant') continue
+      const id = String(message?.id || '').trim()
+      const content = String(message?.content || '').trim()
+      if (!id || !content) continue
+      queue.set(id, { id, content })
+    }
+    if (queue.size === 0) {
+      setChatSwitchReady(true)
+      return
+    }
+    const seq = chatSwitchSeqRef.current + 1
+    chatSwitchSeqRef.current = seq
+    setChatSwitchReady(false)
+    setUserNavItems([])
+    const startAt = Date.now()
+    let alive = true
+    const run = async () => {
+      await Promise.all(Array.from(queue.values()).map(({ id, content }) => compileMarkdown(id, content).catch(() => null)))
+      if (!alive) return
+      if (chatSwitchSeqRef.current !== seq) return
+      const elapsed = Date.now() - startAt
+      const waitMs = Math.max(0, 140 - elapsed)
+      if (chatSwitchReadyTimerRef.current != null) window.clearTimeout(chatSwitchReadyTimerRef.current)
+      chatSwitchReadyTimerRef.current = window.setTimeout(() => {
+        if (!alive) return
+        if (chatSwitchSeqRef.current !== seq) return
+        setChatSwitchReady(true)
+        chatSwitchReadyTimerRef.current = null
+      }, waitMs)
+    }
+    void run()
+    return () => {
+      alive = false
+      if (chatSwitchReadyTimerRef.current != null) {
+        window.clearTimeout(chatSwitchReadyTimerRef.current)
+        chatSwitchReadyTimerRef.current = null
+      }
+    }
+  }, [activeChatId, settings.enableMarkdown])
 
   const effectiveTurnIdByMessageId = useMemo(() => {
     const map: Record<string, string> = {}
@@ -1073,7 +1123,7 @@ function AppLoaded(): JSX.Element {
             <div className={`text-[13px] leading-relaxed font-medium ${state === 'running' ? 'anima-flow-text' : 'text-foreground/80'}`}>{title}</div>
             {canToggle ? (
               <ChevronDown
-                className={`w-4 h-4 text-muted-foreground transition-all duration-300 opacity-0 group-hover:opacity-100 ${collapsed ? '' : 'rotate-180'}`}
+                className={`w-4 h-4 text-muted-foreground transition-[opacity,transform] duration-200 ease-out opacity-0 group-hover:opacity-100 ${collapsed ? '' : 'rotate-180'}`}
               />
             ) : (
               <div className="w-4 h-4" />
@@ -2547,9 +2597,25 @@ function AppLoaded(): JSX.Element {
   }, [activeChatId, markProgrammaticScroll, startAutoScroll])
 
   useEffect(() => {
+    if (!chatSwitchReady) return
     const activeId = String(activeChatId || '').trim()
     if (!activeId) return
     if (pendingInitialBottomChatIdRef.current !== activeId) return
+    const el = chatScrollRef.current
+    if (!el) return
+    markProgrammaticScroll()
+    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
+    startAutoScroll({ force: true })
+  }, [chatSwitchReady, activeChatId, markProgrammaticScroll, startAutoScroll])
+
+  useEffect(() => {
+    const activeId = String(activeChatId || '').trim()
+    if (!activeId) return
+    if (pendingInitialBottomChatIdRef.current !== activeId) return
+    if (!isLoadingRef.current) {
+      pendingInitialBottomChatIdRef.current = ''
+      return
+    }
     if (pendingInitialBottomAttemptsRef.current >= 4) {
       pendingInitialBottomChatIdRef.current = ''
       return
@@ -4182,46 +4248,87 @@ function AppLoaded(): JSX.Element {
                     transition={chatBootTransition}
                     className="h-full"
                   >
-                    {displayMessages.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-3">
-                        <img
-                          src={animaLogo}
-                          alt="Anima logo"
-                          className="h-24 w-24 object-contain select-none pointer-events-none"
-                        />
-                        <p className="font-semibold text-[22px] tracking-tight text-foreground">{t.helloTitle}</p>
-                        <p className="text-sm text-muted-foreground text-center max-w-[520px] leading-6">
-                          {activeProvider ? t.helloSubtitleConnected(activeProvider.name) : t.helloSubtitleDisconnected}
-                        </p>
-                        {!activeProvider && (
-                          <Button onClick={openSettings} className="mt-6 rounded-full">
-                            {t.configureProvider}
-                          </Button>
-                        )}
-                      </div>
-                    ) : (
-                      <ChatSurface
-                        messages={displayMessages as Message[]}
-                        enableMarkdown={settings.enableMarkdown}
-                        collapseHistoricalProcess={(settings as any).collapseHistoricalProcess !== false}
-                        isLoading={isLoading}
-                        scrollRef={chatScrollRef as any}
-                        bottomSentinelRef={chatBottomSentinelRef}
-                        onOpenLinkTarget={openLinkTarget}
-                        backendBaseUrl={backendBaseUrl}
-                        workspaceDir={resolveWorkspaceDir()}
-                        copiedMessageId={copiedMessageId}
-                        highlightedMessageId={highlightUserMsgId}
-                        scrollToMessageId={pendingUserScrollId}
-                        onCopyMessage={handleCopyMessage}
-                        onPatchDangerousApproval={patchDangerousApproval}
-                        onSubmitDangerousApproval={submitDangerousApproval}
-                        onScrolledToMessage={(messageId) => {
-                          if (messageId === pendingUserScrollId) setPendingUserScrollId('')
-                        }}
-                        onUserNavItemsChange={setUserNavItems}
-                      />
-                    )}
+                    <AnimatePresence initial={false} mode="wait">
+                      {!chatSwitchReady && displayMessages.length > 0 ? (
+                        <motion.div
+                          key="chat-switch-skeleton"
+                          initial={reduceMotion ? false : { opacity: 0, y: 4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={reduceMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: -3 }}
+                          transition={reduceMotion ? { duration: 0 } : { duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                          className="h-full"
+                        >
+                          <div className="max-w-3xl mx-auto w-full py-2 space-y-4">
+                            {[68, 52, 62, 46].map((w, idx) => (
+                              <div key={`chat-switch-skeleton-${idx}`} className={`flex ${idx % 2 === 0 ? 'justify-start' : 'justify-end'}`}>
+                                <div className="max-w-[78%] min-w-[220px] rounded-2xl border border-black/5 bg-muted/40 px-4 py-3 transition-opacity duration-200">
+                                  <div className="space-y-2">
+                                    <div className="h-2.5 rounded bg-foreground/10 animate-pulse" style={{ width: `${w}%`, animationDelay: `${idx * 120}ms` }} />
+                                    <div className="h-2.5 rounded bg-foreground/10 animate-pulse w-[76%]" style={{ animationDelay: `${idx * 120 + 60}ms` }} />
+                                    <div className="h-2.5 rounded bg-foreground/10 animate-pulse w-[44%]" style={{ animationDelay: `${idx * 120 + 120}ms` }} />
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </motion.div>
+                      ) : displayMessages.length === 0 ? (
+                        <motion.div
+                          key="chat-switch-empty"
+                          initial={reduceMotion ? false : { opacity: 0, y: 3 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={reduceMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: -2 }}
+                          transition={reduceMotion ? { duration: 0 } : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                          className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-3"
+                        >
+                          <img
+                            src={animaLogo}
+                            alt="Anima logo"
+                            className="h-24 w-24 object-contain select-none pointer-events-none"
+                          />
+                          <p className="font-semibold text-[22px] tracking-tight text-foreground">{t.helloTitle}</p>
+                          <p className="text-sm text-muted-foreground text-center max-w-[520px] leading-6">
+                            {activeProvider ? t.helloSubtitleConnected(activeProvider.name) : t.helloSubtitleDisconnected}
+                          </p>
+                          {!activeProvider && (
+                            <Button onClick={openSettings} className="mt-6 rounded-full">
+                              {t.configureProvider}
+                            </Button>
+                          )}
+                        </motion.div>
+                      ) : (
+                        <motion.div
+                          key="chat-switch-content"
+                          initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={reduceMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: -4 }}
+                          transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                          className="h-full"
+                        >
+                          <ChatSurface
+                            messages={displayMessages as Message[]}
+                            enableMarkdown={settings.enableMarkdown}
+                            collapseHistoricalProcess={(settings as any).collapseHistoricalProcess !== false}
+                            isLoading={isLoading}
+                            scrollRef={chatScrollRef as any}
+                            bottomSentinelRef={chatBottomSentinelRef}
+                            onOpenLinkTarget={openLinkTarget}
+                            backendBaseUrl={backendBaseUrl}
+                            workspaceDir={resolveWorkspaceDir()}
+                            copiedMessageId={copiedMessageId}
+                            highlightedMessageId={highlightUserMsgId}
+                            scrollToMessageId={pendingUserScrollId}
+                            onCopyMessage={handleCopyMessage}
+                            onPatchDangerousApproval={patchDangerousApproval}
+                            onSubmitDangerousApproval={submitDangerousApproval}
+                            onScrolledToMessage={(messageId) => {
+                              if (messageId === pendingUserScrollId) setPendingUserScrollId('')
+                            }}
+                            onUserNavItemsChange={setUserNavItems}
+                          />
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -4315,7 +4422,7 @@ function AppLoaded(): JSX.Element {
             </AnimatePresence>
 
             <footer className="pl-6 pr-6 pt-6 pb-0 no-drag overflow-visible">
-              <div className="max-w-[50rem] mx-auto relative bg-white rounded-xl border border-border px-2 py-1.5 transition-all duration-200 shadow-[0_1px_2px_rgba(0,0,0,0.03),0_8px_14px_-12px_rgba(0,0,0,0.24)]">
+              <div className="max-w-[50rem] mx-auto relative bg-white rounded-xl border border-border px-2 py-1.5 transition-[background-color,border-color,box-shadow] duration-200 shadow-[0_1px_2px_rgba(0,0,0,0.03),0_8px_14px_-12px_rgba(0,0,0,0.24)]">
                   {composer.attachments.length > 0 && (
                     <div className="flex gap-2 overflow-x-auto pb-2 px-1">
                       {composer.attachments.map((a) => {
@@ -5710,7 +5817,7 @@ function ChatComposer({
           <Button
             variant="ghost"
             size="icon"
-            className={`${actionButtonSizeClass} transition-all duration-200 focus-visible:ring-0 focus-visible:ring-offset-0 ${
+            className={`${actionButtonSizeClass} transition-[background-color,color,opacity] duration-200 focus-visible:ring-0 focus-visible:ring-offset-0 ${
               isRecording
                 ? 'text-blue-500 border-0 bg-blue-500/8 hover:bg-blue-500/12'
                 : `text-muted-foreground hover:text-foreground hover:bg-black/5 ${isVoiceModelAvailable ? '' : 'opacity-50'}`
@@ -5746,7 +5853,7 @@ function ChatComposer({
           <Button
             variant="ghost"
             size="icon"
-            className={`${actionButtonSizeClass} transition-all duration-200 focus-visible:ring-0 focus-visible:ring-offset-0 ${
+            className={`${actionButtonSizeClass} transition-[background-color,color,opacity] duration-200 focus-visible:ring-0 focus-visible:ring-offset-0 ${
               String(value || '').trim() || isLoading
                 ? 'bg-black text-white hover:bg-black/90'
                 : 'bg-black/55 text-white/80'
