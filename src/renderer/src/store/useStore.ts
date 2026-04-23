@@ -116,6 +116,7 @@ export interface ToolTrace {
   diffs?: ToolDiff[]
   error?: { message?: string }
   artifacts?: Artifact[]
+  subTraces?: ToolTrace[]
 }
 
 export interface ChatThread {
@@ -179,6 +180,7 @@ export interface Provider {
     modelsFetched?: boolean
     apiFormat?: string
     useMaxCompletionTokens?: boolean
+    supportedModalities?: Array<'text' | 'image' | 'video' | 'music'>
     acp?: {
       kind?: 'native_acp' | 'adapter' | 'acpx_bridge'
       command?: string
@@ -297,6 +299,31 @@ export interface Settings {
   toolsEnabledIds: string[]
   commandBlacklist?: string[]
   commandWhitelist?: string[]
+  toolSettings?: {
+    bash?: {
+      pythonPath?: string
+    }
+    remoteServers?: Array<{
+      id?: string
+      alias: string
+      host: string
+      user: string
+      port?: number
+      password?: string
+      keyPath?: string
+      strictHostKey?: boolean
+    }>
+    remoteServerDefaultAlias?: string
+    webSearch?: {
+      routes?: string[]
+      searxng?: {
+        baseUrl?: string
+        timeoutMs?: number
+      }
+      searxngBaseUrl?: string
+      searxngEnabled?: boolean
+    }
+  }
   defaultProviderId?: string
   mcpEnabledServerIds: string[]
   defaultSkillMode: ChatDefaultMode
@@ -707,6 +734,7 @@ const DEFAULT_ACP_PROVIDERS: Provider[] = [
     type: 'acp',
     isEnabled: false,
     config: {
+      supportedModalities: ['text'],
       models: [{ id: 'qwen-acp', isEnabled: true, config: { id: 'qwen-acp' } }],
       selectedModel: 'qwen-acp',
       acp: {
@@ -720,10 +748,11 @@ const DEFAULT_ACP_PROVIDERS: Provider[] = [
   },
   {
     id: 'codex_acp',
-    name: 'Codex (codex-acp)',
+    name: 'Codex (ACP)',
     type: 'acp',
     isEnabled: false,
     config: {
+      supportedModalities: ['text'],
       models: [{ id: 'codex-acp', isEnabled: true, config: { id: 'codex-acp' } }],
       selectedModel: 'codex-acp',
       acp: {
@@ -748,6 +777,9 @@ const normalizeAcpProvider = (provider: Provider): Provider => {
     ...provider,
     config: {
       ...config,
+      supportedModalities: Array.isArray((config as any).supportedModalities) && (config as any).supportedModalities.length
+        ? (config as any).supportedModalities
+        : ['text'],
       models,
       selectedModel,
       acp: {
@@ -862,12 +894,42 @@ const normalizeSettingsPayload = (rawSettings: any): any => {
   if (!Number.isFinite(Number(rawSettings.kbChunkOverlap))) rawSettings.kbChunkOverlap = 200
   if (!Array.isArray(rawSettings.plugins)) rawSettings.plugins = []
   if (!Array.isArray(rawSettings.mcpServers)) rawSettings.mcpServers = []
+  if (!rawSettings.cron || typeof rawSettings.cron !== 'object') rawSettings.cron = {}
+  rawSettings.cron.enabled = Boolean(rawSettings.cron.enabled)
+  const cronPollRaw = Number(rawSettings.cron.pollIntervalMs || 500)
+  rawSettings.cron.pollIntervalMs = Number.isFinite(cronPollRaw) ? Math.max(200, Math.min(30000, Math.floor(cronPollRaw))) : 500
+  if (typeof rawSettings.cron.allowAgentManage !== 'boolean') rawSettings.cron.allowAgentManage = true
 
   if (!rawSettings.defaultToolMode) rawSettings.defaultToolMode = 'auto'
   if (!rawSettings.defaultSkillMode) rawSettings.defaultSkillMode = 'auto'
   if (typeof rawSettings.collapseHistoricalProcess !== 'boolean') rawSettings.collapseHistoricalProcess = true
   rawSettings.orchestrationForce = Boolean(rawSettings.orchestrationForce)
   if (!rawSettings.selectedSystemPromptId) rawSettings.selectedSystemPromptId = ''
+  if (!rawSettings.toolSettings || typeof rawSettings.toolSettings !== 'object') rawSettings.toolSettings = {}
+  if (!rawSettings.toolSettings.bash || typeof rawSettings.toolSettings.bash !== 'object') rawSettings.toolSettings.bash = {}
+  rawSettings.toolSettings.bash.pythonPath = String(rawSettings.toolSettings.bash.pythonPath || '').trim()
+  if (!Array.isArray(rawSettings.toolSettings.remoteServers)) rawSettings.toolSettings.remoteServers = []
+  if (typeof rawSettings.toolSettings.remoteServerDefaultAlias !== 'string') rawSettings.toolSettings.remoteServerDefaultAlias = ''
+  if (!rawSettings.toolSettings.webSearch || typeof rawSettings.toolSettings.webSearch !== 'object') rawSettings.toolSettings.webSearch = {}
+  if (!Array.isArray(rawSettings.toolSettings.webSearch.routes)) rawSettings.toolSettings.webSearch.routes = ['duckduckgo']
+  const webRoutes = Array.from(
+    new Set(
+      rawSettings.toolSettings.webSearch.routes
+        .map((x: any) => String(x || '').trim().toLowerCase())
+        .filter((x: string) => x === 'searxng' || x === 'duckduckgo')
+    )
+  )
+  rawSettings.toolSettings.webSearch.routes = webRoutes.length ? webRoutes : ['duckduckgo']
+  if (!rawSettings.toolSettings.webSearch.searxng || typeof rawSettings.toolSettings.webSearch.searxng !== 'object') {
+    rawSettings.toolSettings.webSearch.searxng = {}
+  }
+  rawSettings.toolSettings.webSearch.searxng.baseUrl = String(
+    rawSettings.toolSettings.webSearch.searxng.baseUrl || rawSettings.toolSettings.webSearch.searxngBaseUrl || ''
+  ).trim()
+  const searxTimeoutRaw = Number(rawSettings.toolSettings.webSearch.searxng.timeoutMs || 12000)
+  rawSettings.toolSettings.webSearch.searxng.timeoutMs = Number.isFinite(searxTimeoutRaw)
+    ? Math.max(1000, Math.min(60000, Math.floor(searxTimeoutRaw)))
+    : 12000
 
   if (!rawSettings.voice) {
     rawSettings.voice = {
@@ -2020,6 +2082,7 @@ export const useStore = create<AppState>()(
             'thinkingEnabled',
             'apiFormat',
             'useMaxCompletionTokens',
+            'supportedModalities',
             'acp'
           ])
           nextProviders = curProviders.map((p) => {

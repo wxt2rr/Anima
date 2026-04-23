@@ -83,6 +83,17 @@ def _classify_recovery_reason(error_text: str) -> str:
     return "runtime_error"
 
 
+def _format_recovery_exception(e: Exception) -> str:
+    name = str(type(e).__name__ or "Exception").strip()
+    msg = str(e or "").strip().replace("\n", " ")
+    msg = re.sub(r"\s+", " ", msg).strip()
+    if not msg:
+        return name
+    if len(msg) > 240:
+        msg = msg[:240].rstrip() + "..."
+    return f"{name}: {msg}"
+
+
 def _resolve_guard_path(workspace_dir: str, path: Any) -> str:
     raw = str(path or "").strip()
     if not workspace_dir or not raw:
@@ -807,6 +818,7 @@ def _run_tool_loop(
             reasoning_content_parts: List[str] = []
             tool_acc: Dict[int, Dict[str, Any]] = {}
             stream_failed = False
+            stream_error_text = ""
             try:
                 for evt in provider.chat_completion_stream(  # type: ignore[attr-defined]
                     cur,
@@ -877,8 +889,9 @@ def _run_tool_loop(
                             if isinstance(fn.get("arguments"), str) and fn.get("arguments"):
                                 cur_tc["function"]["arguments"] = (cur_tc["function"].get("arguments") or "") + fn.get("arguments")
                             tool_acc[idx] = cur_tc
-            except Exception:
+            except Exception as e:
                 stream_failed = True
+                stream_error_text = _format_recovery_exception(e)
 
             if not stream_failed:
                 content = "".join(content_parts)
@@ -887,8 +900,10 @@ def _run_tool_loop(
                 if reasoning_content_parts:
                     msg["reasoning_content"] = "".join(reasoning_content_parts)
             else:
-                reason = _classify_recovery_reason("stream_failed")
+                reason = _classify_recovery_reason(stream_error_text or "stream_failed")
                 detail = "stream path failed; fallback to non-stream chat_completion"
+                if stream_error_text:
+                    detail = f"{detail}; cause={stream_error_text}"
                 recover_trace = _make_recovery_trace(reason=reason, action="fallback_non_stream", detail=detail, step=step, index=len(traces))
                 traces.append(recover_trace)
                 try:

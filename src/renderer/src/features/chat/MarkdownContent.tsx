@@ -1,7 +1,8 @@
 import 'katex/dist/katex.min.css'
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { MarkdownCompileResult } from './types'
 import { compileMarkdown } from './markdownCompiler'
+import { readMarkdownCompileCacheResult } from './markdownCompileCache'
 import { CodeBlockView } from './CodeBlockView'
 import { hydrateMarkdownHtml } from './chatLinks'
 import { MermaidBlock } from '@/components/markdown/MermaidBlock'
@@ -10,6 +11,7 @@ import { CHAT_BODY_TEXT_CLASS, CHAT_FONT_FAMILY } from './chatPresentation'
 export const MarkdownContent = memo(function MarkdownContent({
   messageId,
   content,
+  streaming,
   collapseCodeBlocksByDefault,
   compact,
   bodyClassName,
@@ -19,6 +21,7 @@ export const MarkdownContent = memo(function MarkdownContent({
 }: {
   messageId: string
   content: string
+  streaming?: boolean
   collapseCodeBlocksByDefault?: boolean
   compact?: boolean
   bodyClassName?: string
@@ -26,18 +29,54 @@ export const MarkdownContent = memo(function MarkdownContent({
   backendBaseUrl?: string
   workspaceDir?: string
 }): JSX.Element {
-  const [compiled, setCompiled] = useState<MarkdownCompileResult | null>(null)
+  const cachedCompiled = useMemo(
+    () => readMarkdownCompileCacheResult(messageId, content),
+    [messageId, content]
+  )
+  const [compiled, setCompiled] = useState<MarkdownCompileResult | null>(() => cachedCompiled)
+  const latestRequestSeqRef = useRef(0)
+  const lastAppliedSeqRef = useRef(0)
+  const throttleTimerRef = useRef<number | null>(null)
+  const lastMessageIdRef = useRef(messageId)
 
   useEffect(() => {
     let alive = true
-    setCompiled(null)
-    void compileMarkdown(messageId, content).then((next) => {
-      if (alive) setCompiled(next)
-    })
+    const messageIdChanged = lastMessageIdRef.current !== messageId
+    if (messageIdChanged) {
+      lastMessageIdRef.current = messageId
+      setCompiled(cachedCompiled)
+    } else if (cachedCompiled) {
+      setCompiled(cachedCompiled)
+    }
+    const requestSeq = latestRequestSeqRef.current + 1
+    latestRequestSeqRef.current = requestSeq
+    const runCompile = () => {
+      void compileMarkdown(messageId, content).then((next) => {
+        if (!alive) return
+        if (requestSeq < lastAppliedSeqRef.current) return
+        lastAppliedSeqRef.current = requestSeq
+        setCompiled(next)
+      }).catch(() => {
+        // 编译失败时保留上一版渲染结果，避免流式阶段回退为纯文本导致闪烁。
+      })
+    }
+    if (streaming) {
+      if (throttleTimerRef.current != null) window.clearTimeout(throttleTimerRef.current)
+      throttleTimerRef.current = window.setTimeout(() => {
+        throttleTimerRef.current = null
+        runCompile()
+      }, 100)
+    } else {
+      runCompile()
+    }
     return () => {
       alive = false
+      if (throttleTimerRef.current != null) {
+        window.clearTimeout(throttleTimerRef.current)
+        throttleTimerRef.current = null
+      }
     }
-  }, [messageId, content])
+  }, [cachedCompiled, messageId, content, streaming])
 
   const htmlBlocks = useMemo(
     () => compiled?.blocks.map((block) => (block.type === 'markdown' ? hydrateMarkdownHtml(block.html, { backendBaseUrl, workspaceDir }) : '')) || [],

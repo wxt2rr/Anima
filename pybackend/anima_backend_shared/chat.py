@@ -28,6 +28,17 @@ def parse_tool_args(arg_text: Any) -> Dict[str, Any]:
         return {}
 
 
+def _normalize_tool_arguments(v: Any) -> str:
+    if isinstance(v, str):
+        return v
+    if isinstance(v, (dict, list)):
+        try:
+            return json.dumps(v, ensure_ascii=False)
+        except Exception:
+            return str(v)
+    return str(v or "")
+
+
 def _ensure_tool_call_ids(tool_calls: Any, step: int) -> List[Dict[str, Any]]:
     if not isinstance(tool_calls, list):
         return []
@@ -50,7 +61,7 @@ def _ensure_tool_call_ids(tool_calls: Any, step: int) -> List[Dict[str, Any]]:
             if not isinstance(next_fn.get("name"), str):
                 next_fn["name"] = str(next_fn.get("name") or "")
             if not isinstance(next_fn.get("arguments"), str):
-                next_fn["arguments"] = str(next_fn.get("arguments") or "")
+                next_fn["arguments"] = _normalize_tool_arguments(next_fn.get("arguments"))
             next_tc["function"] = next_fn
         out.append(next_tc)
     return out

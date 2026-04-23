@@ -89,10 +89,11 @@ export const AssistantMessage = memo(function AssistantMessage({
         </div>
       ) : null}
       {compressionState ? <CompressionCard state={compressionState} content={content} /> : null}
-      {compressionState ? null : enableMarkdown && !streaming ? (
+      {compressionState ? null : enableMarkdown ? (
         <MarkdownContent
           messageId={String(message.id || '')}
           content={content}
+          streaming={streaming}
           collapseCodeBlocksByDefault={collapseCodeBlocksByDefault}
           bodyClassName={CHAT_ASSISTANT_BODY_TEXT_CLASS}
           onOpenLinkTarget={onOpenLinkTarget}

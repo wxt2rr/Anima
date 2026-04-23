@@ -41,6 +41,7 @@
 | Task 16: Final parity verification | done | `npm run typecheck` 退出码 0；`npm run test:chat-render` 8 通过；最终剩余差异收口任务全部回写完成 |
 | Task 17: Process wording and tool sentence parity | done | `npm run typecheck` 退出码 0；恢复旧版过程摘要词面、非编辑工具标题去工具名并把耗时拼回句尾，补齐更明显的 hover 强化 |
 | Task 18: Compact tool detail parity | done | `npm run typecheck` 退出码 0；`npm run test:chat-render` 8 通过；工具展开详情支持 compact 排版，搜索结果恢复为更小更紧的 `① ②` 风格 |
+| Task 19: Up-scroll jitter root-cause fix | done | `npm run test:chat-render` 14 通过；`npm run typecheck` 退出码 0；真实 Telegram 82 条消息对话连续 3 次向上滚动 300px 的 split-step probe 中，`immediate.top === after.top`，无自动回跳 |
 
 ---
 
@@ -258,6 +259,71 @@ Requirement:
 - [x] **Step 3: Enhance tool trace summary**
 
 Requirement:
+
+---
+
+## Task 19: Up-scroll Jitter Root-Cause Fix
+
+**Files:**
+- Modify: `docs/superpowers/plans/2026-04-21-chat-render-v2-parity-todo.md`
+- Create: `tests/chatVirtualListModel.test.ts`
+- Create: `tests/markdownCompileCache.test.ts`
+- Modify: `tsconfig.chat-render-tests.json`
+- Create: `src/renderer/src/features/chat/chatVirtualListModel.ts`
+- Create: `src/renderer/src/features/chat/markdownCompileCache.ts`
+- Modify: `src/renderer/src/features/chat/ChatVirtualList.tsx`
+- Modify: `src/renderer/src/features/chat/MarkdownContent.tsx`
+- Modify: `src/renderer/src/features/chat/markdownCompiler.ts`
+
+**Goal:** 根治长对话上滑时的抖动：减小错误估高、在用户主动上滑期间禁止尺寸变化自动补偿、命中缓存时不再先回退到纯文本占位。
+
+- [x] **Step 1: Add RED tests for virtual list sizing and adjustment policy**
+
+Expected tests:
+- 长 assistant 行估高明显高于短 assistant / user 行。
+- 历史 process 行估高会累加内部 assistant/tool 条目。
+- 用户主动上滑后的短时间窗口内，尺寸变化不允许自动调整滚动位置。
+
+- [x] **Step 2: Add RED tests for markdown synchronous cache reads**
+
+Expected tests:
+- 写入编译结果后，同 key 可以同步读取。
+- 不同 messageId/content hash 不会串缓存。
+
+- [x] **Step 3: Run focused chat-render tests and capture RED evidence**
+
+Command:
+
+```bash
+npm run test:chat-render
+```
+
+Expected: fails because sizing helper / cache helper do not exist yet.
+
+- [x] **Step 4: Implement sizing model and scroll-adjust suppression**
+
+Requirement:
+- `ChatVirtualList` 不再统一 `estimateSize=140`。
+- 改为按 `row.role`、正文长度、代码块/列表标记、process 条目数量估高。
+- 用户主动上滑后的短窗口内，`shouldAdjustScrollPositionOnItemSizeChange` 返回 `false`。
+
+- [x] **Step 5: Implement markdown compile result sync cache**
+
+Requirement:
+- 缓存同时保存 pending promise 和 resolved result。
+- `MarkdownContent` 初始渲染优先读取 resolved result。
+- 命中缓存时不再先 `setCompiled(null)` 再切回正式内容。
+
+- [x] **Step 6: Run verification and update evidence**
+
+Command:
+
+```bash
+npm run test:chat-render
+npm run typecheck
+```
+
+Expected: 新增测试通过，类型检查通过。
 - collapsed row shows trace count, status, tool name, duration, entity/path when present.
 - running/failed/succeeded status visible.
 

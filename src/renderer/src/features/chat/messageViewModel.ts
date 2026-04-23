@@ -1,6 +1,6 @@
 import type { Message, ToolTrace } from '@/store/useStore'
 import type { ChatMessageViewModel, ChatProcessBodyEntry, TurnProcessStats } from './types'
-import { dedupeToolTracesForDisplay } from './toolTraceUtils'
+import { dedupeToolTracesForDisplay, expandToolTracesForDisplay } from './toolTraceUtils'
 
 function isToolStageMarker(stage: unknown): boolean {
   const st = String(stage || '').trim()
@@ -77,7 +77,8 @@ export function buildTurnProcessStats(messages: Message[], turnIdByMessageId: Re
       const reasoning = String((message.meta as any)?.reasoningText || '').trim()
       if (reasoning) current.reasoningCount += 1
     } else if (message?.role === 'tool') {
-      const traces = Array.isArray((message.meta as any)?.toolTraces) ? (message.meta as any).toolTraces : []
+      const tracesRaw = Array.isArray((message.meta as any)?.toolTraces) ? (message.meta as any).toolTraces : []
+      const traces = expandToolTracesForDisplay(tracesRaw as ToolTrace[])
       current.toolCount += traces.length
       lastToolIndexByTurn[turnId] = Math.max(lastToolIndexByTurn[turnId] ?? -1, index)
       for (const trace of traces) {
@@ -147,7 +148,7 @@ export function buildChatMessageViewModels(
       traces.push(...getToolTraces(current))
       endIndex = cursor
     }
-    return { messageIds, traces: dedupeToolTracesForDisplay(traces), endIndex }
+    return { messageIds, traces: dedupeToolTracesForDisplay(expandToolTracesForDisplay(traces)), endIndex }
   }
   const collectHistoricalProcessBody = (turnId: string, startIndex: number, finalAssistantMessageId: string): { entries: ChatProcessBodyEntry[]; nextIndex: number } => {
     const entries: ChatProcessBodyEntry[] = []

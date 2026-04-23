@@ -29,55 +29,130 @@ function renderMathHtml(input: string): string {
   }
 }
 
-function renderInline(input: string): string {
-  const placeholders: string[] = []
-  const stash = (value: string): string => {
-    const key = `__ANIMA_CHAT_HTML_${placeholders.length}__`
-    placeholders.push(value)
-    return key
-  }
-  const restore = (value: string): string => value.replace(/__ANIMA_CHAT_HTML_(\d+)__/g, (_m, index) => placeholders[Number(index)] || '')
+type InlineToken =
+  | { type: 'text'; value: string }
+  | { type: 'code'; value: string }
+  | { type: 'image'; alt: string; src: string }
+  | { type: 'link'; label: string; href: string }
+  | { type: 'url'; value: string }
+  | { type: 'math'; value: string }
+
+function renderInlineText(input: string): string {
   let html = escapeHtml(input)
-
-  html = html.replace(/`([^`]+)`/g, (_m, code) => {
-    const normalized = normalizeChatLinkTarget(code)
-    if (isFileLikeTarget(normalized)) {
-      const safeTarget = escapeHtml(normalized)
-      return stash(`<code class="anima-chat-inline-file" data-chat-link-target="${safeTarget}">${safeTarget}</code>`)
-    }
-    return stash(`<code>${escapeHtml(code)}</code>`)
-  })
-
-  html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_m, alt, src) => {
-    const safeAlt = escapeHtml(alt)
-    const safeSrc = escapeHtml(normalizeChatLinkTarget(src))
-    if (!safeSrc) return safeAlt
-    return stash(`<img class="anima-chat-inline-image" alt="${safeAlt}" data-chat-image-src="${safeSrc}">`)
-  })
-
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label, href) => {
-    const safe = safeHref(href)
-    if (!safe) return escapeHtml(label)
-    return stash(`<a href="${safe}" class="anima-chat-link" data-chat-link-target="${safe}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`)
-  })
-
-  html = html.replace(/\bhttps?:\/\/[^\s<)]+/g, (url) => {
-    const normalized = normalizeChatLinkTarget(url)
-    const safe = safeHref(normalized)
-    if (!safe) return url
-    return stash(`<a href="${safe}" class="anima-chat-link" data-chat-link-target="${safe}" target="_blank" rel="noreferrer">${safe}</a>`)
-  })
-
-  html = html.replace(/\$([^$\n]+)\$/g, (_m, expr) => {
-    try {
-      return stash(katex.renderToString(String(expr || '').trim(), { throwOnError: false, displayMode: false }))
-    } catch {
-      return `$${expr}$`
-    }
-  })
   html = html.replace(/\*\*([^*]+)\*\*/g, (_m, text) => `<strong>${text}</strong>`)
   html = html.replace(/~~([^~]+)~~/g, (_m, text) => `<del>${text}</del>`)
-  return restore(html)
+  return html
+}
+
+function parseInlineTokens(input: string): InlineToken[] {
+  const text = String(input || '')
+  const tokens: InlineToken[] = []
+  let i = 0
+
+  const pushText = (value: string): void => {
+    if (!value) return
+    const last = tokens[tokens.length - 1]
+    if (last?.type === 'text') {
+      last.value += value
+      return
+    }
+    tokens.push({ type: 'text', value })
+  }
+
+  while (i < text.length) {
+    const rest = text.slice(i)
+
+    if (text[i] === '`') {
+      const end = text.indexOf('`', i + 1)
+      if (end > i + 1) {
+        tokens.push({ type: 'code', value: text.slice(i + 1, end) })
+        i = end + 1
+        continue
+      }
+    }
+
+    if (rest.startsWith('![')) {
+      const labelEnd = text.indexOf('](', i + 2)
+      if (labelEnd > i + 1) {
+        const hrefEnd = text.indexOf(')', labelEnd + 2)
+        if (hrefEnd > labelEnd + 2) {
+          tokens.push({ type: 'image', alt: text.slice(i + 2, labelEnd), src: text.slice(labelEnd + 2, hrefEnd) })
+          i = hrefEnd + 1
+          continue
+        }
+      }
+    }
+
+    if (text[i] === '[') {
+      const labelEnd = text.indexOf('](', i + 1)
+      if (labelEnd > i + 1) {
+        const hrefEnd = text.indexOf(')', labelEnd + 2)
+        if (hrefEnd > labelEnd + 2) {
+          tokens.push({ type: 'link', label: text.slice(i + 1, labelEnd), href: text.slice(labelEnd + 2, hrefEnd) })
+          i = hrefEnd + 1
+          continue
+        }
+      }
+    }
+
+    if (text[i] === '$') {
+      const end = text.indexOf('$', i + 1)
+      if (end > i + 1 && !text.slice(i + 1, end).includes('\n')) {
+        tokens.push({ type: 'math', value: text.slice(i + 1, end) })
+        i = end + 1
+        continue
+      }
+    }
+
+    const urlMatch = /^https?:\/\/[^\s<)]+/.exec(rest)
+    if (urlMatch && urlMatch[0]) {
+      tokens.push({ type: 'url', value: urlMatch[0] })
+      i += urlMatch[0].length
+      continue
+    }
+
+    pushText(text[i])
+    i += 1
+  }
+
+  return tokens
+}
+
+function renderInline(input: string): string {
+  const tokens = parseInlineTokens(input)
+  return tokens.map((token) => {
+    if (token.type === 'text') return renderInlineText(token.value)
+    if (token.type === 'code') {
+      const normalized = normalizeChatLinkTarget(token.value)
+      if (isFileLikeTarget(normalized)) {
+        const safeTarget = escapeHtml(normalized)
+        return `<code class="anima-chat-inline-file" data-chat-link-target="${safeTarget}">${safeTarget}</code>`
+      }
+      return `<code>${escapeHtml(token.value)}</code>`
+    }
+    if (token.type === 'image') {
+      const safeAlt = escapeHtml(token.alt)
+      const safeSrc = escapeHtml(normalizeChatLinkTarget(token.src))
+      if (!safeSrc) return safeAlt
+      return `<img class="anima-chat-inline-image" alt="${safeAlt}" data-chat-image-src="${safeSrc}">`
+    }
+    if (token.type === 'link') {
+      const safe = safeHref(token.href)
+      if (!safe) return renderInlineText(token.label)
+      return `<a href="${safe}" class="anima-chat-link" data-chat-link-target="${safe}" target="_blank" rel="noreferrer">${escapeHtml(token.label)}</a>`
+    }
+    if (token.type === 'url') {
+      const normalized = normalizeChatLinkTarget(token.value)
+      const safe = safeHref(normalized)
+      if (!safe) return escapeHtml(token.value)
+      return `<a href="${safe}" class="anima-chat-link" data-chat-link-target="${safe}" target="_blank" rel="noreferrer">${safe}</a>`
+    }
+    try {
+      return katex.renderToString(String(token.value || '').trim(), { throwOnError: false, displayMode: false })
+    } catch {
+      return `$${escapeHtml(token.value)}$`
+    }
+  }).join('')
 }
 
 function isTableSeparator(line: string): boolean {

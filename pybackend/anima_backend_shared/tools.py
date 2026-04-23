@@ -2,6 +2,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import base64
@@ -283,6 +284,144 @@ def _download_public_url_bytes(*, url: str, timeout_s: int, max_bytes: int) -> T
         raise RuntimeError(str(e))
 
 
+def _decode_data_image_url(raw: str) -> Tuple[bytes, str]:
+    s = str(raw or "").strip()
+    m = re.match(r"^data:(image/[a-zA-Z0-9.+-]+);base64,(.+)$", s, re.IGNORECASE | re.DOTALL)
+    if not m:
+        raise RuntimeError("Invalid data image URL")
+    mime = str(m.group(1) or "image/png").strip().lower()
+    b64 = str(m.group(2) or "").strip()
+    if not b64:
+        raise RuntimeError("Empty data image URL")
+    try:
+        return base64.b64decode(b64, validate=False), mime
+    except Exception:
+        raise RuntimeError("Failed to decode data image URL")
+
+
+def _resolve_generate_image_inputs(raw_inputs: Any, workspace_dir: str, args: Dict[str, Any]) -> List[str]:
+    items: List[Any] = []
+    if isinstance(raw_inputs, list):
+        items = list(raw_inputs)
+    elif raw_inputs is not None:
+        items = [raw_inputs]
+    out: List[str] = []
+    for item in items:
+        src = ""
+        if isinstance(item, dict):
+            src = str(item.get("url") or item.get("path") or "").strip()
+        else:
+            src = str(item or "").strip()
+        if not src:
+            continue
+        lower = src.lower()
+        if lower.startswith("http://") or lower.startswith("https://"):
+            out.append(_safe_public_http_url(src))
+            continue
+        if lower.startswith("data:image/"):
+            _decode_data_image_url(src)
+            out.append(src)
+            continue
+        if not workspace_dir:
+            raise RuntimeError("No workspace directory selected")
+        p = Path(src)
+        try:
+            target = norm_abs(str(p if p.is_absolute() else (Path(workspace_dir) / p)))
+        except Exception:
+            raise RuntimeError(f"Invalid image input path: {src}")
+        if not _is_path_allowed(target, workspace_dir, args):
+            raise RuntimeError("Image input path outside workspace")
+        if not os.path.isfile(target):
+            raise RuntimeError(f"Image input file not found: {src}")
+        mime = (mimetypes.guess_type(target)[0] or "").strip().lower()
+        if not mime.startswith("image/"):
+            raise RuntimeError(f"Image input is not an image file: {src}")
+        try:
+            with open(target, "rb") as f:
+                raw = f.read(25 * 1024 * 1024 + 1)
+        except Exception:
+            raise RuntimeError(f"Failed to read image input: {src}")
+        if len(raw) > 25 * 1024 * 1024:
+            raise RuntimeError(f"Image input too large: {src}")
+        b64 = base64.b64encode(raw).decode("ascii")
+        out.append(f"data:{mime};base64,{b64}")
+    return out
+
+
+def _extract_generated_image_bytes_from_chat_response(res: Dict[str, Any], timeout_s: int) -> Tuple[bytes, str]:
+    choices = res.get("choices") if isinstance(res, dict) else None
+    first = choices[0] if isinstance(choices, list) and choices else None
+    message = first.get("message") if isinstance(first, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    candidate_urls: List[str] = []
+    candidate_b64: List[str] = []
+
+    def _collect_from_block(block: Any) -> None:
+        if not isinstance(block, dict):
+            return
+        typ = str(block.get("type") or "").strip().lower()
+        if typ in ("image_url", "input_image", "output_image", "image"):
+            iu = block.get("image_url")
+            if isinstance(iu, dict):
+                u = str(iu.get("url") or "").strip()
+                if u:
+                    candidate_urls.append(u)
+            elif isinstance(iu, str) and iu.strip():
+                candidate_urls.append(str(iu).strip())
+            for k in ("url", "image", "source_url"):
+                v = block.get(k)
+                if isinstance(v, str) and v.strip():
+                    candidate_urls.append(v.strip())
+            for k in ("b64_json", "base64", "b64"):
+                v = block.get(k)
+                if isinstance(v, str) and v.strip():
+                    candidate_b64.append(v.strip())
+
+    if isinstance(content, list):
+        for b in content:
+            _collect_from_block(b)
+    elif isinstance(content, str):
+        s = content.strip()
+        if s.lower().startswith("data:image/"):
+            candidate_urls.append(s)
+        else:
+            m = re.search(r"https?://[^\s)\"'>]+", s)
+            if m:
+                candidate_urls.append(m.group(0))
+
+    if not candidate_urls and not candidate_b64:
+        data = res.get("data") if isinstance(res, dict) else None
+        item = data[0] if isinstance(data, list) and data else None
+        if isinstance(item, dict):
+            b = item.get("b64_json")
+            if isinstance(b, str) and b.strip():
+                candidate_b64.append(b.strip())
+            u = item.get("url")
+            if isinstance(u, str) and u.strip():
+                candidate_urls.append(u.strip())
+
+    for b64 in candidate_b64:
+        try:
+            raw = base64.b64decode(b64, validate=False)
+            if raw:
+                return raw, "image/png"
+        except Exception:
+            continue
+    for u in candidate_urls:
+        su = str(u or "").strip()
+        if not su:
+            continue
+        if su.lower().startswith("data:image/"):
+            raw, mime = _decode_data_image_url(su)
+            if raw:
+                return raw, mime
+            continue
+        raw, ct = _download_public_url_bytes(url=su, timeout_s=timeout_s, max_bytes=25 * 1024 * 1024)
+        if raw:
+            return raw, (ct or "image/png")
+    raise RuntimeError("Image generation returned no image bytes")
+
+
 def _safe_public_http_url(raw_url: str) -> str:
     url = (raw_url or "").strip()
     if not url:
@@ -403,6 +542,140 @@ def _ddg_extract_results(html_text: str, limit: int) -> List[Dict[str, Any]]:
         if snippets[i]:
             out[i]["snippet"] = snippets[i]
     return out[:limit]
+
+
+def _normalize_web_search_route(raw: Any) -> str:
+    text = str(raw or "").strip().lower()
+    if text in ("searxng", "searx", "searx-ng"):
+        return "searxng"
+    if text in ("duckduckgo", "ddg", "duck"):
+        return "duckduckgo"
+    return ""
+
+
+def _normalize_web_search_language(lr: str) -> str:
+    value = str(lr or "").strip().lower()
+    if value == "lang_zh":
+        return "zh-CN"
+    if value == "lang_en":
+        return "en-US"
+    return ""
+
+
+def _list_web_search_routes_from_settings() -> Tuple[List[str], Dict[str, Any]]:
+    from .settings import load_settings
+
+    settings_obj = load_settings()
+    s = settings_obj.get("settings") if isinstance(settings_obj, dict) else {}
+    if not isinstance(s, dict):
+        s = {}
+    tool_settings = s.get("toolSettings") if isinstance(s.get("toolSettings"), dict) else {}
+    web_search = tool_settings.get("webSearch") if isinstance(tool_settings.get("webSearch"), dict) else {}
+
+    routes_raw = web_search.get("routes") if isinstance(web_search.get("routes"), list) else []
+    routes: List[str] = []
+    for item in routes_raw:
+        route = _normalize_web_search_route(item)
+        if route and route not in routes:
+            routes.append(route)
+
+    # 兼容旧配置：searxngEnabled + searxngBaseUrl
+    if bool(web_search.get("searxngEnabled")) and "searxng" not in routes:
+        routes.append("searxng")
+
+    if not routes:
+        routes = ["duckduckgo"]
+
+    searx_cfg = web_search.get("searxng") if isinstance(web_search.get("searxng"), dict) else {}
+    base_url = str(searx_cfg.get("baseUrl") or web_search.get("searxngBaseUrl") or "").strip()
+    try:
+        timeout_ms = int(searx_cfg.get("timeoutMs") or web_search.get("searxngTimeoutMs") or 12000)
+    except Exception:
+        timeout_ms = 12000
+    timeout_ms = max(1000, min(timeout_ms, 60000))
+    return routes, {"baseUrl": base_url, "timeoutMs": timeout_ms}
+
+
+def _web_search_via_duckduckgo(query: str, num: int, lr: str) -> List[Dict[str, Any]]:
+    kl = ""
+    if lr:
+        if lr == "lang_en":
+            kl = "us-en"
+        elif lr == "lang_zh":
+            kl = "cn-zh"
+        else:
+            kl = "wt-wt"
+
+    params = {"q": query}
+    if kl:
+        params["kl"] = kl
+    url = "https://duckduckgo.com/html/?" + urllib.parse.urlencode(params)
+    res = _fetch_url_text(url, timeout_ms=20000, max_bytes=2 * 1024 * 1024)
+    return _ddg_extract_results(str(res.get("body") or ""), limit=num)
+
+
+def _web_search_via_searxng(query: str, num: int, lr: str, base_url: str, timeout_ms: int) -> List[Dict[str, Any]]:
+    base = str(base_url or "").strip()
+    if not base:
+        raise RuntimeError("SearXNG base URL is empty")
+    if not re.match(r"^https?://", base, flags=re.I):
+        raise RuntimeError("SearXNG base URL must start with http:// or https://")
+    endpoint = base.rstrip("/") + "/search"
+    language = _normalize_web_search_language(lr)
+    params: Dict[str, Any] = {
+        "q": query,
+        "format": "json",
+    }
+    if language:
+        params["language"] = language
+    req = urllib.request.Request(
+        endpoint + "?" + urllib.parse.urlencode(params),
+        headers={
+            "User-Agent": "Anima/0.1 (+https://example.invalid)",
+            "Accept": "application/json,text/plain;q=0.9,*/*;q=0.5",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_ms / 1000.0) as resp:
+            raw = resp.read(2 * 1024 * 1024 + 1)
+            if len(raw) > 2 * 1024 * 1024:
+                raw = raw[: 2 * 1024 * 1024]
+            text = raw.decode("utf-8", errors="ignore")
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read(1024).decode("utf-8", errors="ignore")
+        except Exception:
+            body = ""
+        raise RuntimeError(f"SearXNG HTTP {e.code}: {body[:300]}")
+    except Exception as e:
+        raise RuntimeError(f"SearXNG request failed: {str(e)}")
+
+    try:
+        payload = json.loads(text)
+    except Exception:
+        raise RuntimeError("SearXNG returned non-JSON response")
+
+    items = payload.get("results") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        url = str(item.get("url") or "").strip()
+        snippet = str(item.get("content") or item.get("snippet") or "").strip()
+        if not url:
+            continue
+        entry: Dict[str, Any] = {"title": title or url, "url": url}
+        if snippet:
+            entry["snippet"] = snippet
+        out.append(entry)
+        if len(out) >= num:
+            break
+    return out
 
 
 def _parse_freeform_patch(raw_patch: str) -> List[Dict[str, Any]]:
@@ -800,6 +1073,72 @@ def _clip_text(text: str, max_chars: int) -> str:
     return s[: max(0, max_chars)] + "\n...[truncated]"
 
 
+def _preview_json(value: Any, max_chars: int) -> Dict[str, Any]:
+    try:
+        text = json.dumps(value, ensure_ascii=False)
+    except Exception:
+        text = str(value)
+    truncated = len(text) > max_chars
+    return {"text": _clip_text(text, max_chars), "truncated": truncated}
+
+
+def _normalize_remote_server_item(item: Any, index: int) -> Optional[Dict[str, Any]]:
+    if not isinstance(item, dict):
+        return None
+    alias = str(item.get("alias") or "").strip()
+    host = str(item.get("host") or item.get("ip") or "").strip()
+    user = str(item.get("user") or "").strip()
+    if not alias or not host or not user:
+        return None
+    raw_port = item.get("port")
+    try:
+        port = int(raw_port if raw_port is not None else 22)
+    except Exception:
+        port = 22
+    if port <= 0 or port > 65535:
+        port = 22
+    return {
+        "id": str(item.get("id") or f"remote-server-{index + 1}").strip(),
+        "alias": alias,
+        "host": host,
+        "user": user,
+        "port": port,
+        "password": str(item.get("password") or "").strip(),
+        "keyPath": str(item.get("keyPath") or "").strip(),
+        "strictHostKey": bool(item.get("strictHostKey")),
+    }
+
+
+def _list_remote_servers_from_settings() -> Tuple[List[Dict[str, Any]], str]:
+    from .settings import load_settings
+
+    settings_obj = load_settings()
+    s = settings_obj.get("settings") if isinstance(settings_obj, dict) else {}
+    if not isinstance(s, dict):
+        s = {}
+    tool_settings = s.get("toolSettings") if isinstance(s.get("toolSettings"), dict) else {}
+    remote_servers_raw = tool_settings.get("remoteServers") if isinstance(tool_settings.get("remoteServers"), list) else []
+    default_alias = str(tool_settings.get("remoteServerDefaultAlias") or "").strip()
+    out: List[Dict[str, Any]] = []
+    for idx, item in enumerate(remote_servers_raw):
+        normalized = _normalize_remote_server_item(item, idx)
+        if normalized is not None:
+            out.append(normalized)
+    return out, default_alias
+
+
+def _resolve_remote_server(args: Dict[str, Any]) -> Dict[str, Any]:
+    servers, default_alias = _list_remote_servers_from_settings()
+    if not servers:
+        raise RuntimeError("No remote servers configured in settings.toolSettings.remoteServers")
+    alias = str(args.get("serverAlias") or "").strip()
+    target_alias = alias or default_alias or str((servers[0] or {}).get("alias") or "").strip()
+    for item in servers:
+        if str(item.get("alias") or "").strip() == target_alias:
+            return item
+    raise RuntimeError(f"remote server alias not found: {target_alias}")
+
+
 def _normalize_artifact_item(item: Any, workspace_dir: str) -> Optional[Dict[str, Any]]:
     if not isinstance(item, dict):
         return None
@@ -1047,6 +1386,36 @@ def builtin_tools() -> List[Dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "remoteServer",
+                "description": "Run a command on configured remote server via SSH and return stdout/stderr.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "serverAlias": {"type": "string", "description": "Target server alias from tool settings"},
+                        "command": {"type": "string"},
+                        "timeoutMs": {"type": "integer"},
+                    },
+                    "required": ["command"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "remoteServerList",
+                "description": "List configured remote servers and optionally search by alias/host/user.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "screenshot",
                 "description": "Capture a screenshot and save it under the workspace. Returns an image artifact.",
                 "parameters": {
@@ -1069,6 +1438,11 @@ def builtin_tools() -> List[Dict[str, Any]]:
                         "prompt": {"type": "string", "description": "Image prompt"},
                         "model": {"type": "string", "description": "Optional image model id"},
                         "size": {"type": "string", "description": "Optional image size, e.g. 1024x1024"},
+                        "inputImages": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional reference images for image-to-image or fusion. Each item can be workspace path / http(s) URL / data:image base64.",
+                        },
                         "path": {"type": "string", "description": "Optional output path relative to workspace"},
                     },
                     "required": ["prompt"],
@@ -1473,6 +1847,9 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
                 "recipientName": recipient_name,
                 "toolName": tool_name,
                 "ok": True,
+                "args": params,
+                "startedAt": call_started,
+                "endedAt": call_ended,
                 "durationMs": max(0, call_ended - call_started),
                 "result": parsed_result,
             }
@@ -1493,12 +1870,49 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
                         "recipientName": recipient_name,
                         "toolName": tool_name,
                         "ok": False,
+                        "args": (item.get("parameters") if isinstance(item, dict) else {}) if isinstance(item, dict) else {},
+                        "startedAt": call_ended,
                         "durationMs": 0,
                         "error": str(e),
                         "endedAt": call_ended,
                     }
 
         settled = [r for r in results if isinstance(r, dict)]
+        sub_traces: List[Dict[str, Any]] = []
+        for row in settled:
+            tool_name = str((row or {}).get("toolName") or "").strip() or "tool"
+            ok_row = bool((row or {}).get("ok"))
+            status = "succeeded" if ok_row else "failed"
+            idx = int((row or {}).get("index", 0))
+            args_obj = (row or {}).get("args")
+            args_obj = args_obj if isinstance(args_obj, dict) else {}
+            started = (row or {}).get("startedAt")
+            ended = (row or {}).get("endedAt")
+            duration = (row or {}).get("durationMs")
+            try:
+                duration_ms = int(duration)
+            except Exception:
+                duration_ms = 0
+            result_payload = (row or {}).get("result") if ok_row else {"ok": False, "error": str((row or {}).get("error") or "")}
+            trace_row: Dict[str, Any] = {
+                "id": f"parallel_sub_{idx}",
+                "toolCallId": f"parallel_sub_{idx}",
+                "name": tool_name,
+                "status": status,
+                "argsPreview": _preview_json(args_obj, 800),
+                "resultPreview": _preview_json(result_payload, 1200),
+                "durationMs": max(0, duration_ms),
+            }
+            try:
+                if started is not None:
+                    trace_row["startedAt"] = int(started)
+                if ended is not None:
+                    trace_row["endedAt"] = int(ended)
+            except Exception:
+                pass
+            if not ok_row:
+                trace_row["error"] = {"message": str((row or {}).get("error") or "parallel sub-tool failed")}
+            sub_traces.append(trace_row)
         ended_at = int(time.time() * 1000)
         ok = len(settled) == len(raw_uses) and all(bool((r or {}).get("ok")) for r in settled)
         return json.dumps(
@@ -1510,6 +1924,7 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
                 "endedAt": ended_at,
                 "durationMs": max(0, ended_at - started_at),
                 "results": settled,
+                "subTraces": sub_traces,
             },
             ensure_ascii=False,
         )
@@ -1997,22 +2412,27 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         num = int(args.get("num") or 5)
         num = max(1, min(num, 10))
         lr = str(args.get("lr") or "").strip()
-        kl = ""
-        if lr:
-            if lr == "lang_en":
-                kl = "us-en"
-            elif lr == "lang_zh":
-                kl = "cn-zh"
-            else:
-                kl = "wt-wt"
-
-        params = {"q": query}
-        if kl:
-            params["kl"] = kl
-        url = "https://duckduckgo.com/html/?" + urllib.parse.urlencode(params)
-        res = _fetch_url_text(url, timeout_ms=20000, max_bytes=2 * 1024 * 1024)
-        results = _ddg_extract_results(str(res.get("body") or ""), limit=num)
-        return json.dumps({"query": query, "results": results}, ensure_ascii=False)
+        routes, searx_cfg = _list_web_search_routes_from_settings()
+        errors: List[str] = []
+        for route in routes:
+            try:
+                if route == "searxng":
+                    results = _web_search_via_searxng(
+                        query=query,
+                        num=num,
+                        lr=lr,
+                        base_url=str(searx_cfg.get("baseUrl") or "").strip(),
+                        timeout_ms=int(searx_cfg.get("timeoutMs") or 12000),
+                    )
+                    return json.dumps({"query": query, "results": results, "engine": "searxng"}, ensure_ascii=False)
+                if route == "duckduckgo":
+                    results = _web_search_via_duckduckgo(query=query, num=num, lr=lr)
+                    return json.dumps({"query": query, "results": results, "engine": "duckduckgo"}, ensure_ascii=False)
+                errors.append(f"{route}: unsupported route")
+            except Exception as e:
+                errors.append(f"{route}: {str(e)}")
+                continue
+        raise RuntimeError("WebSearch failed for all configured routes. " + " | ".join(errors[:4]))
 
     if name == "WebFetch":
         url = str(args.get("url") or "").strip()
@@ -2129,35 +2549,47 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         if not actual_model:
             raise RuntimeError("No model selected. Please configure a model in Settings.")
 
-        url = normalize_base_url(spec.base_url) + "/images/generations"
-        payload: Dict[str, Any] = {"model": actual_model, "prompt": prompt, "response_format": "b64_json"}
-        size = str(args.get("size") or "").strip() or default_size
-        if size:
-            payload["size"] = size
-
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if str(spec.api_key or "").strip():
             headers["Authorization"] = _auth_header_value(spec.api_key)
 
-        res = _http_post_json(url=url, payload=payload, headers=headers, proxy_url=spec.proxy_url, timeout_s=180)
-        data = res.get("data")
-        item = data[0] if isinstance(data, list) and data else None
-        if not isinstance(item, dict):
-            raise RuntimeError("Image generation returned no data")
-
         raw_bytes: bytes = b""
         mime = "image/png"
-        if isinstance(item.get("b64_json"), str) and item.get("b64_json").strip():
-            try:
-                raw_bytes = base64.b64decode(item.get("b64_json"), validate=False)
-            except Exception:
-                raise RuntimeError("Failed to decode image bytes")
-        elif isinstance(item.get("url"), str) and item.get("url").strip():
-            raw_bytes, ct = _download_public_url_bytes(url=str(item.get("url")), timeout_s=180, max_bytes=25 * 1024 * 1024)
-            if ct:
-                mime = ct
+        input_images = _resolve_generate_image_inputs(
+            args.get("inputImages") if args.get("inputImages") is not None else (args.get("images") if args.get("images") is not None else args.get("inputImage")),
+            fs_workspace_dir,
+            args,
+        )
+        if input_images:
+            url = normalize_base_url(spec.base_url) + "/chat/completions"
+            content_blocks: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+            for im in input_images:
+                content_blocks.append({"type": "image_url", "image_url": {"url": im}})
+            payload = {"model": actual_model, "messages": [{"role": "user", "content": content_blocks}]}
+            res = _http_post_json(url=url, payload=payload, headers=headers, proxy_url=spec.proxy_url, timeout_s=180)
+            raw_bytes, mime = _extract_generated_image_bytes_from_chat_response(res, timeout_s=180)
         else:
-            raise RuntimeError("Image generation returned no bytes")
+            url = normalize_base_url(spec.base_url) + "/images/generations"
+            payload = {"model": actual_model, "prompt": prompt, "response_format": "b64_json"}
+            size = str(args.get("size") or "").strip() or default_size
+            if size:
+                payload["size"] = size
+            res = _http_post_json(url=url, payload=payload, headers=headers, proxy_url=spec.proxy_url, timeout_s=180)
+            data = res.get("data")
+            item = data[0] if isinstance(data, list) and data else None
+            if not isinstance(item, dict):
+                raise RuntimeError("Image generation returned no data")
+            if isinstance(item.get("b64_json"), str) and item.get("b64_json").strip():
+                try:
+                    raw_bytes = base64.b64decode(item.get("b64_json"), validate=False)
+                except Exception:
+                    raise RuntimeError("Failed to decode image bytes")
+            elif isinstance(item.get("url"), str) and item.get("url").strip():
+                raw_bytes, ct = _download_public_url_bytes(url=str(item.get("url")), timeout_s=180, max_bytes=25 * 1024 * 1024)
+                if ct:
+                    mime = ct
+            else:
+                raise RuntimeError("Image generation returned no bytes")
 
         if len(raw_bytes) > (25 * 1024 * 1024):
             raise RuntimeError("Image too large")
@@ -2344,6 +2776,29 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
             run_cwd = target
 
         timeout_ms = int(args.get("timeoutMs") or 20000)
+        run_env = safe_env()
+        try:
+            from .settings import load_settings
+
+            settings_obj = load_settings()
+            s = settings_obj.get("settings") if isinstance(settings_obj, dict) else {}
+            if not isinstance(s, dict):
+                s = {}
+            tool_settings = s.get("toolSettings") if isinstance(s.get("toolSettings"), dict) else {}
+            bash_settings = tool_settings.get("bash") if isinstance(tool_settings.get("bash"), dict) else {}
+            python_path_raw = str(bash_settings.get("pythonPath") or "").strip()
+            if python_path_raw:
+                python_path = str(Path(python_path_raw).expanduser())
+                run_env["ANIMA_PYTHON"] = python_path
+                run_env["PYTHON"] = python_path
+                run_env["PYTHON3"] = python_path
+                py_dir = str(Path(python_path).parent).strip()
+                if py_dir:
+                    current_path = str(run_env.get("PATH") or "")
+                    parts = [x for x in current_path.split(":") if str(x).strip()]
+                    run_env["PATH"] = ":".join([py_dir, *[x for x in parts if x != py_dir]])
+        except Exception:
+            pass
         out = run_bash_with_os_sandbox(
             command=cmd,
             cwd=run_cwd,
@@ -2351,10 +2806,120 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
             permission_mode=permission_mode,
             workspace_dir=base_cwd,
             allowed_roots=[ANIMA_COMMAND_WHITELIST_ROOT, *workspace_roots],
-            env=safe_env(),
+            env=run_env,
             max_chars=20000,
         )
         return json.dumps(out, ensure_ascii=False)
+
+    if name == "remoteServer":
+        cmd = str(args.get("command") or "").strip()
+        if not cmd:
+            raise RuntimeError("command is required")
+        if len(cmd) > 8000:
+            raise RuntimeError("command too long")
+
+        remote = _resolve_remote_server(args)
+        timeout_ms = int(args.get("timeoutMs") or 20000)
+        timeout_ms = max(1000, min(timeout_ms, 300000))
+        ssh_cmd: List[str] = ["ssh", "-o", "ConnectTimeout=8"]
+        if not bool(remote.get("strictHostKey")):
+            ssh_cmd.extend(["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"])
+        ssh_cmd.extend(["-p", str(remote.get("port") or 22)])
+        key_path = str(remote.get("keyPath") or "").strip()
+        if key_path:
+            ssh_cmd.extend(["-i", key_path])
+        ssh_cmd.append(f"{remote['user']}@{remote['host']}")
+        ssh_cmd.append(cmd)
+        invoked_cmd = list(ssh_cmd)
+        env = safe_env()
+        password = str(remote.get("password") or "").strip()
+        if password:
+            sshpass = shutil.which("sshpass")
+            if not sshpass:
+                raise RuntimeError("sshpass is required for password auth but not installed")
+            env["SSHPASS"] = password
+            ssh_cmd = [sshpass, "-e", *ssh_cmd]
+
+        started_at = int(time.time() * 1000)
+        try:
+            proc = subprocess.run(
+                ssh_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=max(1, int(timeout_ms / 1000)),
+                env=env,
+            )
+            ended_at = int(time.time() * 1000)
+            return json.dumps(
+                {
+                    "ok": int(proc.returncode or 0) == 0,
+                    "exitCode": int(proc.returncode or 0),
+                    "stdout": _clip_text(str(proc.stdout or ""), 20000),
+                    "stderr": _clip_text(str(proc.stderr or ""), 20000),
+                    "server": {
+                        "alias": str(remote.get("alias") or ""),
+                        "host": str(remote.get("host") or ""),
+                        "user": str(remote.get("user") or ""),
+                        "port": int(remote.get("port") or 22),
+                    },
+                    "invoked": " ".join(shlex.quote(x) for x in invoked_cmd),
+                    "elapsedMs": max(0, ended_at - started_at),
+                },
+                ensure_ascii=False,
+            )
+        except subprocess.TimeoutExpired as e:
+            ended_at = int(time.time() * 1000)
+            return json.dumps(
+                {
+                    "ok": False,
+                    "exitCode": 124,
+                    "timeout": True,
+                    "stdout": _clip_text(str(e.stdout or ""), 20000),
+                    "stderr": _clip_text(str(e.stderr or ""), 20000),
+                    "elapsedMs": max(0, ended_at - started_at),
+                },
+                ensure_ascii=False,
+            )
+        except FileNotFoundError:
+            raise RuntimeError("ssh command not found")
+
+    if name == "remoteServerList":
+        servers, default_alias = _list_remote_servers_from_settings()
+        q = str(args.get("query") or "").strip().lower()
+        try:
+            limit = int(args.get("limit") or 100)
+        except Exception:
+            limit = 100
+        limit = max(1, min(limit, 1000))
+        filtered = servers
+        if q:
+            filtered = []
+            for item in servers:
+                search_text = " ".join(
+                    [
+                        str(item.get("alias") or ""),
+                        str(item.get("host") or ""),
+                        str(item.get("user") or ""),
+                    ]
+                ).lower()
+                if q in search_text:
+                    filtered.append(item)
+        out = []
+        for item in filtered[:limit]:
+            out.append(
+                {
+                    "id": str(item.get("id") or ""),
+                    "alias": str(item.get("alias") or ""),
+                    "host": str(item.get("host") or ""),
+                    "user": str(item.get("user") or ""),
+                    "port": int(item.get("port") or 22),
+                    "hasPassword": bool(str(item.get("password") or "").strip()),
+                    "hasKeyPath": bool(str(item.get("keyPath") or "").strip()),
+                    "isDefault": str(item.get("alias") or "").strip() == default_alias,
+                }
+            )
+        return json.dumps({"ok": True, "total": len(servers), "items": out}, ensure_ascii=False)
 
     if name == "list_dir":
         if not fs_workspace_dir:
@@ -2452,7 +3017,7 @@ def execute_builtin_tool(name: str, args: Dict[str, Any], workspace_dir: str) ->
         cron = s.get("cron")
         if not isinstance(cron, dict):
             cron = {}
-        if not bool(cron.get("allowAgentManage")):
+        if not bool(cron.get("allowAgentManage", True)):
             raise RuntimeError("cron tools disabled")
 
         from anima_backend_core import cron as cron_mod

@@ -381,6 +381,19 @@ export const ToolTraceGroup = memo(function ToolTraceGroup({
             const firstDiffPath = String(diffs[0]?.path || '').trim()
             const editFileTarget = String(firstDiffPath || traceView?.displayEntity || entity || '').trim()
             const editFileLabel = String((runtimeText as any)?.editedFiles || (lang === 'zh' ? '已编辑的文件' : lang === 'ja' ? '編集済みファイル' : 'Edited file'))
+            const approvalBadge = traceView?.approvalStatus === 'approved_once' ? (
+              <span className="shrink-0 inline-flex items-center whitespace-nowrap rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] leading-none font-medium text-emerald-700">
+                {String((APP_SHADCN_DICTIONARIES[0] as any)?.[lang]?.dangerousApprovalStatusApprovedOnce || '已允许')}
+              </span>
+            ) : traceView?.approvalStatus === 'approved_thread' ? (
+              <span className="shrink-0 inline-flex items-center whitespace-nowrap rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] leading-none font-medium text-emerald-700">
+                {String((APP_SHADCN_DICTIONARIES[0] as any)?.[lang]?.dangerousApprovalStatusApprovedThread || '本次对话已允许')}
+              </span>
+            ) : traceView?.approvalStatus === 'rejected' ? (
+              <span className="shrink-0 inline-flex items-center whitespace-nowrap rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] leading-none font-medium text-red-700">
+                {String((APP_SHADCN_DICTIONARIES[0] as any)?.[lang]?.dangerousApprovalStatusRejected || '已拒绝')}
+              </span>
+            ) : null
             return (
               <div key={traceId} className="py-0.5">
                 <button
@@ -396,6 +409,7 @@ export const ToolTraceGroup = memo(function ToolTraceGroup({
                       <span className={`shrink-0 text-[12px] leading-[20px] font-medium transition-colors group-hover:text-muted-foreground ${trace.status === 'running' ? 'anima-flow-text text-muted-foreground/[0.505]' : 'text-muted-foreground/[0.505]'}`}>
                         {traceView?.runningStatusText || summarizeTraceStatus(trace, runtimeText)}
                       </span>
+                      {approvalBadge}
                       {traceView?.displayEntity ? (
                         <span
                           className={`${toolTokenClass} min-w-0 max-w-[min(46%,24rem)] truncate group-hover:bg-black/[0.03] group-hover:text-muted-foreground`}
@@ -410,6 +424,7 @@ export const ToolTraceGroup = memo(function ToolTraceGroup({
                       <span className={`shrink-0 text-[12px] leading-[20px] font-medium text-muted-foreground/[0.505] ${trace.status === 'running' ? 'anima-flow-text' : ''}`}>
                         {editFileLabel}
                       </span>
+                      {approvalBadge}
                       {editFileTarget ? (
                         <button
                           type="button"
@@ -442,19 +457,6 @@ export const ToolTraceGroup = memo(function ToolTraceGroup({
                   {!isEditTrace && traceView?.durationText ? (
                     <span className={`${durationTokenClass} group-hover:bg-black/[0.03] group-hover:text-muted-foreground`}>
                       {traceView.durationText}
-                    </span>
-                  ) : null}
-                  {traceView?.approvalStatus === 'approved_once' ? (
-                    <span className="shrink-0 inline-flex items-center whitespace-nowrap rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] leading-none font-medium text-emerald-700">
-                      {String((APP_SHADCN_DICTIONARIES[0] as any)?.[lang]?.dangerousApprovalStatusApprovedOnce || '已允许')}
-                    </span>
-                  ) : traceView?.approvalStatus === 'approved_thread' ? (
-                    <span className="shrink-0 inline-flex items-center whitespace-nowrap rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] leading-none font-medium text-emerald-700">
-                      {String((APP_SHADCN_DICTIONARIES[0] as any)?.[lang]?.dangerousApprovalStatusApprovedThread || '本次对话已允许')}
-                    </span>
-                  ) : traceView?.approvalStatus === 'rejected' ? (
-                    <span className="shrink-0 inline-flex items-center whitespace-nowrap rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] leading-none font-medium text-red-700">
-                      {String((APP_SHADCN_DICTIONARIES[0] as any)?.[lang]?.dangerousApprovalStatusRejected || '已拒绝')}
                     </span>
                   ) : null}
                   {isEditTrace ? (

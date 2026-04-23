@@ -30,6 +30,10 @@
     "tests/chatLinkTargets.test.ts",
     "src/renderer/src/features/chat/chatLinks.ts",
     "tests/chatNavigation.test.ts",
-    "src/renderer/src/features/chat/chatNavigation.ts"
+    "src/renderer/src/features/chat/chatNavigation.ts",
+    "tests/chatVirtualListModel.test.ts",
+    "tests/markdownCompileCache.test.ts",
+    "src/renderer/src/features/chat/chatVirtualListModel.ts",
+    "src/renderer/src/features/chat/markdownCompileCache.ts"
   ]
 }

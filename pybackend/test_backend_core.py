@@ -4,6 +4,7 @@ import json
 import tempfile
 import os
 import time
+import subprocess
 from unittest.mock import patch
 
 _TEST_CONFIG_ROOT = tempfile.TemporaryDirectory()
@@ -1363,6 +1364,10 @@ class BackendCoreIntegrationTests(unittest.TestCase):
             None,
         )
         self.assertTrue(isinstance(recovery, dict))
+        trace = recovery.get("trace") if isinstance(recovery, dict) else {}
+        result_preview = trace.get("resultPreview") if isinstance(trace, dict) else {}
+        preview_text = str((result_preview or {}).get("text") or "")
+        self.assertIn("cause=RuntimeError: stream channel broken", preview_text)
 
     def test_runs_stream_worker_role_isolates_history_context(self) -> None:
         from anima_backend_core.api.runs_stream import handle_post_runs_stream
@@ -1948,6 +1953,82 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         self.assertEqual(str((traces[0] or {}).get("status") or ""), "failed")
         self.assertEqual(str((traces[1] or {}).get("status") or ""), "succeeded")
         self.assertEqual(str((traces[2] or {}).get("status") or ""), "succeeded")
+
+    def test_run_tool_loop_keeps_object_arguments_for_cron_upsert(self) -> None:
+        from anima_backend_core.api.runs_stream import _run_tool_loop
+
+        class _FakeProvider:
+            def __init__(self) -> None:
+                self.last_rate_limit = None
+                self.calls = 0
+
+            def chat_completion(self, _messages, **_kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return {
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "",
+                                    "tool_calls": [
+                                        {
+                                            "id": "call_1",
+                                            "type": "function",
+                                            "function": {
+                                                "name": "cron_upsert",
+                                                "arguments": {
+                                                    "job": {
+                                                        "name": "job_a",
+                                                        "enabled": True,
+                                                        "schedule": {"kind": "every", "everyMs": 1000},
+                                                        "payload": {"kind": "run", "run": {"messages": [{"role": "user", "content": "ping"}]}},
+                                                    }
+                                                },
+                                            },
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                return {"choices": [{"message": {"role": "assistant", "content": "done"}}]}
+
+        captured_args = []
+
+        def _fake_execute_tool(tool_name, args, **kwargs):
+            captured_args.append({"tool_name": tool_name, "args": args, "kwargs": kwargs})
+            return (
+                json.dumps({"ok": True, "job": args.get("job")}, ensure_ascii=False),
+                {
+                    "id": "tr_fake_cron",
+                    "toolCallId": str(kwargs.get("tool_call_id") or ""),
+                    "name": tool_name,
+                    "status": "succeeded",
+                    "startedAt": 1,
+                    "endedAt": 2,
+                    "durationMs": 1,
+                    "resultPreview": {"text": '{"ok":true}', "truncated": False},
+                },
+            )
+
+        with patch("anima_backend_core.api.runs_stream.select_tools", return_value=([], {}, None)):
+            with patch("anima_backend_core.api.runs_stream.execute_tool", side_effect=_fake_execute_tool):
+                _run_tool_loop(
+                    provider=_FakeProvider(),
+                    prepared=[{"role": "user", "content": "create cron"}],
+                    composer={"workspaceDir": "/tmp/workspace"},
+                    settings_obj={"settings": {}},
+                    temperature=0.2,
+                    max_tokens=64,
+                    extra_body=None,
+                )
+
+        self.assertEqual(len(captured_args), 1)
+        self.assertEqual(str(captured_args[0].get("tool_name") or ""), "cron_upsert")
+        args = captured_args[0].get("args") if isinstance(captured_args[0].get("args"), dict) else {}
+        self.assertTrue(isinstance(args.get("job"), dict))
+        self.assertEqual(str((args.get("job") or {}).get("name") or ""), "job_a")
 
     def test_runs_stream_returns_json_error_when_provider_not_configured(self) -> None:
         from anima_backend_core.api.runs_stream import handle_post_runs_stream
@@ -3615,6 +3696,88 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                             self.assertTrue(rel)
                             self.assertTrue(os.path.isfile(os.path.join(wdir, rel)))
 
+    def test_generate_image_tool_with_input_images_uses_chat_completions(self) -> None:
+        import base64
+
+        from anima_backend_shared import database as db
+        from anima_backend_shared import tools as shared_tools
+
+        td, env, db_mod, _settings = self._with_temp_config_root()
+        with td:
+            with patch.dict(os.environ, env):
+                with patch.object(db_mod, "_CONFIG_ROOT", None):
+                    with patch.object(db_mod, "_DB_INITIALIZED", False):
+                        db.init_db()
+                        db.set_app_settings(
+                            {
+                                "settings": {"defaultToolMode": "all"},
+                                "providers": [
+                                    {
+                                        "id": "p1",
+                                        "type": "openai",
+                                        "isEnabled": True,
+                                        "config": {"baseUrl": "http://example.com", "apiKey": "x", "selectedModel": "img-model"},
+                                    }
+                                ],
+                            }
+                        )
+
+                        output_bytes = b"fake-output-png"
+                        fake = {
+                            "choices": [
+                                {
+                                    "message": {
+                                        "content": [
+                                            {
+                                                "type": "image_url",
+                                                "image_url": {
+                                                    "url": f"data:image/png;base64,{base64.b64encode(output_bytes).decode('ascii')}"
+                                                },
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                        seen: dict = {}
+
+                        def _fake_post_json(*, url: str, payload: dict, headers: dict, proxy_url: str, timeout_s: int) -> dict:
+                            seen["url"] = url
+                            seen["payload"] = payload
+                            return fake
+
+                        with tempfile.TemporaryDirectory() as wdir:
+                            in_path = os.path.join(wdir, "ref.png")
+                            with open(in_path, "wb") as f:
+                                f.write(b"fake-ref-png")
+
+                            with patch.object(shared_tools, "_http_post_json", side_effect=_fake_post_json):
+                                out = shared_tools.execute_builtin_tool(
+                                    "generate_image",
+                                    {"prompt": "make a new one", "inputImages": ["ref.png"]},
+                                    workspace_dir=wdir,
+                                )
+
+                            self.assertTrue(str(seen.get("url") or "").endswith("/chat/completions"))
+                            payload = seen.get("payload") if isinstance(seen.get("payload"), dict) else {}
+                            msgs = payload.get("messages") if isinstance(payload.get("messages"), list) else []
+                            self.assertTrue(len(msgs) == 1 and isinstance(msgs[0], dict))
+                            content = msgs[0].get("content") if isinstance(msgs[0], dict) else None
+                            self.assertTrue(isinstance(content, list) and len(content) == 2)
+                            b1 = content[1] if isinstance(content, list) and len(content) > 1 else {}
+                            self.assertEqual(str((b1 or {}).get("type") or ""), "image_url")
+                            iu = (b1 or {}).get("image_url")
+                            url = str((iu or {}).get("url") or "") if isinstance(iu, dict) else ""
+                            self.assertTrue(url.startswith("data:image/"))
+
+                            obj = json.loads(out)
+                            self.assertTrue(obj.get("ok") is True)
+                            arts = obj.get("artifacts")
+                            self.assertTrue(isinstance(arts, list) and len(arts) == 1)
+                            rel = str((arts[0] if isinstance(arts[0], dict) else {}).get("path") or "")
+                            self.assertTrue(rel)
+                            self.assertTrue(os.path.isfile(os.path.join(wdir, rel)))
+
     def test_generate_video_tool_writes_file_and_returns_artifact(self) -> None:
         import base64
 
@@ -4845,12 +5008,14 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                     )
 
             cmd = captured.get("cmd") if isinstance(captured.get("cmd"), list) else []
-            self.assertTrue(len(cmd) >= 6)
+            self.assertTrue(len(cmd) >= 8)
             self.assertEqual(str(cmd[0]), "sandbox-exec")
             self.assertEqual(str(cmd[1]), "-p")
             self.assertEqual(str(cmd[3]), "/bin/bash")
-            self.assertEqual(str(cmd[4]), "-c")
-            self.assertEqual(str(cmd[5]), "echo ok")
+            self.assertEqual(str(cmd[4]), "--noprofile")
+            self.assertEqual(str(cmd[5]), "--norc")
+            self.assertEqual(str(cmd[6]), "-c")
+            self.assertEqual(str(cmd[7]), "echo ok")
             self.assertTrue(bool((out.get("sandbox") or {}).get("enabled")))
             self.assertEqual(str((out.get("sandbox") or {}).get("kind") or ""), "macos_sandbox_exec")
 
@@ -4883,7 +5048,7 @@ class BackendCoreIntegrationTests(unittest.TestCase):
                     )
 
             cmd = captured.get("cmd") if isinstance(captured.get("cmd"), list) else []
-            self.assertEqual(cmd, ["/bin/bash", "-c", "echo ok"])
+            self.assertEqual(cmd, ["/bin/bash", "--noprofile", "--norc", "-c", "echo ok"])
             self.assertFalse(bool((out.get("sandbox") or {}).get("enabled")))
             self.assertEqual(str((out.get("sandbox") or {}).get("kind") or ""), "none")
 
@@ -4894,6 +5059,8 @@ class BackendCoreIntegrationTests(unittest.TestCase):
         names = [str(((t.get("function") or {}) if isinstance(t, dict) else {}).get("name") or "") for t in tools]
         self.assertIn("apply_patch", names)
         self.assertIn("multi_tool_use_parallel", names)
+        self.assertIn("remoteServer", names)
+        self.assertIn("remoteServerList", names)
         self.assertIn("memory_add", names)
         self.assertIn("memory_query", names)
         self.assertIn("memory_link", names)
@@ -4928,6 +5095,12 @@ class BackendCoreIntegrationTests(unittest.TestCase):
             self.assertEqual(str((results[1] or {}).get("toolName") or ""), "bash")
             self.assertTrue(bool((results[0] or {}).get("ok")))
             self.assertTrue(bool((results[1] or {}).get("ok")))
+            sub_traces = out.get("subTraces") if isinstance(out.get("subTraces"), list) else []
+            self.assertEqual(len(sub_traces), 2)
+            self.assertEqual(str((sub_traces[0] or {}).get("name") or ""), "read_file")
+            self.assertEqual(str((sub_traces[1] or {}).get("name") or ""), "bash")
+            self.assertEqual(str((sub_traces[0] or {}).get("status") or ""), "succeeded")
+            self.assertEqual(str((sub_traces[1] or {}).get("status") or ""), "succeeded")
 
     def test_multi_tool_parallel_rejects_disallowed_tool(self) -> None:
         import anima_backend_shared.tools as shared_tools
@@ -5776,6 +5949,206 @@ class BackendCoreIntegrationTests(unittest.TestCase):
             allowed_roots = kwargs.get("allowed_roots") if isinstance(kwargs.get("allowed_roots"), list) else []
             norm_allowed = {os.path.realpath(str(x)) for x in allowed_roots}
             self.assertIn(os.path.realpath(workspace_extra), norm_allowed)
+
+    def test_bash_tool_settings_python_path_injects_env_and_path_prefix(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch(
+                "anima_backend_shared.settings.load_settings",
+                return_value={
+                    "settings": {
+                        "toolSettings": {
+                            "bash": {"pythonPath": "/opt/custom-venv/bin/python"}
+                        }
+                    }
+                },
+            ):
+                with patch(
+                    "anima_backend_shared.tools.run_bash_with_os_sandbox",
+                    return_value={"ok": True, "exitCode": 0, "stdout": "", "stderr": "", "truncated": {}, "cwd": td, "sandbox": {}},
+                ) as run_mock:
+                    shared_tools.execute_builtin_tool(
+                        "bash",
+                        {
+                            "command": "python -V",
+                            "_animaPermissionMode": "workspace_whitelist",
+                        },
+                        workspace_dir=td,
+                    )
+            kwargs = run_mock.call_args.kwargs if run_mock.call_args else {}
+            env = kwargs.get("env") if isinstance(kwargs.get("env"), dict) else {}
+            self.assertEqual(str(env.get("ANIMA_PYTHON") or ""), "/opt/custom-venv/bin/python")
+            self.assertEqual(str(env.get("PYTHON") or ""), "/opt/custom-venv/bin/python")
+            self.assertEqual(str(env.get("PYTHON3") or ""), "/opt/custom-venv/bin/python")
+            self.assertTrue(str(env.get("PATH") or "").startswith("/opt/custom-venv/bin:"))
+
+    def test_remote_server_requires_host_env(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        with patch("anima_backend_shared.tools._list_remote_servers_from_settings", return_value=([], "")):
+            with tempfile.TemporaryDirectory() as td:
+                with self.assertRaises(RuntimeError) as ex:
+                    shared_tools.execute_builtin_tool("remoteServer", {"command": "echo ok"}, workspace_dir=td)
+        self.assertIn("No remote servers configured", str(ex.exception))
+
+    def test_remote_server_invokes_ssh_with_expected_args(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        class _Proc:
+            returncode = 0
+            stdout = "done\n"
+            stderr = ""
+
+        captured: Dict[str, Any] = {}
+
+        def _fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["kwargs"] = kwargs
+            return _Proc()
+
+        with tempfile.TemporaryDirectory() as td:
+            mock_servers = (
+                [
+                    {
+                        "id": "s-1",
+                        "alias": "prod",
+                        "host": "127.0.0.1",
+                        "user": "root",
+                        "port": 2222,
+                        "password": "",
+                        "keyPath": "/tmp/id_rsa",
+                        "strictHostKey": False,
+                    }
+                ],
+                "prod",
+            )
+            with patch("anima_backend_shared.tools._list_remote_servers_from_settings", return_value=mock_servers):
+                with patch("anima_backend_shared.tools.subprocess.run", side_effect=_fake_run):
+                    out = json.loads(
+                        shared_tools.execute_builtin_tool("remoteServer", {"command": "uname -a", "timeoutMs": 5000}, workspace_dir=td)
+                    )
+
+        self.assertTrue(bool(out.get("ok")))
+        self.assertEqual(int(out.get("exitCode") if out.get("exitCode") is not None else -1), 0)
+        cmd = captured.get("cmd") if isinstance(captured.get("cmd"), list) else []
+        self.assertEqual(cmd[0], "ssh")
+        self.assertIn("-p", cmd)
+        self.assertIn("2222", cmd)
+        self.assertIn("-i", cmd)
+        self.assertIn("/tmp/id_rsa", cmd)
+        self.assertIn("root@127.0.0.1", cmd)
+        self.assertEqual(cmd[-1], "uname -a")
+        server = out.get("server") if isinstance(out.get("server"), dict) else {}
+        self.assertEqual(str(server.get("alias") or ""), "prod")
+
+    def test_remote_server_timeout_returns_timeout_payload(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        timeout_error = subprocess.TimeoutExpired(cmd=["ssh"], timeout=2, output="part", stderr="timeout")
+
+        with tempfile.TemporaryDirectory() as td:
+            mock_servers = (
+                [
+                    {
+                        "id": "s-1",
+                        "alias": "prod",
+                        "host": "127.0.0.1",
+                        "user": "root",
+                        "port": 22,
+                        "password": "",
+                        "keyPath": "",
+                        "strictHostKey": False,
+                    }
+                ],
+                "prod",
+            )
+            with patch("anima_backend_shared.tools._list_remote_servers_from_settings", return_value=mock_servers):
+                with patch("anima_backend_shared.tools.subprocess.run", side_effect=timeout_error):
+                    out = json.loads(
+                        shared_tools.execute_builtin_tool("remoteServer", {"command": "sleep 10", "timeoutMs": 2000}, workspace_dir=td)
+                    )
+
+        self.assertFalse(bool(out.get("ok")))
+        self.assertTrue(bool(out.get("timeout")))
+        self.assertEqual(int(out.get("exitCode") or 0), 124)
+        self.assertIn("timeout", str(out.get("stderr") or ""))
+
+    def test_remote_server_list_filters_and_hides_password(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        mock_servers = (
+            [
+                {
+                    "id": "s-1",
+                    "alias": "prod",
+                    "host": "10.0.0.1",
+                    "user": "root",
+                    "port": 22,
+                    "password": "secret",
+                    "keyPath": "",
+                    "strictHostKey": False,
+                },
+                {
+                    "id": "s-2",
+                    "alias": "staging",
+                    "host": "10.0.0.2",
+                    "user": "ubuntu",
+                    "port": 22,
+                    "password": "",
+                    "keyPath": "/tmp/id_rsa",
+                    "strictHostKey": False,
+                },
+            ],
+            "prod",
+        )
+        with patch("anima_backend_shared.tools._list_remote_servers_from_settings", return_value=mock_servers):
+            with tempfile.TemporaryDirectory() as td:
+                out = json.loads(shared_tools.execute_builtin_tool("remoteServerList", {"query": "stag"}, workspace_dir=td))
+        self.assertTrue(bool(out.get("ok")))
+        items = out.get("items") if isinstance(out.get("items"), list) else []
+        self.assertEqual(len(items), 1)
+        first = items[0] if isinstance(items[0], dict) else {}
+        self.assertEqual(str(first.get("alias") or ""), "staging")
+        self.assertEqual(bool(first.get("hasPassword")), False)
+        self.assertEqual(bool(first.get("hasKeyPath")), True)
+
+    def test_websearch_retries_next_route_when_first_route_fails(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch(
+                "anima_backend_shared.tools._list_web_search_routes_from_settings",
+                return_value=(["searxng", "duckduckgo"], {"baseUrl": "", "timeoutMs": 12000}),
+            ):
+                with patch(
+                    "anima_backend_shared.tools._web_search_via_duckduckgo",
+                    return_value=[{"title": "Duck result", "url": "https://example.com", "snippet": "ok"}],
+                ):
+                    out = json.loads(shared_tools.execute_builtin_tool("WebSearch", {"query": "anima"}, workspace_dir=td))
+        self.assertEqual(str(out.get("engine") or ""), "duckduckgo")
+        results = out.get("results") if isinstance(out.get("results"), list) else []
+        self.assertEqual(len(results), 1)
+        self.assertEqual(str((results[0] or {}).get("title") or ""), "Duck result")
+
+    def test_websearch_uses_searxng_when_configured_first(self) -> None:
+        import anima_backend_shared.tools as shared_tools
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch(
+                "anima_backend_shared.tools._list_web_search_routes_from_settings",
+                return_value=(["searxng", "duckduckgo"], {"baseUrl": "http://127.0.0.1:8888", "timeoutMs": 9000}),
+            ):
+                with patch(
+                    "anima_backend_shared.tools._web_search_via_searxng",
+                    return_value=[{"title": "SearXNG result", "url": "https://searx.example", "snippet": "ok"}],
+                ) as searx_mock:
+                    out = json.loads(shared_tools.execute_builtin_tool("WebSearch", {"query": "anima"}, workspace_dir=td))
+        self.assertEqual(str(out.get("engine") or ""), "searxng")
+        self.assertTrue(searx_mock.called)
+        results = out.get("results") if isinstance(out.get("results"), list) else []
+        self.assertEqual(len(results), 1)
+        self.assertEqual(str((results[0] or {}).get("title") or ""), "SearXNG result")
 
 if __name__ == "__main__":
     unittest.main()

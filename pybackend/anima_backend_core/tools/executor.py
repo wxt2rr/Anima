@@ -128,7 +128,7 @@ def select_tools(
         cron = s.get("cron")
         if not isinstance(cron, dict):
             cron = {}
-        cron_allowed = bool(cron.get("allowAgentManage"))
+        cron_allowed = bool(cron.get("allowAgentManage", True))
     except Exception:
         cron_allowed = False
     if not cron_allowed:
@@ -261,6 +261,8 @@ def execute_tool(
                     tool_call_id=tool_call_id,
                     trace_id=trace_id,
                 )
+            if isinstance(res_json, dict) and isinstance(res_json.get("subTraces"), list):
+                trace["subTraces"] = res_json.get("subTraces")
         except Exception:
             pass
         return tool_content, trace

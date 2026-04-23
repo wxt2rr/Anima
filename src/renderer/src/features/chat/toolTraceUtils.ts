@@ -49,6 +49,74 @@ export function dedupeToolTracesForDisplay(traces: ToolTrace[]): ToolTrace[] {
   return next
 }
 
+function parseJsonSafe(raw: unknown): any {
+  const text = String(raw || '').trim()
+  if (!text) return null
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+function buildVirtualSubTrace(parent: ToolTrace, item: any, index: number): ToolTrace {
+  const toolName = String(item?.toolName || item?.recipientName || 'tool').trim() || 'tool'
+  const ok = item?.ok !== false
+  const resultPayload = ok
+    ? (item?.result !== undefined ? item.result : {})
+    : { ok: false, error: String(item?.error || '') }
+  const argsPayload = item?.args && typeof item.args === 'object' ? item.args : {}
+  const durationMs = Number(item?.durationMs)
+  const startedAt = Number(item?.startedAt)
+  const endedAt = Number(item?.endedAt)
+  return {
+    id: `${String(parent?.id || 'parallel')}:sub:${index}`,
+    toolCallId: `${String(parent?.toolCallId || parent?.id || 'parallel')}:sub:${index}`,
+    name: toolName,
+    status: ok ? 'succeeded' : 'failed',
+    startedAt: Number.isFinite(startedAt) ? startedAt : undefined,
+    endedAt: Number.isFinite(endedAt) ? endedAt : undefined,
+    durationMs: Number.isFinite(durationMs) ? durationMs : undefined,
+    argsPreview: { text: JSON.stringify(argsPayload, null, 0) },
+    resultPreview: { text: JSON.stringify(resultPayload, null, 0) },
+    error: ok ? undefined : { message: String(item?.error || '') },
+  }
+}
+
+function deriveParallelSubTraces(trace: ToolTrace): ToolTrace[] {
+  if (!trace || typeof trace !== 'object') return []
+  const explicit = Array.isArray(trace.subTraces) ? trace.subTraces.filter((x) => x && typeof x === 'object') : []
+  if (explicit.length) {
+    return explicit.map((sub, index) => ({
+      ...sub,
+      id: String(sub.id || `${String(trace.id || 'parallel')}:sub:${index}`),
+      toolCallId: String(sub.toolCallId || `${String(trace.toolCallId || trace.id || 'parallel')}:sub:${index}`)
+    }))
+  }
+  const parsed = parseJsonSafe(trace?.resultPreview?.text)
+  const rows = Array.isArray(parsed?.results) ? parsed.results : []
+  if (!rows.length) return []
+  return rows.map((row: any, index: number) => buildVirtualSubTrace(trace, row, index))
+}
+
+export function expandToolTracesForDisplay(traces: ToolTrace[]): ToolTrace[] {
+  if (!Array.isArray(traces) || !traces.length) return []
+  const out: ToolTrace[] = []
+  for (const trace of traces) {
+    if (!trace || typeof trace !== 'object') continue
+    const name = normalizeToolTraceName(trace.name)
+    if (name === 'multi_tool_use_parallel') {
+      const subs = deriveParallelSubTraces(trace)
+      if (subs.length) {
+        out.push(...subs)
+        continue
+      }
+    }
+    out.push(trace)
+  }
+  return out
+}
+
 export function getToolTraceCategory(trace: ToolTrace): ToolTraceCategory {
   const name = normalizeToolTraceName(trace?.name).toLowerCase()
   if (!name) return 'ran'

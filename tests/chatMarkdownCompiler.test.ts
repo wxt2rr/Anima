@@ -55,3 +55,17 @@ test('compileMarkdownBlocks preserves v2 parity markers for images, tasks, delet
   assert.match(blocks[0].html, /<a[^>]+data-chat-link-target="https:\/\/example\.com\/path"/)
   assert.match(blocks[0].html, /katex/)
 })
+
+test('compileMarkdownBlocks should not leak placeholder tokens for nested inline cases', () => {
+  const blocks = compileMarkdownBlocks([
+    '文件: [`demo.md`](/tmp/demo.md)',
+    '',
+    '路径: [`README.md`](README.md)'
+  ].join('\n'))
+
+  assert.equal(blocks.length, 1)
+  assert.equal(blocks[0].type, 'markdown')
+  assert.doesNotMatch(blocks[0].html, /__ANIMA_CHAT_HTML_\d+__/)
+  assert.match(blocks[0].html, /<a href="\/tmp\/demo\.md"[^>]*>`demo\.md`<\/a>/)
+  assert.match(blocks[0].html, /<a href="README\.md"[^>]*>`README\.md`<\/a>/)
+})

@@ -78,11 +78,12 @@ def run_bash_with_os_sandbox(
     write_roots = _unique_roots([workspace_dir, tempfile.gettempdir(), *(allowed_roots or [])])
     use_sandbox = sys.platform == "darwin" and str(permission_mode or "").strip() != "full_access"
 
+    bash_base = ["/bin/bash", "--noprofile", "--norc", "-c", cmd]
     if use_sandbox:
-        command_list = ["sandbox-exec", "-p", _build_macos_profile(write_roots), "/bin/bash", "-c", cmd]
+        command_list = ["sandbox-exec", "-p", _build_macos_profile(write_roots), *bash_base]
         sandbox = {"enabled": True, "kind": "macos_sandbox_exec", "reason": "permission_mode_workspace_whitelist"}
     else:
-        command_list = ["/bin/bash", "-c", cmd]
+        command_list = list(bash_base)
         sandbox = {
             "enabled": False,
             "kind": "none",

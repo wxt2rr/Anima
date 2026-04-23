@@ -38,6 +38,22 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "toolsEnabledIds": [],
     "commandBlacklist": [],
     "commandWhitelist": [],
+    "toolSettings": {
+        "remoteServers": [],
+        "remoteServerDefaultAlias": "",
+        "bash": {
+            "pythonPath": "",
+        },
+        "webSearch": {
+            "routes": ["duckduckgo"],
+            "searxng": {
+                "baseUrl": "",
+                "timeoutMs": 12000,
+            },
+            "searxngBaseUrl": "",
+            "searxngEnabled": False,
+        },
+    },
     "defaultProviderId": "",
     "tabCompletionProviderId": "",
     "tabCompletionModelId": "",
@@ -81,6 +97,11 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "memoryGlobalRetrieveCount": 3,
     "memoryScopeAutoEnabled": False,
     "memoryDefaultWriteScope": "workspace",
+    "cron": {
+        "enabled": False,
+        "pollIntervalMs": 500,
+        "allowAgentManage": True,
+    },
     "kbEnabled": True,
     "kbAutoQueryEnabled": True,
     "kbMaxRetrieveCount": 6,
@@ -248,7 +269,7 @@ DEFAULT_PROVIDERS: List[Dict[str, Any]] = [
     },
     {
         "id": "codex_acp",
-        "name": "Codex (codex-acp)",
+        "name": "Codex (ACP)",
         "type": "acp",
         "isEnabled": False,
         "config": {

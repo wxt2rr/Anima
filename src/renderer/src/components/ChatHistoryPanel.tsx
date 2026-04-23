@@ -12,7 +12,7 @@ import {
   Star,
   EditPencil as Pencil,
   MagicWand as Sparkles,
-  Send,
+  Telegram,
   Laptop as Monitor
 } from 'iconoir-react'
 import { useEffect, useMemo, useRef, useState, memo, type MouseEvent } from 'react'
@@ -25,6 +25,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { AppShellLeftPane } from '@/components/layout/AppShellLeftPane'
 import { i18nText, resolveAppLang } from '@/i18n'
+import { matchesChatTitleSearch } from '@/lib/chatSearch'
 import {
   Dialog,
   DialogContent,
@@ -115,10 +116,9 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
   )
 
   useEffect(() => {
-    if (ui.sidebarCollapsed) return
     if (!ui.sidebarSearchOpen) return
     inputRef.current?.focus()
-  }, [ui.sidebarCollapsed, ui.sidebarSearchOpen])
+  }, [ui.sidebarSearchOpen])
 
   useEffect(() => {
     return () => {
@@ -130,9 +130,9 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
   }, [])
 
   const visibleChats = useMemo(() => {
-    const q = (ui.sidebarSearchQuery || '').trim().toLowerCase()
+    const q = (ui.sidebarSearchQuery || '').trim()
     if (!q) return chats
-    return chats.filter((c) => (c.title || '').toLowerCase().includes(q))
+    return chats.filter((c) => matchesChatTitleSearch(c.title || '', q))
   }, [chats, ui.sidebarSearchQuery])
 
   const projects = useMemo(() => {
@@ -200,7 +200,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
                 }`}
               >
                 <span className="w-3.5 h-3.5 shrink-0 flex items-center justify-center text-foreground/70" aria-hidden="true">
-                  {isTelegram ? <Send className="w-3.5 h-3.5" /> : <Monitor className="w-3.5 h-3.5" />}
+                  {isTelegram ? <Telegram className="w-3.5 h-3.5" /> : <Monitor className="w-3.5 h-3.5" />}
                 </span>
                 <span className="block truncate text-[13px] flex-1 min-w-0 leading-5 text-foreground" title={title}>
                   {displayTitle}
@@ -228,6 +228,44 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
       </AnimatePresence>
     </div>
   )
+
+  const renderSearchResultRows = (list: typeof visibleChats) => {
+    if (list.length === 0) {
+      return <div className="px-2.5 py-6 text-xs text-muted-foreground text-center">{t.emptyChats}</div>
+    }
+
+    return (
+      <div className="space-y-0.5">
+        {list.map((chat) => {
+          const active = chat.id === activeChatId
+          const title = (chat.title || '').trim() || t.untitled
+          const source = String((chat as any)?.meta?.source || '').trim().toLowerCase()
+          const isTelegram = source === 'telegram'
+
+          return (
+            <button
+              key={chat.id}
+              type="button"
+              onClick={() => {
+                void setActiveChat(chat.id)
+                if (ui.sidebarSearchOpen) toggleSidebarSearch()
+              }}
+              className={`w-full flex items-center gap-2 pl-2.5 pr-2.5 py-1.5 text-left transition-all ${
+                active
+                  ? 'rounded-xl bg-black/5 text-foreground'
+                  : 'rounded-md text-muted-foreground hover:bg-black/5 hover:text-foreground'
+              }`}
+            >
+              <span className="w-3.5 h-3.5 shrink-0 flex items-center justify-center text-foreground/70" aria-hidden="true">
+                {isTelegram ? <Telegram className="w-3.5 h-3.5" /> : <Monitor className="w-3.5 h-3.5" />}
+              </span>
+              <span className="block truncate text-[13px] leading-5 text-foreground">{title}</span>
+            </button>
+          )
+        })}
+      </div>
+    )
+  }
 
   const pickAndAddProject = async () => {
     const res = await window.anima?.window?.pickDirectory?.()
@@ -327,23 +365,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
           <span>{t.skills}</span>
         </button>
       </div>
-      {/* Search Bar */}
-      {!ui.sidebarCollapsed && ui.sidebarSearchOpen && (
-        <div className="pl-[calc(var(--app-left-pane-pad-x)-6px)] pr-[var(--app-left-pane-pad-x)] pb-2 animate-in slide-in-from-top-2 duration-200">
-           <div className="relative group">
-            <Search className="w-3.5 h-3.5 text-muted-foreground/70 absolute left-2.5 top-1/2 -translate-y-1/2 z-10" />
-            <Input
-              ref={inputRef}
-              value={ui.sidebarSearchQuery}
-              onChange={(e) => setSidebarSearchQuery(e.target.value)}
-              placeholder={t.search}
-              className="w-full h-8 pl-8 pr-3 text-sm bg-black/5 dark:bg-white/5 border-transparent focus-visible:bg-background focus-visible:ring-1 focus-visible:ring-ring transition-all placeholder:text-muted-foreground/50 shadow-none"
-            />
-          </div>
-        </div>
-      )}
-
-      <div className="flex-1 overflow-y-auto pl-[calc(var(--app-left-pane-pad-x)-6px)] pr-[var(--app-left-pane-pad-x)] pb-12 space-y-1 scrollbar-none">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden pl-[calc(var(--app-left-pane-pad-x)-6px)] pr-[var(--app-left-pane-pad-x)] pb-12 space-y-1 scrollbar-none">
         <div className="space-y-3">
           <div className="pt-1">
             <div className="flex items-center justify-between text-[12px] text-muted-foreground/90">
@@ -383,6 +405,9 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
             {projects.length === 0 ? <div className="mt-1 px-2.5 text-xs text-muted-foreground text-center">{t.emptyChats}</div> : null}
           </div>
 
+        </div>
+
+        <div className="mt-1 space-y-0.5">
           {projects.map((p) => {
             const pid = p.id
             const collapsed = (ui.collapsedProjectIds || []).includes(pid)
@@ -393,7 +418,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
             return (
               <div key={pid}>
                 <div
-                  className={`group flex items-center gap-2 pl-2.5 pr-0 py-1.5 rounded-md transition-all ${
+                  className={`group flex items-center gap-2 pl-2.5 pr-0 py-1 rounded-md transition-all ${
                     activeProject ? 'text-foreground' : 'text-muted-foreground hover:bg-black/5 hover:text-foreground'
                   }`}
                 >
@@ -595,6 +620,32 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
             </Button>
             <Button onClick={commitRenameProject}>{t.ok}</Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={ui.sidebarSearchOpen}
+        onOpenChange={(open) => {
+          if (open !== ui.sidebarSearchOpen) toggleSidebarSearch()
+        }}
+      >
+        <DialogContent className="max-w-md rounded-2xl border-black/5 bg-background/95 p-4">
+          <DialogHeader>
+            <DialogTitle>{t.search}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="relative group">
+              <Search className="w-3.5 h-3.5 text-muted-foreground/70 absolute left-2.5 top-1/2 -translate-y-1/2 z-10" />
+              <Input
+                ref={inputRef}
+                value={ui.sidebarSearchQuery}
+                onChange={(e) => setSidebarSearchQuery(e.target.value)}
+                placeholder={t.search}
+                className="w-full h-9 pl-8 pr-3 text-sm bg-black/5 dark:bg-white/5 border-transparent focus-visible:bg-background focus-visible:ring-1 focus-visible:ring-ring transition-all placeholder:text-muted-foreground/50 shadow-none"
+              />
+            </div>
+            <div className="max-h-[44vh] overflow-y-auto overflow-x-hidden pr-1 scrollbar-none">{renderSearchResultRows(visibleChats)}</div>
+          </div>
         </DialogContent>
       </Dialog>
 

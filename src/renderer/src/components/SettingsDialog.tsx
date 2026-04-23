@@ -44,7 +44,9 @@ import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from '@/components/ui/textarea'
 import { Slider } from '@/components/ui/slider'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { UpdateDialog } from './UpdateDialog'
 import { useUpdateStore } from '../store/useUpdateStore'
 import { AppShellLeftPane } from '@/components/layout/AppShellLeftPane'
@@ -163,6 +165,7 @@ function CustomProviderDialog({
   const [acpApprovalMode, setAcpApprovalMode] = useState<'per_action' | 'per_project' | 'always'>('per_action')
   const [acpEnv, setAcpEnv] = useState('')
   const [defaultModel, setDefaultModel] = useState('')
+  const [supportedModalities, setSupportedModalities] = useState<Array<'text' | 'image' | 'video' | 'music'>>(['text'])
   const lang = resolveAppLang(settings?.language)
   const t = useMemo(
     () => ({
@@ -190,6 +193,15 @@ function CustomProviderDialog({
     }),
     [lang]
   )
+  const modalityText = useMemo(() => {
+    if (lang === 'zh') {
+      return { title: '支持类型', text: '文本', image: '图片', video: '视频', music: '音乐' }
+    }
+    if (lang === 'ja') {
+      return { title: '対応タイプ', text: 'テキスト', image: '画像', video: '動画', music: '音楽' }
+    }
+    return { title: 'Supported types', text: 'Text', image: 'Image', video: 'Video', music: 'Music' }
+  }, [lang])
 
   useEffect(() => {
     if (open) {
@@ -206,6 +218,7 @@ function CustomProviderDialog({
       setAcpApprovalMode('per_action')
       setAcpEnv('')
       setDefaultModel('')
+      setSupportedModalities(['text'])
     }
   }, [open, initialMode])
 
@@ -223,6 +236,7 @@ function CustomProviderDialog({
         type: 'openai_compatible',
         isEnabled: true,
         config: {
+          supportedModalities,
           baseUrl: baseUrl.trim(),
           apiKey: apiKey.trim(),
           models: [],
@@ -246,6 +260,7 @@ function CustomProviderDialog({
         type: 'acp',
         isEnabled: true,
         config: {
+          supportedModalities,
           models: [{ id: modelId, isEnabled: true, config: { id: modelId } }],
           selectedModel: modelId,
           acp: {
@@ -280,6 +295,35 @@ function CustomProviderDialog({
                 <SelectItem value="acp">{t.acpProvider}</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+          <div className="grid gap-2">
+            <Label>{modalityText.title}</Label>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                ['text', modalityText.text],
+                ['image', modalityText.image],
+                ['video', modalityText.video],
+                ['music', modalityText.music],
+              ] as Array<[('text' | 'image' | 'video' | 'music'), string]>).map(([id, label]) => (
+                <label key={id} className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={supportedModalities.includes(id)}
+                    onCheckedChange={(checked) => {
+                      const on = Boolean(checked)
+                      if (on) {
+                        setSupportedModalities((prev) => (prev.includes(id) ? prev : [...prev, id]))
+                      } else {
+                        setSupportedModalities((prev) => {
+                          const next = prev.filter((x) => x !== id)
+                          return next.length ? next : ['text']
+                        })
+                      }
+                    }}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
           </div>
           <div className="grid gap-2">
             <Label>{t.providerName}</Label>
@@ -1495,6 +1539,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
     { id: 'general', label: t.tabs.general, icon: Settings },
     { id: 'providers', label: t.tabs.providers, icon: Cpu },
     { id: 'chat', label: t.tabs.chat, icon: MessageSquare },
+    { id: 'tools', label: t.tabs.tools || 'Tools', icon: Settings },
     { id: 'mcp', label: t.tabs.mcp, icon: Database },
     { id: 'coder', label: t.tabs.coder, icon: Sparkles },
     { id: 'knowledgeBase', label: t.tabs.knowledgeBase, icon: SearchTabIcon },
@@ -1514,6 +1559,7 @@ export const SettingsDialog = memo(function SettingsDialog() {
     if (activeTab === 'providers') return <ProvidersSettings />
     if (activeTab === 'general') return <GeneralSettings />
     if (activeTab === 'chat') return <ChatSettings />
+    if (activeTab === 'tools') return <ToolsSettings />
     if (activeTab === 'mcp') return <McpSettings />
     if (activeTab === 'coder') return <CoderSettings />
     if (activeTab === 'knowledgeBase') return <KnowledgeBaseSettings />
@@ -1647,6 +1693,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
     { id: 'general', label: t.tabs.general, icon: Settings },
     { id: 'providers', label: t.tabs.providers, icon: Cpu },
     { id: 'chat', label: t.tabs.chat, icon: MessageSquare },
+    { id: 'tools', label: t.tabs.tools || 'Tools', icon: Settings },
     { id: 'mcp', label: t.tabs.mcp, icon: Database },
     { id: 'coder', label: t.tabs.coder, icon: Sparkles },
     { id: 'automation', label: t.tabs.automation, icon: Clock3 },
@@ -1667,6 +1714,7 @@ export const SettingsWindow = memo(function SettingsWindow() {
     if (activeTab === 'providers') return <ProvidersSettings />
     if (activeTab === 'general') return <GeneralSettings />
     if (activeTab === 'chat') return <ChatSettings />
+    if (activeTab === 'tools') return <ToolsSettings />
     if (activeTab === 'mcp') return <McpSettings />
     if (activeTab === 'coder') return <CoderSettings />
     if (activeTab === 'automation') return <AutomationSettings />
@@ -2460,6 +2508,9 @@ function ProvidersSettings() {
   const [showApiKey, setShowApiKey] = useState(false)
   const [newModelId, setNewModelId] = useState('')
   const [isFetchingModels, setIsFetchingModels] = useState(false)
+  const [defaultModelSearch, setDefaultModelSearch] = useState('')
+  const [defaultModelOpen, setDefaultModelOpen] = useState(false)
+  const defaultModelSearchInputRef = useRef<HTMLInputElement | null>(null)
   const [editingModel, setEditingModel] = useState<ProviderModel | null>(null)
   const [customProviderDialogOpen, setCustomProviderDialogOpen] = useState(false)
   const [customProviderMode, setCustomProviderMode] = useState<'api' | 'acp'>('api')
@@ -2543,7 +2594,19 @@ function ProvidersSettings() {
     return dict[settings.language as keyof typeof dict] || dict.en
   })()
 
+  const getProviderDisplayName = useCallback((provider: Provider) => {
+    const pid = String(provider.id || '').trim().toLowerCase()
+    if (pid === 'codex_acp') return 'Codex (ACP)'
+    return String(provider.name || '')
+  }, [])
+
   const activeProvider = providers.find(p => p.id === selectedProviderId)
+  const activeSupportedModalities = useMemo(() => {
+    const raw = (activeProvider?.config as any)?.supportedModalities
+    const list = Array.isArray(raw) ? raw.map((x: any) => String(x || '').trim().toLowerCase()).filter(Boolean) : []
+    if (!list.length) return ['text']
+    return Array.from(new Set(list.filter((x) => ['text', 'image', 'video', 'music'].includes(x)))) as Array<'text' | 'image' | 'video' | 'music'>
+  }, [activeProvider])
   const defaultProviderId = String((settings as any).defaultProviderId || '').trim()
   const isDefaultProvider = Boolean(activeProvider && String(activeProvider.id || '').trim() === defaultProviderId)
   const hasFetchedModels = Boolean(activeProvider?.config?.modelsFetched)
@@ -2575,6 +2638,15 @@ function ProvidersSettings() {
   const filteredProviders = visibleProviders.filter(p => 
     p.name.toLowerCase().includes(searchQuery.toLowerCase())
   )
+  const enabledModels = useMemo(() => {
+    if (!activeProvider) return [] as ProviderModel[]
+    return normalizeModels(activeProvider.config.models).filter((m) => m.isEnabled)
+  }, [activeProvider])
+  const filteredDefaultModels = useMemo(() => {
+    const q = String(defaultModelSearch || '').trim().toLowerCase()
+    if (!q) return enabledModels
+    return enabledModels.filter((m) => String(m.id || '').toLowerCase().includes(q))
+  }, [enabledModels, defaultModelSearch])
 
   useEffect(() => {
     if (!selectedProviderId) {
@@ -2994,7 +3066,7 @@ function ProvidersSettings() {
                    }`}>
                       {getProviderIconUrl(provider) ? <img src={getProviderIconUrl(provider)} className="w-4 h-4" /> : provider.name[0]}
                    </div>
-                   <span className="truncate max-w-[120px]">{provider.name}</span>
+                   <span className="truncate max-w-[120px]">{getProviderDisplayName(provider)}</span>
                 </div>
                 <div className={`w-2 h-2 rounded-full shrink-0 transition-colors ${provider.isEnabled ? 'bg-emerald-500' : 'bg-muted-foreground/35'}`} />
               </Button>
@@ -3006,8 +3078,8 @@ function ProvidersSettings() {
       {/* Provider Details - Right Column */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top Actions Bar */}
-        <div className="px-6 pt-3 pb-3 border-b border-border/60">
-          <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="px-8 pt-3 pb-3 border-b border-border/60">
+          <div className="max-w-[820px] ml-0 flex flex-wrap items-center justify-end gap-2">
             <Button
               className="h-9 rounded-full px-4 shrink-0 whitespace-nowrap"
               onClick={() => {
@@ -3045,7 +3117,7 @@ function ProvidersSettings() {
                 <CardContent className="pt-5 pb-5">
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex items-center gap-4">
-                       <h2 className="text-2xl font-semibold text-foreground">{activeProvider.name}</h2>
+                       <h2 className="text-2xl font-semibold text-foreground">{getProviderDisplayName(activeProvider)}</h2>
                        <Badge variant="outline" className={`font-medium border-0 ${
                           activeProvider.isEnabled 
                             ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
@@ -3078,6 +3150,39 @@ function ProvidersSettings() {
                   <p className="text-muted-foreground text-[13px] leading-relaxed">
                     {activeProvider.description}
                   </p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-6 space-y-3">
+                  <Label>{t.modalitiesTitle || 'Supported types'}</Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([
+                      ['text', t.modalityText || 'Text'],
+                      ['image', t.modalityImage || 'Image'],
+                      ['video', t.modalityVideo || 'Video'],
+                      ['music', t.modalityMusic || 'Music'],
+                    ] as Array<[('text' | 'image' | 'video' | 'music'), string]>).map(([id, label]) => (
+                      <label key={id} className="flex items-center gap-2 text-[13px]">
+                        <Checkbox
+                          checked={activeSupportedModalities.includes(id)}
+                          onCheckedChange={(checked) => {
+                            if (!activeProvider) return
+                            const on = Boolean(checked)
+                            let next = activeSupportedModalities
+                            if (on) {
+                              next = activeSupportedModalities.includes(id) ? activeSupportedModalities : [...activeSupportedModalities, id]
+                            } else {
+                              next = activeSupportedModalities.filter((x) => x !== id)
+                              if (!next.length) next = ['text']
+                            }
+                            updateProvider(activeProvider.id, { supportedModalities: next } as any)
+                          }}
+                        />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                  </div>
                 </CardContent>
               </Card>
 
@@ -3502,19 +3607,63 @@ export CLAUDE_CODE_SUBAGENT_MODEL={hasFetchedModels ? (normalizeModels(activePro
                       <>
                         <div className="space-y-1">
                            <Label className="text-xs text-muted-foreground">{t.defaultModel}</Label>
-                           <Select
-                             value={activeProvider.config.selectedModel || ''}
-                             onValueChange={(val) => updateProvider(activeProvider.id, { selectedModel: val })}
+                           <Popover
+                             open={defaultModelOpen}
+                             onOpenChange={(open) => {
+                               setDefaultModelOpen(open)
+                               if (open) {
+                                 setDefaultModelSearch('')
+                                 window.setTimeout(() => defaultModelSearchInputRef.current?.focus(), 0)
+                               }
+                             }}
                            >
-                             <SelectTrigger>
-                               <SelectValue />
-                             </SelectTrigger>
-                             <SelectContent>
-                               {normalizeModels(activeProvider.config.models).filter(m => m.isEnabled).map(m => (
-                                 <SelectItem key={m.id} value={m.id}>{m.id}</SelectItem>
-                               ))}
-                             </SelectContent>
-                           </Select>
+                             <PopoverTrigger asChild>
+                               <Button
+                                 variant="outline"
+                                 type="button"
+                                 className="w-full justify-between font-normal"
+                               >
+                                 <span className="truncate text-left">
+                                   {String(activeProvider.config.selectedModel || '').trim() || t.noModelsConfigured}
+                                 </span>
+                                 <ChevronDown className="w-3.5 h-3.5 opacity-60 shrink-0" />
+                               </Button>
+                             </PopoverTrigger>
+                             <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
+                               <div className="border-b border-border/60 px-2 py-2">
+                                 <Input
+                                   ref={defaultModelSearchInputRef}
+                                   value={defaultModelSearch}
+                                   onChange={(e) => setDefaultModelSearch(e.target.value)}
+                                   placeholder={t.searchModel || 'Search model...'}
+                                   className="h-8 text-xs"
+                                 />
+                               </div>
+                               <div className="max-h-64 overflow-y-auto py-1">
+                                 {filteredDefaultModels.length ? (
+                                   filteredDefaultModels.map((m) => {
+                                     const selected = String(activeProvider.config.selectedModel || '').trim() === String(m.id || '').trim()
+                                     return (
+                                       <button
+                                         key={m.id}
+                                         type="button"
+                                         className="w-full px-3 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground flex items-center justify-between gap-2"
+                                         onClick={() => {
+                                           updateProvider(activeProvider.id, { selectedModel: m.id })
+                                           setDefaultModelOpen(false)
+                                         }}
+                                       >
+                                         <span className="truncate">{m.id}</span>
+                                         {selected ? <span className="text-xs text-muted-foreground">✓</span> : null}
+                                       </button>
+                                     )
+                                   })
+                                 ) : (
+                                   <div className="px-3 py-2 text-xs text-muted-foreground">{t.noModelsConfigured}</div>
+                                 )}
+                               </div>
+                             </PopoverContent>
+                           </Popover>
                         </div>
 
                         <div className="space-y-2 pt-2">
@@ -3885,6 +4034,431 @@ function GeneralSettings() {
           </div>
         </CardContent>
       </Card>
+    </div>
+  )
+}
+
+function ToolsSettings() {
+  const { settings: settings0, updateSettings } = useStore()
+  const settings = settings0!
+  const lang = String(settings.language || 'en').toLowerCase()
+  const text = {
+    title: lang === 'zh' ? '工具设置' : lang === 'ja' ? 'ツール設定' : 'Tool Settings',
+    bashTitle: lang === 'zh' ? 'bash 工具环境' : lang === 'ja' ? 'bash ツール環境' : 'bash Tool Environment',
+    bashDesc:
+      lang === 'zh'
+        ? '可选配置 bash 工具默认 Python 路径。未配置时保持系统默认；配置后优先使用该 Python 环境。'
+        : lang === 'ja'
+        ? 'bash ツール用の既定 Python パスを任意設定できます。未設定時はシステム既定、設定時はこの Python を優先します。'
+        : 'Optionally configure default Python path for bash tool. Empty keeps system default; set to prefer this Python.',
+    bashPythonPath: lang === 'zh' ? 'Python 路径(可选)' : lang === 'ja' ? 'Python パス (任意)' : 'Python path (optional)',
+    bashPythonPathPlaceholder:
+      lang === 'zh'
+        ? '例如: /Users/you/project/.venv/bin/python'
+        : lang === 'ja'
+        ? '例: /Users/you/project/.venv/bin/python'
+        : 'e.g. /Users/you/project/.venv/bin/python',
+    bashPythonPathHint:
+      lang === 'zh'
+        ? '配置后将注入 ANIMA_PYTHON / PYTHON / PYTHON3，并把该目录前置到 PATH。'
+        : lang === 'ja'
+        ? '設定後、ANIMA_PYTHON / PYTHON / PYTHON3 を注入し、そのディレクトリを PATH の先頭に追加します。'
+        : 'When configured, ANIMA_PYTHON / PYTHON / PYTHON3 are injected and its directory is prepended to PATH.',
+    webSearchTitle: lang === 'zh' ? 'WebSearch 搜索路由' : lang === 'ja' ? 'WebSearch 検索ルート' : 'WebSearch Routing',
+    webSearchDesc:
+      lang === 'zh'
+        ? '配置 WebSearch 使用的搜索引擎，可多选并排序；按顺序失败重试。'
+        : lang === 'ja'
+        ? 'WebSearch の検索エンジンを複数選択・並び替えできます。順番にフォールバックします。'
+        : 'Configure WebSearch engines with multi-select and ordering. It retries in order on failure.',
+    searchEngine: lang === 'zh' ? '搜索引擎' : lang === 'ja' ? '検索エンジン' : 'Search engines',
+    routeOrder: lang === 'zh' ? '重试顺序' : lang === 'ja' ? 'フォールバック順' : 'Retry order',
+    searxng: 'SearXNG',
+    duckduckgo: 'DuckDuckGo',
+    searxngBaseUrl: lang === 'zh' ? 'SearXNG Base URL' : lang === 'ja' ? 'SearXNG Base URL' : 'SearXNG Base URL',
+    searxngTimeoutMs: lang === 'zh' ? 'SearXNG 超时(ms)' : lang === 'ja' ? 'SearXNG タイムアウト(ms)' : 'SearXNG timeout (ms)',
+    searxngBaseUrlPlaceholder:
+      lang === 'zh'
+        ? '例如: http://127.0.0.1:8888'
+        : lang === 'ja'
+        ? '例: http://127.0.0.1:8888'
+        : 'e.g. http://127.0.0.1:8888',
+    remoteTitle: lang === 'zh' ? 'remoteServer 服务器列表' : lang === 'ja' ? 'remoteServer サーバー一覧' : 'remoteServer servers',
+    remoteDesc:
+      lang === 'zh'
+        ? '配置供 remoteServer 工具调用的服务器列表。支持多个服务器，按别名选择。'
+        : lang === 'ja'
+        ? 'remoteServer ツールが使うサーバー一覧を設定します。'
+        : 'Configure servers used by remoteServer tool.',
+    add: lang === 'zh' ? '添加服务器' : lang === 'ja' ? 'サーバー追加' : 'Add server',
+    defaultServer: lang === 'zh' ? '默认服务器' : lang === 'ja' ? 'デフォルトサーバー' : 'Default server',
+    noDefault: lang === 'zh' ? '不设置默认' : lang === 'ja' ? 'デフォルトなし' : 'No default',
+    alias: lang === 'zh' ? '别名' : lang === 'ja' ? 'エイリアス' : 'Alias',
+    host: lang === 'zh' ? 'IP / Host' : lang === 'ja' ? 'IP / Host' : 'IP / Host',
+    user: lang === 'zh' ? '用户' : lang === 'ja' ? 'ユーザー' : 'User',
+    port: lang === 'zh' ? '端口' : lang === 'ja' ? 'ポート' : 'Port',
+    password: lang === 'zh' ? '密码' : lang === 'ja' ? 'パスワード' : 'Password',
+    keyPath: lang === 'zh' ? '私钥路径(可选)' : lang === 'ja' ? '鍵パス(任意)' : 'Key Path (optional)',
+    strictHostKey: lang === 'zh' ? '严格校验主机指纹' : lang === 'ja' ? 'ホスト鍵を厳密検証' : 'Strict host key check',
+    remove: lang === 'zh' ? '删除' : lang === 'ja' ? '削除' : 'Remove',
+    sshpassHint:
+      lang === 'zh'
+        ? '需要安装 sshpass。\nmacOS: brew install hudochenkov/sshpass/sshpass\nUbuntu/Debian: sudo apt-get install -y sshpass\nCentOS/RHEL: sudo yum install -y epel-release && sudo yum install -y sshpass'
+        : lang === 'ja'
+        ? 'sshpass のインストールが必要です。\nmacOS: brew install hudochenkov/sshpass/sshpass\nUbuntu/Debian: sudo apt-get install -y sshpass\nCentOS/RHEL: sudo yum install -y epel-release && sudo yum install -y sshpass'
+        : 'sshpass is required.\nmacOS: brew install hudochenkov/sshpass/sshpass\nUbuntu/Debian: sudo apt-get install -y sshpass\nCentOS/RHEL: sudo yum install -y epel-release && sudo yum install -y sshpass',
+    keyPathHint:
+      lang === 'zh'
+        ? '私钥文件路径，例如 ~/.ssh/id_rsa。\n推荐权限：chmod 600 ~/.ssh/id_rsa\n首次配置流程：\n1) ssh-keygen -t ed25519 -C "anima"\n2) 将公钥内容追加到目标机 ~/.ssh/authorized_keys\n3) 这里填写私钥路径后即可免密登录'
+        : lang === 'ja'
+        ? '秘密鍵ファイルのパス（例: ~/.ssh/id_rsa）。\n推奨権限: chmod 600 ~/.ssh/id_rsa\n初回手順:\n1) ssh-keygen -t ed25519 -C "anima"\n2) 公開鍵を接続先の ~/.ssh/authorized_keys に追加\n3) ここに秘密鍵パスを入力して鍵認証で接続'
+        : 'Path to private key file, e.g. ~/.ssh/id_rsa.\nRecommended permission: chmod 600 ~/.ssh/id_rsa\nSetup:\n1) ssh-keygen -t ed25519 -C "anima"\n2) Append public key to remote ~/.ssh/authorized_keys\n3) Fill key path here to use key-based login',
+    strictHostKeyHint:
+      lang === 'zh'
+        ? '开启后会校验目标主机指纹，防止中间人攻击（更安全）。\n首次连接建议先执行：ssh user@host\n确认指纹后，主机将写入 ~/.ssh/known_hosts。\n之后再开启此选项可避免连接被伪造主机劫持。'
+        : lang === 'ja'
+        ? '有効化すると接続先ホスト鍵指紋を検証します（MITM対策）。\n初回は ssh user@host で指紋を確認し、~/.ssh/known_hosts に保存してください。\n以後この設定を有効にすると偽装ホスト接続を防げます。'
+        : 'When enabled, host fingerprint is verified (protects against MITM).\nFor first connection run: ssh user@host\nConfirm fingerprint so it is saved to ~/.ssh/known_hosts.\nThen enable this option for safer connections.',
+  }
+
+  const toolSettings = (settings as any).toolSettings || {}
+  const bashSettings = toolSettings.bash && typeof toolSettings.bash === 'object' ? toolSettings.bash : {}
+  const remoteServers = Array.isArray(toolSettings.remoteServers) ? toolSettings.remoteServers : []
+  const defaultAlias = String(toolSettings.remoteServerDefaultAlias || '').trim()
+  const webSearch = toolSettings.webSearch && typeof toolSettings.webSearch === 'object' ? toolSettings.webSearch : {}
+  const webSearchRoutesRaw = Array.isArray(webSearch.routes) ? webSearch.routes : []
+  const webSearchRoutes = Array.from(
+    new Set(
+      webSearchRoutesRaw
+        .map((x: any) => String(x || '').trim().toLowerCase())
+        .filter((x: string) => x === 'searxng' || x === 'duckduckgo')
+    )
+  ) as string[]
+  const normalizedWebSearchRoutes = webSearchRoutes.length ? webSearchRoutes : ['duckduckgo']
+  const searxng = webSearch.searxng && typeof webSearch.searxng === 'object' ? webSearch.searxng : {}
+
+  const updateToolSettings = (patch: Record<string, any>) => {
+    updateSettings({
+      toolSettings: {
+        ...toolSettings,
+        ...patch,
+      },
+    } as any)
+  }
+
+  const updateWebSearch = (patch: Record<string, any>) => {
+    const nextWebSearch = {
+      ...webSearch,
+      ...patch,
+    }
+    updateToolSettings({ webSearch: nextWebSearch })
+  }
+
+  const setWebSearchRouteEnabled = (route: 'searxng' | 'duckduckgo', enabled: boolean) => {
+    const next = normalizedWebSearchRoutes.filter((x: string) => x !== route)
+    if (enabled) next.push(route)
+    updateWebSearch({ routes: next.length ? next : ['duckduckgo'] })
+  }
+
+  const moveWebSearchRoute = (route: 'searxng' | 'duckduckgo', delta: -1 | 1) => {
+    const idx = normalizedWebSearchRoutes.indexOf(route)
+    if (idx < 0) return
+    const to = idx + delta
+    if (to < 0 || to >= normalizedWebSearchRoutes.length) return
+    const next = [...normalizedWebSearchRoutes]
+    const tmp = next[to]
+    next[to] = next[idx]
+    next[idx] = tmp
+    updateWebSearch({ routes: next })
+  }
+
+  const updateServer = (index: number, patch: Record<string, any>) => {
+    const next = remoteServers.map((item: any, i: number) => (i === index ? { ...(item || {}), ...patch } : item))
+    updateToolSettings({ remoteServers: next })
+  }
+
+  const addServer = () => {
+    const id = `remote-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+    const next = [
+      ...remoteServers,
+      {
+        id,
+        alias: '',
+        host: '',
+        user: 'root',
+        port: 22,
+        password: '',
+        keyPath: '',
+        strictHostKey: false,
+      },
+    ]
+    updateToolSettings({ remoteServers: next })
+  }
+
+  const removeServer = (index: number) => {
+    const target = remoteServers[index] || {}
+    const targetAlias = String(target.alias || '').trim()
+    const next = remoteServers.filter((_: any, i: number) => i !== index)
+    const patch: Record<string, any> = { remoteServers: next }
+    if (targetAlias && defaultAlias === targetAlias) {
+      patch.remoteServerDefaultAlias = ''
+    }
+    updateToolSettings(patch)
+  }
+
+  return (
+    <div className="p-6 space-y-6">
+      <Card className="p-5 space-y-4">
+        <div className="space-y-1">
+          <div className="text-[14px] font-semibold">{text.bashTitle}</div>
+          <div className="text-xs text-muted-foreground">{text.bashDesc}</div>
+        </div>
+        <div className="space-y-1.5">
+          <Label>{text.bashPythonPath}</Label>
+          <Input
+            value={String(bashSettings.pythonPath || '')}
+            onChange={(e) =>
+              updateToolSettings({
+                bash: {
+                  ...bashSettings,
+                  pythonPath: e.target.value,
+                },
+              })
+            }
+            placeholder={text.bashPythonPathPlaceholder}
+          />
+          <div className="text-xs text-muted-foreground">{text.bashPythonPathHint}</div>
+        </div>
+      </Card>
+
+      <Card className="p-5 space-y-4">
+        <div className="space-y-1">
+          <div className="text-[14px] font-semibold">{text.webSearchTitle}</div>
+          <div className="text-xs text-muted-foreground">{text.webSearchDesc}</div>
+        </div>
+        <div className="space-y-2">
+          <Label>{text.searchEngine}</Label>
+          <div className="space-y-2 rounded-md border border-border/70 p-3">
+            <div className="flex items-center justify-between">
+              <div className="text-[13px]">{text.searxng}</div>
+              <Checkbox
+                checked={normalizedWebSearchRoutes.includes('searxng')}
+                onCheckedChange={(checked) => setWebSearchRouteEnabled('searxng', Boolean(checked))}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="text-[13px]">{text.duckduckgo}</div>
+              <Checkbox
+                checked={normalizedWebSearchRoutes.includes('duckduckgo')}
+                onCheckedChange={(checked) => setWebSearchRouteEnabled('duckduckgo', Boolean(checked))}
+              />
+            </div>
+          </div>
+        </div>
+        <div className="space-y-2">
+          <Label>{text.routeOrder}</Label>
+          <div className="space-y-2 rounded-md border border-border/70 p-3">
+            {normalizedWebSearchRoutes.map((route: string, index: number) => (
+              <div key={`${route}-${index}`} className="flex items-center justify-between rounded-md bg-muted/30 px-2.5 py-2">
+                <div className="text-[13px]">{route === 'searxng' ? text.searxng : text.duckduckgo}</div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    disabled={index === 0}
+                    onClick={() => moveWebSearchRoute(route as 'searxng' | 'duckduckgo', -1)}
+                  >
+                    ↑
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    disabled={index === normalizedWebSearchRoutes.length - 1}
+                    onClick={() => moveWebSearchRoute(route as 'searxng' | 'duckduckgo', 1)}
+                  >
+                    ↓
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        {normalizedWebSearchRoutes.includes('searxng') ? (
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>{text.searxngBaseUrl}</Label>
+              <Input
+                value={String(searxng.baseUrl || webSearch.searxngBaseUrl || '')}
+                onChange={(e) =>
+                  updateWebSearch({
+                    searxng: { ...searxng, baseUrl: e.target.value },
+                    searxngBaseUrl: e.target.value,
+                  })
+                }
+                placeholder={text.searxngBaseUrlPlaceholder}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>{text.searxngTimeoutMs}</Label>
+              <Input
+                type="number"
+                min={1000}
+                max={60000}
+                value={String(searxng.timeoutMs ?? 12000)}
+                onChange={(e) =>
+                  updateWebSearch({
+                    searxng: {
+                      ...searxng,
+                      timeoutMs: Math.max(1000, Math.min(60000, Number(e.target.value || 12000) || 12000)),
+                    },
+                  })
+                }
+              />
+            </div>
+          </div>
+        ) : null}
+      </Card>
+
+      <Card className="p-5 space-y-4">
+        <div className="space-y-1">
+          <div className="text-[14px] font-semibold">{text.remoteTitle}</div>
+          <div className="text-xs text-muted-foreground">{text.remoteDesc}</div>
+        </div>
+        <div className="grid grid-cols-1 gap-2">
+          <Label>{text.defaultServer}</Label>
+          <Select
+            value={defaultAlias || '__none__'}
+            onValueChange={(value) => updateToolSettings({ remoteServerDefaultAlias: value === '__none__' ? '' : value })}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">{text.noDefault}</SelectItem>
+              {remoteServers.map((item: any, i: number) => {
+                const alias = String(item?.alias || '').trim()
+                if (!alias) return null
+                return (
+                  <SelectItem key={`${alias}-${i}`} value={alias}>
+                    {alias}
+                  </SelectItem>
+                )
+              })}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Button variant="outline" size="sm" onClick={addServer} className="gap-2">
+            <Plus className="w-4 h-4" />
+            {text.add}
+          </Button>
+        </div>
+      </Card>
+      {remoteServers.map((item: any, index: number) => (
+        <Card key={String(item?.id || index)} className="p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="text-[13px] font-medium">
+              {String(item?.alias || '').trim() || `${text.alias} ${index + 1}`}
+            </div>
+            <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => removeServer(index)}>
+              <Trash2 className="w-4 h-4 mr-1" />
+              {text.remove}
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>{text.alias}</Label>
+              <Input value={String(item?.alias || '')} onChange={(e) => updateServer(index, { alias: e.target.value })} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>{text.host}</Label>
+              <Input value={String(item?.host || '')} onChange={(e) => updateServer(index, { host: e.target.value })} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>{text.user}</Label>
+              <Input value={String(item?.user || '')} onChange={(e) => updateServer(index, { user: e.target.value })} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>{text.port}</Label>
+              <Input
+                type="number"
+                min={1}
+                max={65535}
+                value={String(item?.port ?? 22)}
+                onChange={(e) => updateServer(index, { port: Number(e.target.value || 22) || 22 })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <Label>{text.password}</Label>
+                <TooltipProvider delayDuration={250}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-[10px] leading-none text-muted-foreground hover:text-foreground"
+                        aria-label="sshpass help"
+                      >
+                        ?
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-[420px] whitespace-pre-line text-[12px] leading-5">
+                      {text.sshpassHint}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+              <Input type="password" value={String(item?.password || '')} onChange={(e) => updateServer(index, { password: e.target.value })} />
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <Label>{text.keyPath}</Label>
+                <TooltipProvider delayDuration={250}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-[10px] leading-none text-muted-foreground hover:text-foreground"
+                        aria-label="key path help"
+                      >
+                        ?
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-[420px] whitespace-pre-line text-[12px] leading-5">
+                      {text.keyPathHint}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+              <Input value={String(item?.keyPath || '')} onChange={(e) => updateServer(index, { keyPath: e.target.value })} />
+            </div>
+          </div>
+          <div className="flex items-center justify-between rounded-md border border-border/70 px-3 py-2">
+            <div className="flex items-center gap-1.5">
+              <Label>{text.strictHostKey}</Label>
+              <TooltipProvider delayDuration={250}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-[10px] leading-none text-muted-foreground hover:text-foreground"
+                      aria-label="strict host key help"
+                    >
+                      ?
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-[420px] whitespace-pre-line text-[12px] leading-5">
+                    {text.strictHostKeyHint}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+            <Switch checked={Boolean(item?.strictHostKey)} onCheckedChange={(checked) => updateServer(index, { strictHostKey: Boolean(checked) })} />
+          </div>
+        </Card>
+      ))}
     </div>
   )
 }

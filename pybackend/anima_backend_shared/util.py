@@ -268,6 +268,9 @@ def safe_env() -> Dict[str, str]:
         "HOME": str(Path.home()),
         "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         "LANG": os.environ.get("LANG") or "en_US.UTF-8",
+        # 显式禁用 shell 启动文件注入，避免在沙箱里触发 ~/.bashrc / ~/.profile 读取失败。
+        "BASH_ENV": "",
+        "ENV": "",
     }
     # 后端进程通常不会读取交互式 shell 配置；这里兜底读取一次 zsh -i 环境并缓存。
     if _wechat_env_cache is None:

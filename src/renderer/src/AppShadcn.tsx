@@ -18,8 +18,7 @@ import {
   Copy,
   Settings,
   Terminal as TerminalSquare,
-  Globe,
-  RefreshCircle as Loader2
+  Globe
 } from 'iconoir-react'
 import { resolveBackendBaseUrl, useStore, type Message, type ToolTrace, type ProviderModel, type Artifact, type MemoryInjectionSummary } from './store/useStore'
 import { THEMES } from './lib/themes'
@@ -439,12 +438,6 @@ function App(): JSX.Element {
             transition={reduceMotion ? undefined : { duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
             className="w-full max-w-[520px] text-center"
           >
-            <div className="mb-4 flex items-center justify-center">
-              <Loader2
-                aria-label="Loading"
-                className={`h-12 w-12 text-foreground/70 ${reduceMotion ? '' : 'animate-spin'}`}
-              />
-            </div>
             <div className="flex items-center justify-center gap-2">
               <motion.span
                 aria-hidden="true"
@@ -574,6 +567,8 @@ function AppLoaded(): JSX.Element {
   const lastScrollTopRef = useRef(0)
   const lastMessageKeyRef = useRef('')
   const lastSeenMessageKeyRef = useRef('')
+  const pendingInitialBottomChatIdRef = useRef('')
+  const pendingInitialBottomAttemptsRef = useRef(0)
   const turnSummaryBtnMapRef = useRef<Map<string, HTMLButtonElement>>(new Map())
   const turnStabilizeRafByIdRef = useRef<Map<string, number>>(new Map())
   const highlightUserMsgTimerRef = useRef<number | null>(null)
@@ -1774,6 +1769,10 @@ function AppLoaded(): JSX.Element {
   const sortedProviders = useMemo(() => {
     const list = (providers || []).filter((p) => {
         if (!p.isEnabled) return false
+        const rawModalities = (p?.config as any)?.supportedModalities
+        const modalities = Array.isArray(rawModalities) ? rawModalities.map((x: any) => String(x || '').trim().toLowerCase()) : []
+        const supportsText = modalities.length ? modalities.includes('text') : true
+        if (!supportsText) return false
         if (!p?.config?.modelsFetched) return false
         if (!Array.isArray(p?.config?.models)) return false
         // Support both string[] and ProviderModel[]
@@ -1886,7 +1885,11 @@ function AppLoaded(): JSX.Element {
       { id: 'coder', name: runtimeText.builtinTools.coder },
       { id: 'WebSearch', name: runtimeText.builtinTools.WebSearch },
       { id: 'WebFetch', name: runtimeText.builtinTools.WebFetch },
-      { id: 'list_dir', name: runtimeText.builtinTools.list_dir }
+      { id: 'list_dir', name: runtimeText.builtinTools.list_dir },
+      { id: 'cron_list', name: runtimeText.builtinTools.cron_list },
+      { id: 'cron_upsert', name: runtimeText.builtinTools.cron_upsert },
+      { id: 'cron_delete', name: runtimeText.builtinTools.cron_delete },
+      { id: 'cron_run', name: runtimeText.builtinTools.cron_run }
     ]
   }, [settings.language])
 
@@ -2526,19 +2529,44 @@ function AppLoaded(): JSX.Element {
   }, [showScrollToBottom])
 
   useEffect(() => {
+    pendingInitialBottomChatIdRef.current = String(activeChatId || '').trim()
+    pendingInitialBottomAttemptsRef.current = 0
     setChatIsAtBottom(true)
     chatIsAtBottomRef.current = true
     userScrollLockedRef.current = false
     setShowScrollToBottom(false)
     lastSeenMessageKeyRef.current = lastMessageKeyRef.current
-    window.setTimeout(() => {
+    const timer = window.setTimeout(() => {
       const el = chatScrollRef.current
       if (!el) return
       markProgrammaticScroll()
       el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
       startAutoScroll({ force: true })
     }, 0)
+    return () => window.clearTimeout(timer)
   }, [activeChatId, markProgrammaticScroll, startAutoScroll])
+
+  useEffect(() => {
+    const activeId = String(activeChatId || '').trim()
+    if (!activeId) return
+    if (pendingInitialBottomChatIdRef.current !== activeId) return
+    if (pendingInitialBottomAttemptsRef.current >= 4) {
+      pendingInitialBottomChatIdRef.current = ''
+      return
+    }
+    pendingInitialBottomAttemptsRef.current += 1
+    const delay = pendingInitialBottomAttemptsRef.current === 1 ? 0 : pendingInitialBottomAttemptsRef.current * 36
+    const timer = window.setTimeout(() => {
+      if (pendingInitialBottomChatIdRef.current !== activeId) return
+      const el = chatScrollRef.current
+      if (!el) return
+      markProgrammaticScroll()
+      el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
+      startAutoScroll({ force: true })
+      if (pendingInitialBottomAttemptsRef.current >= 4) pendingInitialBottomChatIdRef.current = ''
+    }, delay)
+    return () => window.clearTimeout(timer)
+  }, [activeChatId, displayMessages.length, markProgrammaticScroll, startAutoScroll])
 
   useEffect(() => {
     const root = chatScrollRef.current
@@ -2651,7 +2679,7 @@ function AppLoaded(): JSX.Element {
       abortControllerRef.current = null
     }
     if (typingTimerRef.current) {
-      window.clearInterval(typingTimerRef.current)
+      window.clearTimeout(typingTimerRef.current)
       typingTimerRef.current = null
     }
     if (compressionTypingTimerRef.current) {
@@ -2903,7 +2931,7 @@ function AppLoaded(): JSX.Element {
 
         const stopTyping = () => {
           if (typingTimerRef.current != null) {
-            window.clearInterval(typingTimerRef.current)
+            window.clearTimeout(typingTimerRef.current)
             typingTimerRef.current = null
           }
           if (typingDoneResolve) {
@@ -2920,18 +2948,26 @@ function AppLoaded(): JSX.Element {
               typingDoneResolve = resolve
             })
           }
-          typingTimerRef.current = window.setInterval(() => {
+          const tick = () => {
             if (!pendingContent) {
               stopTyping()
               return
             }
-            const charsPerTick = gotDone ? 6 : 1
+            const backlog = pendingContent.length
+            const charsPerTick = gotDone
+              ? Math.min(8, Math.max(2, Math.ceil(backlog / 120)))
+              : 1
             const part = pendingContent.slice(0, charsPerTick)
             pendingContent = pendingContent.slice(charsPerTick)
             fullContent += part
             playStreamingTick()
             appendStreamDraft(currentAssistantId, part, assistantMeta)
-          }, 12)
+            const tail = part[part.length - 1] || ''
+            const punctuationPause = /[,.!?，。！？；：、\n]/.test(tail) ? 28 : 0
+            const nextDelay = gotDone ? 16 + punctuationPause : 22 + punctuationPause
+            typingTimerRef.current = window.setTimeout(tick, nextDelay)
+          }
+          tick()
         }
 
         const normalizeStep = (raw: unknown): number | null => {
@@ -3456,16 +3492,17 @@ function AppLoaded(): JSX.Element {
           }
         }
 
-        const waitTyping = typingDone
-        if (waitTyping) {
-          const timeout = new Promise<void>((resolve) => window.setTimeout(resolve, 1500))
-          await Promise.race([waitTyping, timeout])
+        if (pendingContent) startTyping()
+        if (typingDone) {
+          const timeout = new Promise<void>((resolve) => window.setTimeout(resolve, 8000))
+          await Promise.race([typingDone, timeout])
         }
         if (pendingContent) {
-          const remainingContent = pendingContent
-          fullContent += remainingContent
+          // 极端情况下（例如窗口长时间后台限频）保底收敛，避免请求悬挂。
+          const fallbackChunk = pendingContent
+          fullContent += fallbackChunk
           pendingContent = ''
-          appendStreamDraft(currentAssistantId, remainingContent, assistantMeta)
+          appendStreamDraft(currentAssistantId, fallbackChunk, assistantMeta)
           updateLastMessage(fullContent, assistantMeta)
         }
         stopTyping()
@@ -3623,7 +3660,7 @@ function AppLoaded(): JSX.Element {
       setIsLoading(false)
       abortControllerRef.current = null
       if (typingTimerRef.current) {
-        window.clearInterval(typingTimerRef.current)
+        window.clearTimeout(typingTimerRef.current)
         typingTimerRef.current = null
       }
     }
