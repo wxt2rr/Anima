@@ -56,7 +56,7 @@ import {
   renderSlashCommandTemplate,
   type SlashCommandEntry
 } from './lib/slashCommands'
-import animaLogo from '../../../images/logo.png'
+import animaLogo from '../../../images/central-home.svg'
 
 type BackendUsage = {
   prompt_tokens?: number

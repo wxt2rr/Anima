@@ -77,6 +77,8 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
   const reduceMotion = useReducedMotion()
   const deleteChatTimerRef = useRef<number | null>(null)
   const lang = resolveAppLang(settings?.language)
+  const [expandedChatGroups, setExpandedChatGroups] = useState<Record<string, boolean>>({})
+  const [chatSectionCollapsed, setChatSectionCollapsed] = useState(false)
 
   const t = useMemo(
     () => ({
@@ -92,6 +94,8 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
       search: i18nText(lang, 'chatHistory.search'),
       collapseSidebar: i18nText(lang, 'chatHistory.collapseSidebar'),
       searchChats: i18nText(lang, 'chatHistory.searchChats'),
+      expandChats: i18nText(lang, 'chatHistory.expandChats'),
+      collapseChats: i18nText(lang, 'chatHistory.collapseChats'),
       addProjectTip: i18nText(lang, 'chatHistory.addProjectTip'),
       createChatTip: i18nText(lang, 'chatHistory.createChatTip'),
       projectMenuTip: i18nText(lang, 'chatHistory.projectMenuTip'),
@@ -160,7 +164,13 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
     }
     return by
   }, [visibleChats])
-  const unassignedChats = chatsByProjectId['__unassigned__'] || []
+  const unassignedChatGroupId = '__unassigned__'
+  const unassignedChats = chatsByProjectId[unassignedChatGroupId] || []
+  const isChatGroupExpanded = (groupId: string) => Boolean(expandedChatGroups[groupId])
+  const toggleChatGroup = (groupId: string) => {
+    setExpandedChatGroups((current) => ({ ...current, [groupId]: !current[groupId] }))
+  }
+  const chatGroupTransitionClass = reduceMotion ? 'transition-none' : 'transition-[grid-template-rows,opacity] duration-200 ease-out'
   const clampTitle = (raw: string, maxChars = 18): string => {
     const chars = Array.from(String(raw || ''))
     if (chars.length <= maxChars) return chars.join('')
@@ -185,14 +195,14 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
               layout
               initial={false}
               animate={reduceMotion ? { opacity: 1 } : isPendingDelete ? { opacity: 0.7, x: 8, scale: 0.98 } : { opacity: 1, x: 0, scale: 1 }}
-              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 90, y: -14, rotate: 6, scale: 0.72, filter: 'blur(6px)' }}
+              exit={{ opacity: 0 }}
               transition={
                 reduceMotion
                   ? { duration: 0 }
                   : {
-                      duration: 0.52,
+                      duration: 0.2,
                       ease: [0.22, 1, 0.36, 1],
-                      layout: { duration: 0.38, ease: [0.22, 1, 0.36, 1] }
+                      layout: { duration: 0.2, ease: [0.22, 1, 0.36, 1] }
                     }
               }
             >
@@ -326,7 +336,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
       className="rounded-none"
     >
       <TooltipProvider delayDuration={300}>
-      <div className="[&_svg.lucide]:h-4 [&_svg.lucide]:w-4 [&_svg.lucide]:[stroke-width:1.75] [&_svg.lucide]:transition-colors [&_svg.lucide]:duration-150">
+      <div className="flex h-full min-h-0 flex-col [&_svg.lucide]:h-4 [&_svg.lucide]:w-4 [&_svg.lucide]:[stroke-width:1.75] [&_svg.lucide]:transition-colors [&_svg.lucide]:duration-150">
       {/* Header Area */}
       <div className="h-[var(--app-left-pane-header-height)] flex items-center justify-between px-[var(--app-left-pane-pad-x)] shrink-0 draggable">
         <div className="w-[var(--app-left-pane-leading-safe)] h-full" />
@@ -355,7 +365,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
         </div>
       </div>
 
-      <div className="pl-[calc(var(--app-left-pane-pad-x)-6px)] pr-[var(--app-left-pane-pad-x)] pb-2 space-y-0.5">
+      <div className="shrink-0 pl-[calc(var(--app-left-pane-pad-x)-6px)] pr-[var(--app-left-pane-pad-x)] pb-2 space-y-0.5">
         <button
           type="button"
           className="w-full h-8 px-2.5 rounded-md flex items-center gap-2 text-[13px] text-foreground/85 hover:bg-black/5 transition-colors text-left"
@@ -384,11 +394,27 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
           <span>{t.skills}</span>
         </button>
       </div>
-      <div className="flex-1 overflow-y-auto overflow-x-hidden pl-[calc(var(--app-left-pane-pad-x)-6px)] pr-[var(--app-left-pane-pad-x)] pb-12 space-y-1 scrollbar-none">
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden pl-[calc(var(--app-left-pane-pad-x)-6px)] pr-[var(--app-left-pane-pad-x)] pb-2 space-y-1 scrollbar-none">
         <div className="space-y-3">
           <div className="pt-1">
             <div className="flex items-center justify-between text-[12px] text-muted-foreground/90">
-              <span className="tracking-wide ml-2.5">{t.chatSection}</span>
+              <button
+                type="button"
+                className="flex min-w-0 items-center gap-1 text-left hover:text-foreground transition-colors"
+                aria-expanded={!chatSectionCollapsed}
+                aria-controls="unassigned-chat-list"
+                onClick={() => setChatSectionCollapsed((collapsed) => !collapsed)}
+              >
+                <span
+                  className={`inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center ${
+                    reduceMotion ? 'transition-none' : 'transition-transform duration-200 ease-out'
+                  } ${chatSectionCollapsed ? '' : 'rotate-90'}`}
+                  aria-hidden="true"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </span>
+                <span className="tracking-wide">{t.chatSection}</span>
+              </button>
               <div className="w-[76px] flex items-center justify-end gap-1">
                 <button
                   type="button"
@@ -403,8 +429,37 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
                 </button>
               </div>
             </div>
-            {unassignedChats.length > 0 ? renderChatRows(unassignedChats) : null}
-            {unassignedChats.length === 0 ? <div className="mt-1 px-2.5 text-xs text-muted-foreground text-center">{t.emptyChats}</div> : null}
+            <div
+              id="unassigned-chat-list"
+              className={`grid ${chatGroupTransitionClass} ${
+                chatSectionCollapsed ? 'grid-rows-[0fr] opacity-0 pointer-events-none' : 'grid-rows-[1fr] opacity-100'
+              }`}
+            >
+              <div className="min-h-0 overflow-hidden">
+                {unassignedChats.length > 0 ? renderChatRows(unassignedChats.slice(0, 5)) : null}
+                {unassignedChats.length > 5 ? (
+                  <div
+                    className={`grid ${chatGroupTransitionClass} ${
+                      isChatGroupExpanded(unassignedChatGroupId)
+                        ? 'grid-rows-[1fr] opacity-100'
+                        : 'grid-rows-[0fr] opacity-0 pointer-events-none'
+                    }`}
+                  >
+                    <div className="min-h-0 overflow-hidden">{renderChatRows(unassignedChats.slice(5))}</div>
+                  </div>
+                ) : null}
+                {unassignedChats.length === 0 ? <div className="mt-1 px-2.5 text-xs text-muted-foreground text-center">{t.emptyChats}</div> : null}
+                {unassignedChats.length > 5 ? (
+                  <button
+                    type="button"
+                    className="w-full mt-1 text-left text-xs text-muted-foreground hover:text-foreground px-2.5 transition-colors"
+                    onClick={() => toggleChatGroup(unassignedChatGroupId)}
+                  >
+                    {isChatGroupExpanded(unassignedChatGroupId) ? t.collapseChats : t.expandChats}
+                  </button>
+                ) : null}
+              </div>
+            </div>
           </div>
 
           <div>
@@ -430,6 +485,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
           {projects.map((p) => {
             const pid = p.id
             const collapsed = (ui.collapsedProjectIds || []).includes(pid)
+            const chatGroupExpanded = isChatGroupExpanded(pid)
             const activeProject = ui.activeProjectId === pid
             const list = chatsByProjectId[pid] || []
             const hasChats = list.length > 0
@@ -444,6 +500,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
                   <button
                     type="button"
                     className="flex items-center justify-start gap-2 flex-1 min-w-0 cursor-pointer text-left"
+                    aria-expanded={!collapsed}
                     onClick={(e) => {
                       e.stopPropagation()
                       setActiveProject(pid)
@@ -548,20 +605,33 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
                   </div>
                 </div>
 
-                <AnimatePresence initial={false}>
-                  {!collapsed ? (
-                    <motion.div
-                      key={`${pid}-body`}
-                      initial={reduceMotion ? false : { opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={reduceMotion ? { duration: 0 } : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                      style={{ overflow: 'hidden' }}
-                    >
-                      {hasChats ? renderChatRows(list) : null}
-                    </motion.div>
-                  ) : null}
-                </AnimatePresence>
+                <div
+                  className={`grid ${chatGroupTransitionClass} ${
+                    collapsed ? 'grid-rows-[0fr] opacity-0 pointer-events-none' : 'grid-rows-[1fr] opacity-100'
+                  }`}
+                >
+                  <div className="min-h-0 overflow-hidden">
+                    {hasChats ? renderChatRows(list.slice(0, 5)) : null}
+                    {list.length > 5 ? (
+                      <div
+                        className={`grid ${chatGroupTransitionClass} ${
+                          chatGroupExpanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0 pointer-events-none'
+                        }`}
+                      >
+                        <div className="min-h-0 overflow-hidden">{renderChatRows(list.slice(5))}</div>
+                      </div>
+                    ) : null}
+                    {list.length > 5 ? (
+                      <button
+                        type="button"
+                        className="w-full mt-1 text-left text-xs text-muted-foreground hover:text-foreground px-2.5 transition-colors"
+                        onClick={() => toggleChatGroup(pid)}
+                      >
+                        {chatGroupExpanded ? t.collapseChats : t.expandChats}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
               </div>
             )
           })}
@@ -670,7 +740,7 @@ export const ChatHistoryPanel = memo(function ChatHistoryPanel({
 
       {/* Footer */}
       {!ui.sidebarCollapsed && (
-        <div className="absolute bottom-2 left-0 w-full px-[var(--app-left-pane-pad-x)]">
+        <div className="shrink-0 px-[var(--app-left-pane-pad-x)] pb-2">
           <button
             className="w-full h-8 px-2.5 rounded-md flex items-center gap-2 text-[13px] text-foreground/85 hover:bg-black/5 transition-colors text-left"
             onClick={() => onOpenSettings?.()}
